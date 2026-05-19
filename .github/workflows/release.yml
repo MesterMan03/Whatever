@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libxkbcommon-dev libwayland-dev \
+            libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Bundle artifacts
+        run: |
+          mkdir -p stage/Whatever-linux-x86_64
+          cp target/release/Whatever stage/Whatever-linux-x86_64/
+          cp -r mods stage/Whatever-linux-x86_64/
+          tar -czf Whatever-linux-x86_64.tar.gz -C stage Whatever-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Whatever-linux-x86_64
+          path: Whatever-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Bundle artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path stage\Whatever-windows-x86_64 -Force
+          Copy-Item target\release\Whatever.exe stage\Whatever-windows-x86_64\
+          Copy-Item -Recurse mods stage\Whatever-windows-x86_64\
+          Compress-Archive -Path stage\Whatever-windows-x86_64 -DestinationPath Whatever-windows-x86_64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Whatever-windows-x86_64
+          path: Whatever-windows-x86_64.zip
+
+  release:
+    name: Create GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Whatever-linux-x86_64.tar.gz
+            Whatever-windows-x86_64.zip
+          generate_release_notes: true
