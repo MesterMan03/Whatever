@@ -1,6 +1,8 @@
 # Whatever Engine
 
-A barebones game engine where every game is just a mod. The engine owns the window, GPU renderer, virtual file system, mod loader, and TypeScript/Bun scripting host — nothing else. No game logic lives in engine code.
+A barebones game engine where every game is just a mod. The engine owns the window, GPU renderer, virtual file system, mod loader, and TypeScript/Bun scripting host, nothing else. No game logic lives in engine code.
+
+This enables the core philosophy of "you can do whatever": both developers and players are allowed to freely dissect and modify every part of the engine.
 
 ## Prerequisites
 
