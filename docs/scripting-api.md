@@ -100,7 +100,7 @@ Fired in response to a prior `engine.requestAsset()` call. Use `request_id` to
 match the response to the original request.
 
 ```ts
-engine.requestAsset("my-req-1", "script-test://textures/player.png");
+engine.requestAsset("my-req-1", "script_test://textures/player.png");
 
 engine.on("asset_response", ({ request_id, data_base64, error }) => {
   if (request_id !== "my-req-1") return;

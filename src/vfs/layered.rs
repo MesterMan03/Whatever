@@ -40,10 +40,21 @@ impl Vfs for LayeredVfs {
     }
 
     fn list(&self, mod_id: &str, prefix: &str) -> Result<Vec<String>, VfsError> {
+        // Paths that serve as override destinations should not appear as independent assets
+        let override_targets: std::collections::HashSet<&str> = self
+            .overrides
+            .values()
+            .filter(|p| p.mod_id == mod_id)
+            .map(|p| p.path.as_str())
+            .collect();
+
         let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
         for layer in self.layers.iter().rev() {
             for entry in layer.list(mod_id, prefix)? {
+                if override_targets.contains(entry.as_str()) {
+                    continue;
+                }
                 if seen.insert(entry.clone()) {
                     results.push(entry);
                 }

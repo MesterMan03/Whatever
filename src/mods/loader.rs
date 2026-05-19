@@ -95,7 +95,12 @@ pub fn discover_and_load(
 
         // register explicit path overrides
         for (from_str, to_str) in &manifest.overrides.paths {
-            if let (Some(from), Some(to)) = (VfsPath::parse(from_str), VfsPath::parse(to_str)) {
+            let to_resolved = if to_str.contains("://") {
+                to_str.clone()
+            } else {
+                format!("{}://{}", mod_id, to_str)
+            };
+            if let (Some(from), Some(to)) = (VfsPath::parse(from_str), VfsPath::parse(&to_resolved)) {
                 vfs.add_override(from, to);
             }
         }
