@@ -6,12 +6,12 @@ mod renderer;
 mod script;
 mod vfs;
 
-use std::env;
-use std::path::PathBuf;
 use anyhow::Context;
-use winit::event_loop::EventLoop;
 use debug::DebugConfig;
 use engine::Engine;
+use std::env;
+use std::path::PathBuf;
+use winit::event_loop::EventLoop;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()

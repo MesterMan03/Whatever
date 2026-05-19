@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use super::{Vfs, VfsError, VfsPath};
+use std::collections::HashMap;
 
 pub struct LayeredVfs {
     layers: Vec<Box<dyn Vfs>>,
@@ -8,7 +8,10 @@ pub struct LayeredVfs {
 
 impl LayeredVfs {
     pub fn new() -> Self {
-        LayeredVfs { layers: Vec::new(), overrides: HashMap::new() }
+        LayeredVfs {
+            layers: Vec::new(),
+            overrides: HashMap::new(),
+        }
     }
 
     pub fn push_layer(&mut self, layer: Box<dyn Vfs>) {

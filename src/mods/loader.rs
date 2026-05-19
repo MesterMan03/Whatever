@@ -1,11 +1,11 @@
-use std::collections::{HashMap, VecDeque};
-use std::path::Path;
-use anyhow::{bail, Context};
-use semver::{Version, VersionReq};
-use crate::debug::DebugLogger;
-use crate::vfs::{DiskLayer, LayeredVfs, VfsPath};
 use super::manifest::ModManifest;
 use super::registry::{LoadedMod, ModRegistry};
+use crate::debug::DebugLogger;
+use crate::vfs::{DiskLayer, LayeredVfs, VfsPath};
+use anyhow::{Context, bail};
+use semver::{Version, VersionReq};
+use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 
 pub fn discover_and_load(
     search_dirs: &[&Path],
@@ -33,9 +33,13 @@ pub fn discover_and_load(
             }
             let src = std::fs::read_to_string(&toml_path)
                 .with_context(|| format!("reading {}", toml_path.display()))?;
-            let manifest: ModManifest = toml::from_str(&src)
-                .with_context(|| format!("parsing {}", toml_path.display()))?;
-            debug.modloader(&format!("discovered mod '{}' at {}", manifest.meta.id, mod_root.display()));
+            let manifest: ModManifest =
+                toml::from_str(&src).with_context(|| format!("parsing {}", toml_path.display()))?;
+            debug.modloader(&format!(
+                "discovered mod '{}' at {}",
+                manifest.meta.id,
+                mod_root.display()
+            ));
             manifests.push((manifest, mod_root));
         }
     }
@@ -44,21 +48,31 @@ pub fn discover_and_load(
     let id_to_version: HashMap<String, Version> = manifests
         .iter()
         .map(|(m, _)| {
-            let v = Version::parse(&m.meta.version)
-                .unwrap_or_else(|_| Version::new(0, 0, 0));
+            let v = Version::parse(&m.meta.version).unwrap_or_else(|_| Version::new(0, 0, 0));
             (m.meta.id.clone(), v)
         })
         .collect();
 
     for (manifest, _) in &manifests {
         for (dep_id, req_str) in &manifest.dependencies {
-            let req = VersionReq::parse(req_str)
-                .with_context(|| format!("mod '{}' has invalid semver req for dep '{}'", manifest.meta.id, dep_id))?;
+            let req = VersionReq::parse(req_str).with_context(|| {
+                format!(
+                    "mod '{}' has invalid semver req for dep '{}'",
+                    manifest.meta.id, dep_id
+                )
+            })?;
             match id_to_version.get(dep_id) {
-                None => bail!("mod '{}' requires '{}' which is not loaded", manifest.meta.id, dep_id),
+                None => bail!(
+                    "mod '{}' requires '{}' which is not loaded",
+                    manifest.meta.id,
+                    dep_id
+                ),
                 Some(v) if !req.matches(v) => bail!(
                     "mod '{}' requires {}@{}, found {}",
-                    manifest.meta.id, dep_id, req_str, v
+                    manifest.meta.id,
+                    dep_id,
+                    req_str,
+                    v
                 ),
                 _ => {}
             }
@@ -71,7 +85,11 @@ pub fn discover_and_load(
     for (manifest, mod_root) in sorted {
         let assets_root = mod_root.join(&manifest.assets.root);
         let mod_id = manifest.meta.id.clone();
-        debug.modloader(&format!("loading mod '{}' from {}", mod_id, mod_root.display()));
+        debug.modloader(&format!(
+            "loading mod '{}' from {}",
+            mod_id,
+            mod_root.display()
+        ));
 
         vfs.push_layer(Box::new(DiskLayer::new(mod_id.clone(), assets_root)));
 
@@ -82,7 +100,10 @@ pub fn discover_and_load(
             }
         }
 
-        registry.register(LoadedMod { manifest, root: mod_root });
+        registry.register(LoadedMod {
+            manifest,
+            root: mod_root,
+        });
     }
 
     Ok(())
@@ -100,7 +121,11 @@ fn toposort(
     }
 
     let ids: Vec<String> = manifests.iter().map(|(m, _)| m.meta.id.clone()).collect();
-    let idx: HashMap<&str, usize> = ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    let idx: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
     let n = manifests.len();
     let mut in_degree = vec![0usize; n];
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -158,7 +183,11 @@ fn toposort(
 
     debug.modloader(&format!(
         "load order: {}",
-        sorted.iter().map(|(m, _)| m.meta.id.as_str()).collect::<Vec<_>>().join(" → ")
+        sorted
+            .iter()
+            .map(|(m, _)| m.meta.id.as_str())
+            .collect::<Vec<_>>()
+            .join(" → ")
     ));
 
     Ok(sorted)

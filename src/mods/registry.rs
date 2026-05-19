@@ -1,6 +1,6 @@
+use super::manifest::ModManifest;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use super::manifest::ModManifest;
 
 pub struct LoadedMod {
     pub manifest: ModManifest,
@@ -14,7 +14,10 @@ pub struct ModRegistry {
 
 impl ModRegistry {
     pub fn new() -> Self {
-        ModRegistry { mods: Vec::new(), id_to_index: HashMap::new() }
+        ModRegistry {
+            mods: Vec::new(),
+            id_to_index: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, loaded: LoadedMod) {

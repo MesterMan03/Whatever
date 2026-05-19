@@ -10,7 +10,11 @@ pub struct DebugConfig {
 
 impl DebugConfig {
     pub fn from_args(args: &[String]) -> Self {
-        let mut cfg = DebugConfig { window: false, modloader: false, ipc: false };
+        let mut cfg = DebugConfig {
+            window: false,
+            modloader: false,
+            ipc: false,
+        };
         for arg in args {
             let val = if let Some(v) = arg.strip_prefix("--debug=") {
                 v
@@ -19,7 +23,11 @@ impl DebugConfig {
             };
             for part in val.split(',') {
                 match part.trim() {
-                    "all" => { cfg.window = true; cfg.modloader = true; cfg.ipc = true; }
+                    "all" => {
+                        cfg.window = true;
+                        cfg.modloader = true;
+                        cfg.ipc = true;
+                    }
                     "window" => cfg.window = true,
                     "modloader" => cfg.modloader = true,
                     "ipc" => cfg.ipc = true,
@@ -47,9 +55,21 @@ impl DebugLogger {
             Ok(BufWriter::new(File::create(dir.join(name))?))
         };
         Ok(DebugLogger {
-            window: if config.window { Some(open("window.log")?) } else { None },
-            modloader: if config.modloader { Some(open("modloader.log")?) } else { None },
-            ipc: if config.ipc { Some(open("ipc.log")?) } else { None },
+            window: if config.window {
+                Some(open("window.log")?)
+            } else {
+                None
+            },
+            modloader: if config.modloader {
+                Some(open("modloader.log")?)
+            } else {
+                None
+            },
+            ipc: if config.ipc {
+                Some(open("ipc.log")?)
+            } else {
+                None
+            },
         })
     }
 

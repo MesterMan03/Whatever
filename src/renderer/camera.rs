@@ -75,8 +75,7 @@ impl CameraController {
 
     pub fn process_mouse(&self, camera: &mut Camera, dx: f32, dy: f32) {
         camera.yaw += dx * self.sensitivity;
-        camera.pitch = (camera.pitch - dy * self.sensitivity)
-            .clamp(-1.5, 1.5);
+        camera.pitch = (camera.pitch - dy * self.sensitivity).clamp(-1.5, 1.5);
     }
 
     pub fn update(&self, camera: &mut Camera, dt: f32) {
@@ -84,12 +83,24 @@ impl CameraController {
         let right = forward.cross(Vec3::Y).normalize();
 
         let mut delta = Vec3::ZERO;
-        if self.move_forward  { delta += forward; }
-        if self.move_backward { delta -= forward; }
-        if self.move_right    { delta += right; }
-        if self.move_left     { delta -= right; }
-        if self.move_up       { delta += Vec3::Y; }
-        if self.move_down     { delta -= Vec3::Y; }
+        if self.move_forward {
+            delta += forward;
+        }
+        if self.move_backward {
+            delta -= forward;
+        }
+        if self.move_right {
+            delta += right;
+        }
+        if self.move_left {
+            delta -= right;
+        }
+        if self.move_up {
+            delta += Vec3::Y;
+        }
+        if self.move_down {
+            delta -= Vec3::Y;
+        }
 
         if delta.length_squared() > 0.0 {
             camera.position += delta.normalize() * self.speed * dt;

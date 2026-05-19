@@ -1,5 +1,5 @@
-use anyhow::Context;
 use crate::vfs::{Vfs, VfsPath};
+use anyhow::Context;
 
 pub struct GpuTexture {
     pub view: wgpu::TextureView,
@@ -12,14 +12,20 @@ pub fn load_from_vfs(
     vfs: &dyn Vfs,
     path: &VfsPath,
 ) -> anyhow::Result<GpuTexture> {
-    let bytes = vfs.read(path).with_context(|| format!("reading {}", path.to_string()))?;
+    let bytes = vfs
+        .read(path)
+        .with_context(|| format!("reading {}", path.to_string()))?;
     let img = image::load_from_memory(&bytes).context("decode image")?;
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(&path.to_string()),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -41,7 +47,11 @@ pub fn load_from_vfs(
             bytes_per_row: Some(4 * width),
             rows_per_image: Some(height),
         },
-        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
     );
 
     let view = texture.create_view(&Default::default());

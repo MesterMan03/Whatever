@@ -58,7 +58,9 @@ pub struct AssetsConfig {
 
 impl Default for AssetsConfig {
     fn default() -> Self {
-        AssetsConfig { root: default_assets_root() }
+        AssetsConfig {
+            root: default_assets_root(),
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use winit::window::Window;
 
 pub struct WgpuContext {
@@ -45,7 +45,9 @@ impl WgpuContext {
             .context("request device")?;
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats.iter()
+        let format = caps
+            .formats
+            .iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(caps.formats[0]);
@@ -62,7 +64,12 @@ impl WgpuContext {
         };
         surface.configure(&device, &config);
 
-        Ok(WgpuContext { surface, device, queue, config })
+        Ok(WgpuContext {
+            surface,
+            device,
+            queue,
+            config,
+        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

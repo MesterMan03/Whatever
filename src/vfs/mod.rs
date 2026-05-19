@@ -16,7 +16,10 @@ pub struct VfsPath {
 impl VfsPath {
     pub fn parse(s: &str) -> Option<Self> {
         let (mod_id, path) = s.split_once("://")?;
-        Some(VfsPath { mod_id: mod_id.to_owned(), path: path.to_owned() })
+        Some(VfsPath {
+            mod_id: mod_id.to_owned(),
+            path: path.to_owned(),
+        })
     }
     pub fn to_string(&self) -> String {
         format!("{}://{}", self.mod_id, self.path)

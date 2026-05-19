@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use super::{Vfs, VfsError, VfsPath};
+use std::path::PathBuf;
 
 pub struct DiskLayer {
     mod_id: String,
@@ -8,7 +8,10 @@ pub struct DiskLayer {
 
 impl DiskLayer {
     pub fn new(mod_id: impl Into<String>, root: impl Into<PathBuf>) -> Self {
-        DiskLayer { mod_id: mod_id.into(), root: root.into() }
+        DiskLayer {
+            mod_id: mod_id.into(),
+            root: root.into(),
+        }
     }
 }
 
@@ -48,7 +51,11 @@ impl Vfs for DiskLayer {
     }
 }
 
-fn collect_files(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<String>) -> Result<(), VfsError> {
+fn collect_files(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    out: &mut Vec<String>,
+) -> Result<(), VfsError> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();

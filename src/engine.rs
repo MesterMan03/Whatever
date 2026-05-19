@@ -1,3 +1,10 @@
+use crate::debug::{DebugConfig, DebugLogger};
+use crate::input::InputState;
+use crate::mods::{ModRegistry, discover_and_load};
+use crate::renderer::{Renderer, WgpuContext, grid_pos, load_from_vfs};
+use crate::script::ipc::EngineMessage;
+use crate::script::{ScriptHost, dispatch};
+use crate::vfs::{LayeredVfs, VfsHandle, VfsPath};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -6,13 +13,6 @@ use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
-use crate::debug::{DebugConfig, DebugLogger};
-use crate::input::InputState;
-use crate::mods::{ModRegistry, discover_and_load};
-use crate::renderer::{Renderer, WgpuContext, grid_pos, load_from_vfs};
-use crate::script::ipc::EngineMessage;
-use crate::script::{ScriptHost, dispatch};
-use crate::vfs::{LayeredVfs, VfsHandle, VfsPath};
 
 pub struct Engine {
     debug: DebugLogger,
@@ -46,7 +46,9 @@ impl Engine {
 
         let mut script_host = ScriptHost::new();
         for loaded_mod in registry.iter() {
-            let Some(ref script_cfg) = loaded_mod.manifest.script else { continue };
+            let Some(ref script_cfg) = loaded_mod.manifest.script else {
+                continue;
+            };
             let entry = loaded_mod.root.join(&script_cfg.entry);
             let mod_id = &loaded_mod.manifest.meta.id;
             if let Err(e) = script_host.spawn(mod_id, &entry, &mut debug) {
@@ -68,25 +70,42 @@ impl Engine {
     }
 
     fn populate_scene(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else { return };
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
         let mut index = 0usize;
 
         let mod_ids: Vec<String> = self.registry.mod_ids().map(str::to_owned).collect();
         for mod_id in &mod_ids {
             let paths = match self.vfs.list(mod_id, "") {
                 Ok(p) => p,
-                Err(e) => { tracing::warn!("vfs list error for {mod_id}: {e}"); continue }
+                Err(e) => {
+                    tracing::warn!("vfs list error for {mod_id}: {e}");
+                    continue;
+                }
             };
             for rel_path in paths {
-                if !rel_path.ends_with(".png") { continue }
-                let vfs_path = VfsPath { mod_id: mod_id.clone(), path: rel_path.clone() };
-                match load_from_vfs(&renderer.ctx.device, &renderer.ctx.queue, self.vfs.as_ref(), &vfs_path) {
+                if !rel_path.ends_with(".png") {
+                    continue;
+                }
+                let vfs_path = VfsPath {
+                    mod_id: mod_id.clone(),
+                    path: rel_path.clone(),
+                };
+                match load_from_vfs(
+                    &renderer.ctx.device,
+                    &renderer.ctx.queue,
+                    self.vfs.as_ref(),
+                    &vfs_path,
+                ) {
                     Ok(tex) => {
                         let pos = grid_pos(index);
                         renderer.scene.add_sprite(&renderer.ctx.device, tex, pos);
                         index += 1;
                     }
-                    Err(e) => tracing::warn!("failed to load texture {}: {e}", vfs_path.to_string()),
+                    Err(e) => {
+                        tracing::warn!("failed to load texture {}: {e}", vfs_path.to_string())
+                    }
                 }
             }
         }
@@ -101,7 +120,9 @@ impl Engine {
 
         if let Some(renderer) = self.renderer.as_mut() {
             if self.input.mouse_captured {
-                renderer.camera_controller.process_mouse(&mut renderer.camera, dx, dy);
+                renderer
+                    .camera_controller
+                    .process_mouse(&mut renderer.camera, dx, dy);
             }
             renderer.camera_controller.update(&mut renderer.camera, dt);
         }
@@ -127,7 +148,8 @@ impl Engine {
         self.input.mouse_captured = captured;
         if let Some(window) = self.window.as_ref() {
             if captured {
-                let _ = window.set_cursor_grab(CursorGrabMode::Confined)
+                let _ = window
+                    .set_cursor_grab(CursorGrabMode::Confined)
                     .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
                 window.set_cursor_visible(false);
             } else {
@@ -140,23 +162,52 @@ impl Engine {
 
 impl ApplicationHandler for Engine {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() { return; }
+        if self.window.is_some() {
+            return;
+        }
 
         let attrs = Window::default_attributes().with_title("Whatever");
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
-            Err(e) => { tracing::error!("create window: {e}"); event_loop.exit(); return }
+            Err(e) => {
+                tracing::error!("create window: {e}");
+                event_loop.exit();
+                return;
+            }
         };
         self.debug.window("window created");
 
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
-        let rt = match rt { Ok(r) => r, Err(e) => { tracing::error!("{e}"); event_loop.exit(); return } };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        let rt = match rt {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("{e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let ctx = rt.block_on(WgpuContext::new(Arc::clone(&window)));
-        let ctx = match ctx { Ok(c) => c, Err(e) => { tracing::error!("wgpu init: {e}"); event_loop.exit(); return } };
+        let ctx = match ctx {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("wgpu init: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let renderer = rt.block_on(Renderer::new(ctx, self.vfs.as_ref()));
-        let renderer = match renderer { Ok(r) => r, Err(e) => { tracing::error!("renderer init: {e}"); event_loop.exit(); return } };
+        let renderer = match renderer {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("renderer init: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         self.renderer = Some(renderer);
         self.window = Some(Arc::clone(&window));
@@ -190,7 +241,8 @@ impl ApplicationHandler for Engine {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                self.debug.window(&format!("resized to {}x{}", size.width, size.height));
+                self.debug
+                    .window(&format!("resized to {}x{}", size.width, size.height));
                 if let Some(r) = self.renderer.as_mut() {
                     r.resize(size.width, size.height);
                 }
@@ -201,7 +253,10 @@ impl ApplicationHandler for Engine {
                     w.request_redraw();
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } => {
                 self.set_cursor_captured(!self.input.mouse_captured);
             }
             WindowEvent::KeyboardInput { event, .. } => {

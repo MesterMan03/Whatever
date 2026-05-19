@@ -1,12 +1,12 @@
+use super::ipc::{EngineMessage, ScriptMessage};
+use crate::debug::DebugLogger;
+use anyhow::Context;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use anyhow::Context;
-use crate::debug::DebugLogger;
-use super::ipc::{EngineMessage, ScriptMessage};
 
 pub struct ScriptProcess {
     pub mod_id: String,
@@ -30,7 +30,9 @@ pub struct ScriptHost {
 
 impl ScriptHost {
     pub fn new() -> Self {
-        ScriptHost { processes: HashMap::new() }
+        ScriptHost {
+            processes: HashMap::new(),
+        }
     }
 
     pub fn spawn(
@@ -71,7 +73,11 @@ impl ScriptHost {
             use std::io::{BufRead, BufReader};
             for line in BufReader::new(stdout).lines() {
                 match line {
-                    Ok(l) => { if tx.send(l).is_err() { break; } }
+                    Ok(l) => {
+                        if tx.send(l).is_err() {
+                            break;
+                        }
+                    }
                     Err(e) => {
                         tracing::debug!(mod_id = %mod_id_out, "stdout closed: {e}");
                         break;
@@ -95,12 +101,15 @@ impl ScriptHost {
 
         tracing::info!(mod_id, "script process ready");
         debug.ipc(mod_id, "→", &format!("spawned bun: {}", entry.display()));
-        self.processes.insert(mod_id.to_owned(), ScriptProcess {
-            mod_id: mod_id.to_owned(),
-            child,
-            stdin,
-            stdout_rx: rx,
-        });
+        self.processes.insert(
+            mod_id.to_owned(),
+            ScriptProcess {
+                mod_id: mod_id.to_owned(),
+                child,
+                stdin,
+                stdout_rx: rx,
+            },
+        );
         Ok(())
     }
 

@@ -1,7 +1,7 @@
+use super::texture::GpuTexture;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use wgpu::util::DeviceExt;
-use super::texture::GpuTexture;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -38,38 +38,54 @@ pub struct Scene {
 
 impl Scene {
     pub fn new(device: &wgpu::Device) -> Self {
-        let texture_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("texture_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
 
-        Scene { quads: Vec::new(), texture_bind_group_layout }
+        Scene {
+            quads: Vec::new(),
+            texture_bind_group_layout,
+        }
     }
 
     pub fn add_sprite(&mut self, device: &wgpu::Device, texture: GpuTexture, position: Vec3) {
         let half = 1.0_f32;
         let verts = [
-            Vertex { position: [position.x - half, position.y, position.z - half], tex_coords: [0.0, 1.0] },
-            Vertex { position: [position.x + half, position.y, position.z - half], tex_coords: [1.0, 1.0] },
-            Vertex { position: [position.x + half, position.y, position.z + half], tex_coords: [1.0, 0.0] },
-            Vertex { position: [position.x - half, position.y, position.z + half], tex_coords: [0.0, 0.0] },
+            Vertex {
+                position: [position.x - half, position.y, position.z - half],
+                tex_coords: [0.0, 1.0],
+            },
+            Vertex {
+                position: [position.x + half, position.y, position.z - half],
+                tex_coords: [1.0, 1.0],
+            },
+            Vertex {
+                position: [position.x + half, position.y, position.z + half],
+                tex_coords: [1.0, 0.0],
+            },
+            Vertex {
+                position: [position.x - half, position.y, position.z + half],
+                tex_coords: [0.0, 0.0],
+            },
         ];
         let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -87,12 +103,22 @@ impl Scene {
             label: Some("texture_bg"),
             layout: &self.texture_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&texture.view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&texture.sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                },
             ],
         });
 
-        self.quads.push(TexturedQuad { vertex_buffer, index_buffer, bind_group });
+        self.quads.push(TexturedQuad {
+            vertex_buffer,
+            index_buffer,
+            bind_group,
+        });
     }
 }
 
