@@ -30,6 +30,8 @@ export type EventPayloads = {
 export type EventName = keyof EventPayloads;
 declare class EngineApi {
     private handlers;
+    private _fileCallbacks;
+    private _fileReqCounter;
     constructor();
     private _dispatch;
     /**
@@ -46,6 +48,12 @@ declare class EngineApi {
     moveEntity(entity_id: string, position: [number, number, number]): void;
     destroyEntity(entity_id: string): void;
     requestAsset(request_id: string, path: string): void;
+    /** Write a UTF-8 string to a sandboxed file for this mod. Path must not contain `..`. */
+    writeFile(path: string, data: string): Promise<void>;
+    /** Read a sandboxed file for this mod and return its contents as a UTF-8 string. */
+    readFile(path: string): Promise<string>;
+    /** Delete a sandboxed file for this mod. */
+    deleteFile(path: string): Promise<void>;
 }
 export declare const engine: EngineApi;
 export {};

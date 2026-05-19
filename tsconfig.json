@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "lib": ["ES2022"],
     "paths": {
       "@whatever/api": ["./runtime/index.ts"]
     }

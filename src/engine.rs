@@ -1,6 +1,7 @@
+use anyhow::Context;
 use crate::debug::{DebugConfig, DebugLogger};
 use crate::input::InputState;
-use crate::mods::{ModRegistry, discover_and_load};
+use crate::mods::{GameMeta, ModRegistry, discover_and_load};
 use crate::renderer::{Renderer, WgpuContext, grid_pos, load_from_vfs};
 use crate::script::ipc::EngineMessage;
 use crate::script::{ScriptHost, dispatch};
@@ -16,6 +17,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 pub struct Engine {
     debug: DebugLogger,
+    game_meta: GameMeta,
     vfs: VfsHandle,
     registry: ModRegistry,
     script_host: ScriptHost,
@@ -42,6 +44,16 @@ impl Engine {
             &mut debug,
         )?;
 
+        let meta_path = cwd.join("mods").join("core").join("meta.toml");
+        let game_meta = if meta_path.exists() {
+            let src = std::fs::read_to_string(&meta_path)
+                .with_context(|| format!("reading {}", meta_path.display()))?;
+            toml::from_str::<GameMeta>(&src)
+                .with_context(|| format!("parsing {}", meta_path.display()))?
+        } else {
+            GameMeta::default()
+        };
+
         let vfs: VfsHandle = Arc::new(vfs);
 
         let mut script_host = ScriptHost::new();
@@ -58,6 +70,7 @@ impl Engine {
 
         Ok(Engine {
             debug,
+            game_meta,
             vfs,
             registry,
             script_host,
@@ -131,7 +144,7 @@ impl Engine {
         if let Some(window) = self.window.as_ref() {
             let window = Arc::clone(window);
             for (mod_id, msg) in messages {
-                dispatch(&mod_id, msg, &window, &mut self.debug);
+                dispatch(&mod_id, msg, &window, &mut self.script_host, &self.game_meta.game.id, &mut self.debug);
             }
         }
 
@@ -166,7 +179,7 @@ impl ApplicationHandler for Engine {
             return;
         }
 
-        let attrs = Window::default_attributes().with_title("Whatever");
+        let attrs = Window::default_attributes().with_title(&self.game_meta.game.name);
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -235,7 +248,7 @@ impl ApplicationHandler for Engine {
                 if let Some(window) = self.window.as_ref() {
                     let window = Arc::clone(window);
                     for (mod_id, msg) in final_msgs {
-                        dispatch(&mod_id, msg, &window, &mut self.debug);
+                        dispatch(&mod_id, msg, &window, &mut self.script_host, &self.game_meta.game.id, &mut self.debug);
                     }
                 }
                 event_loop.exit();

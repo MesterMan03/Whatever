@@ -22,6 +22,11 @@ pub enum EngineMessage {
         data_base64: Option<String>,
         error: Option<String>,
     },
+    FileResponse {
+        request_id: String,
+        data_base64: Option<String>,
+        error: Option<String>,
+    },
     Shutdown {
         exit_code: i32,
     },
@@ -56,5 +61,18 @@ pub enum ScriptMessage {
     },
     SetWindowTitle {
         title: String,
+    },
+    FileWrite {
+        request_id: String,
+        path: String,
+        data_base64: String,
+    },
+    FileRead {
+        request_id: String,
+        path: String,
+    },
+    FileDelete {
+        request_id: String,
+        path: String,
     },
 }

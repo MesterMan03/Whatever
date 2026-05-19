@@ -1,0 +1,13 @@
+[package]
+name    = "wmod"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "wmod"
+path = "src/main.rs"
+
+[dependencies]
+inquire    = "0.7"
+owo-colors = "4"
+anyhow     = "1"
