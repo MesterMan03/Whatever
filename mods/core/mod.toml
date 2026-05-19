@@ -1,0 +1,8 @@
+[mod]
+id          = "core"
+name        = "Core"
+version     = "0.1.0"
+description = "Engine-provided core mod"
+
+[assets]
+root = "assets"

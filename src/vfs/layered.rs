@@ -1,0 +1,51 @@
+use std::collections::HashMap;
+use super::{Vfs, VfsError, VfsPath};
+
+pub struct LayeredVfs {
+    layers: Vec<Box<dyn Vfs>>,
+    overrides: HashMap<String, VfsPath>,
+}
+
+impl LayeredVfs {
+    pub fn new() -> Self {
+        LayeredVfs { layers: Vec::new(), overrides: HashMap::new() }
+    }
+
+    pub fn push_layer(&mut self, layer: Box<dyn Vfs>) {
+        self.layers.push(layer);
+    }
+
+    pub fn add_override(&mut self, from: VfsPath, to: VfsPath) {
+        self.overrides.insert(from.to_string(), to);
+    }
+}
+
+impl Vfs for LayeredVfs {
+    fn read(&self, path: &VfsPath) -> Result<Vec<u8>, VfsError> {
+        let resolved = self.overrides.get(&path.to_string()).unwrap_or(path);
+        for layer in self.layers.iter().rev() {
+            if layer.exists(resolved) {
+                return layer.read(resolved);
+            }
+        }
+        Err(VfsError::NotFound(path.to_string()))
+    }
+
+    fn exists(&self, path: &VfsPath) -> bool {
+        let resolved = self.overrides.get(&path.to_string()).unwrap_or(path);
+        self.layers.iter().any(|l| l.exists(resolved))
+    }
+
+    fn list(&self, mod_id: &str, prefix: &str) -> Result<Vec<String>, VfsError> {
+        let mut seen = std::collections::HashSet::new();
+        let mut results = Vec::new();
+        for layer in self.layers.iter().rev() {
+            for entry in layer.list(mod_id, prefix)? {
+                if seen.insert(entry.clone()) {
+                    results.push(entry);
+                }
+            }
+        }
+        Ok(results)
+    }
+}
