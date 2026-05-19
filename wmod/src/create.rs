@@ -42,9 +42,7 @@ pub fn run(dir: &str) -> anyhow::Result<()> {
         .prompt()?;
 
     let default_name = id_to_name(&id);
-    let name = Text::new("Name:")
-        .with_default(&default_name)
-        .prompt()?;
+    let name = Text::new("Name:").with_default(&default_name).prompt()?;
 
     let version = Text::new("Version:")
         .with_default("0.1.0")
@@ -82,7 +80,15 @@ pub fn run(dir: &str) -> anyhow::Result<()> {
 
     // --- Write files ---
 
-    let mod_toml = generate_mod_toml(&id, &name, &version, &description, &author, license, scripts);
+    let mod_toml = generate_mod_toml(
+        &id,
+        &name,
+        &version,
+        &description,
+        &author,
+        license,
+        scripts,
+    );
     std::fs::write(target.join("mod.toml"), &mod_toml)?;
     std::fs::write(target.join("assets").join(".gitkeep"), "")?;
 
@@ -99,7 +105,12 @@ pub fn run(dir: &str) -> anyhow::Result<()> {
 
     // --- Success summary ---
 
-    println!("  {} {} {}", "Mod".green().bold(), name.bright_white().bold(), "created!".green().bold());
+    println!(
+        "  {} {} {}",
+        "Mod".green().bold(),
+        name.bright_white().bold(),
+        "created!".green().bold()
+    );
     println!();
     println!("  {}", "Files created:".bright_white());
     for f in &created {
@@ -107,7 +118,11 @@ pub fn run(dir: &str) -> anyhow::Result<()> {
     }
     println!();
     println!("  {}", "Next steps:".bright_white());
-    println!("    {}  move '{}' into mods/ or mods_user/", "1.".bright_black(), dir.cyan());
+    println!(
+        "    {}  move '{}' into mods/ or mods_user/",
+        "1.".bright_black(),
+        dir.cyan()
+    );
     println!("    {}  run the engine", "2.".bright_black());
     println!("       {}", "cargo run".bright_black());
     println!();

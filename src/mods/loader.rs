@@ -100,7 +100,8 @@ pub fn discover_and_load(
             } else {
                 format!("{}://{}", mod_id, to_str)
             };
-            if let (Some(from), Some(to)) = (VfsPath::parse(from_str), VfsPath::parse(&to_resolved)) {
+            if let (Some(from), Some(to)) = (VfsPath::parse(from_str), VfsPath::parse(&to_resolved))
+            {
                 vfs.add_override(from, to);
             }
         }

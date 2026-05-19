@@ -29,7 +29,10 @@ fn main() -> anyhow::Result<()> {
         _ => {
             print_logo();
             println!("  {}", "Usage:".bright_white().bold());
-            println!("    wmod {}  create a new mod in <directory>", "create <directory>".green());
+            println!(
+                "    wmod {}  create a new mod in <directory>",
+                "create <directory>".green()
+            );
             println!();
         }
     }
