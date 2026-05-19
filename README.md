@@ -1,0 +1,153 @@
+# Whatever Engine
+
+A barebones game engine where every game is just a mod. The engine owns the window, GPU renderer, virtual file system, mod loader, and TypeScript/Bun scripting host — nothing else. No game logic lives in engine code.
+
+## Prerequisites
+
+| Tool | Purpose |
+|---|---|
+| [Rust + Cargo](https://rustup.rs) | Building the engine |
+| [Bun](https://bun.sh) | Running mod scripts |
+
+## Build & Run
+
+```sh
+# Build
+cargo build
+
+# Run
+cargo run
+
+# Run with debug logging
+cargo run -- --debug=all
+cargo run -- --debug=ipc,modloader
+
+# Run tests
+cargo test
+```
+
+## Project Layout
+
+```
+mods/               Engine-shipped mods (tracked in git)
+  core/             Built-in core mod (shaders, base assets)
+  script-test/      Scripting API integration test
+mods_user/          User-installed mods (gitignored)
+runtime/            @whatever/api — TypeScript scripting API package
+  index.ts          Source
+  index.d.ts        Generated type declarations (for IDE autocomplete)
+src/
+  engine.rs         Main loop, owns all subsystems
+  script/           Bun subprocess host + NDJSON IPC
+  renderer/         wgpu context, camera, sprites
+  vfs/              Layered virtual filesystem
+  mods/             Mod manifest, discovery, toposort
+  debug.rs          Debug flags + file loggers
+  input.rs          Keyboard/mouse accumulator
+docs/
+  scripting-api.md  Full scripting API reference
+```
+
+## Mod System
+
+Mods live in `mods/` (engine-shipped) or `mods_user/` (user-installed, gitignored). Each mod is a directory containing `mod.toml`.
+
+### mod.toml
+
+```toml
+[mod]
+id          = "my-game"
+name        = "My Game"
+version     = "0.1.0"
+description = "A game built on the Whatever engine"
+
+[script]
+entry = "scripts/index.ts"     # optional — omit if the mod has no scripts
+
+[assets]
+root = "assets"                 # default
+```
+
+Mods are loaded in topological dependency order. `core` always loads first.
+
+### VFS paths
+
+Assets are accessed via `mod_id://relative/path`:
+
+```
+core://shaders/sprite.wgsl
+my-game://textures/player.png
+```
+
+### Adding a mod
+
+1. Create `mods_user/<mod_id>/mod.toml`
+2. Add assets to `mods_user/<mod_id>/assets/`
+3. Optionally add `scripts/index.ts` and set `[script]` in `mod.toml`
+4. `cargo run` — the mod is discovered and loaded automatically
+
+## Scripting
+
+Scripted mods run as a Bun subprocess per mod. The engine communicates over NDJSON on stdin/stdout.
+
+### Setup
+
+```ts
+import { engine } from "@whatever/api";
+```
+
+The `@whatever/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory.
+
+### Events
+
+```ts
+engine.on("init", ({ mod_id, engine_version }) => {
+  // Fired once after the window and renderer are ready.
+  // Safe to set window title, spawn sprites, etc.
+});
+
+engine.on("exit", ({ exit_code }) => {
+  // Fired when the engine is shutting down.
+  // Process exits automatically after all handlers return.
+});
+
+engine.on("frame", ({ delta_seconds, frame_number }) => {
+  // Fired every rendered frame.
+});
+
+engine.on("input", ({ keys_pressed, mouse_delta }) => {
+  // Fired every frame with current input state.
+});
+```
+
+### Methods
+
+```ts
+engine.log("info" | "warn" | "error", message)
+engine.setWindowTitle(title)
+engine.spawnSprite(entity_id, texture, position, scale?)
+engine.moveEntity(entity_id, position)
+engine.destroyEntity(entity_id)
+engine.requestAsset(request_id, path)  // response arrives as "asset_response" event
+```
+
+See [`docs/scripting-api.md`](docs/scripting-api.md) for the full reference.
+
+### Regenerating type declarations
+
+After editing `runtime/index.ts`, regenerate `index.d.ts`:
+
+```sh
+bun run --cwd runtime build:types
+```
+
+## Debug flags
+
+| Flag | What it logs |
+|---|---|
+| `all` | Everything |
+| `ipc` | Every raw NDJSON message between engine and scripts |
+| `modloader` | Mod discovery, dependency resolution, load order |
+| `window` | Window lifecycle events |
+
+Logs write to `debug/<flag>.log`.

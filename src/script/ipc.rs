@@ -8,7 +8,7 @@ pub enum EngineMessage {
     Frame { delta_seconds: f32, frame_number: u64 },
     Input { keys_pressed: Vec<String>, mouse_delta: [f32; 2] },
     AssetResponse { request_id: String, path: String, data_base64: Option<String>, error: Option<String> },
-    Shutdown,
+    Shutdown { exit_code: i32 },
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use anyhow::Context;
 use crate::debug::DebugLogger;
 use super::ipc::{EngineMessage, ScriptMessage};
@@ -10,6 +12,7 @@ pub struct ScriptProcess {
     pub mod_id: String,
     child: Child,
     stdin: ChildStdin,
+    stdout_rx: mpsc::Receiver<String>,
 }
 
 impl ScriptProcess {
@@ -36,6 +39,12 @@ impl ScriptHost {
         entry: &Path,
         debug: &mut DebugLogger,
     ) -> anyhow::Result<()> {
+        tracing::info!(mod_id, entry = %entry.display(), "spawning script process");
+
+        if !entry.exists() {
+            anyhow::bail!("script entry not found: {}", entry.display());
+        }
+
         let mut child = std::process::Command::new("bun")
             .arg("run")
             .arg(entry)
@@ -43,58 +52,101 @@ impl ScriptHost {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| format!("spawning bun for mod '{mod_id}'"))?;
+            .with_context(|| {
+                format!(
+                    "failed to spawn bun for mod '{mod_id}' (entry: {}). \
+                     Is bun installed and in PATH?",
+                    entry.display()
+                )
+            })?;
 
         let stdin = child.stdin.take().context("take stdin")?;
-        debug.ipc(mod_id, "→", "spawned bun process");
+        let stdout = child.stdout.take().context("take stdout")?;
+        let stderr = child.stderr.take().context("take stderr")?;
 
+        // Stdout reader thread — sends lines into a channel so drain_messages is non-blocking.
+        let (tx, rx) = mpsc::channel::<String>();
+        let mod_id_out = mod_id.to_owned();
+        thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            for line in BufReader::new(stdout).lines() {
+                match line {
+                    Ok(l) => { if tx.send(l).is_err() { break; } }
+                    Err(e) => {
+                        tracing::debug!(mod_id = %mod_id_out, "stdout closed: {e}");
+                        break;
+                    }
+                }
+            }
+            tracing::debug!(mod_id = %mod_id_out, "stdout reader thread exiting");
+        });
+
+        // Stderr reader thread — forwards Bun runtime errors as warnings.
+        let mod_id_err = mod_id.to_owned();
+        thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            for line in BufReader::new(stderr).lines() {
+                match line {
+                    Ok(l) => tracing::warn!(mod_id = %mod_id_err, "[script stderr] {l}"),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        tracing::info!(mod_id, "script process ready");
+        debug.ipc(mod_id, "→", &format!("spawned bun: {}", entry.display()));
         self.processes.insert(mod_id.to_owned(), ScriptProcess {
             mod_id: mod_id.to_owned(),
             child,
             stdin,
+            stdout_rx: rx,
         });
         Ok(())
     }
 
-    pub fn send_all(&mut self, msg: &EngineMessage, debug: &mut DebugLogger) {
-        for proc in self.processes.values_mut() {
+    pub fn mod_ids(&self) -> impl Iterator<Item = &str> {
+        self.processes.keys().map(String::as_str)
+    }
+
+    pub fn send(&mut self, mod_id: &str, msg: &EngineMessage, debug: &mut DebugLogger) {
+        if let Some(proc) = self.processes.get_mut(mod_id) {
             if let Err(e) = proc.send(msg, debug) {
-                tracing::warn!(mod_id = %proc.mod_id, "send error: {e}");
+                tracing::warn!(mod_id, "send error: {e}");
             }
         }
     }
 
     pub fn drain_messages(&mut self, debug: &mut DebugLogger) -> Vec<(String, ScriptMessage)> {
-        use std::io::{BufRead, BufReader};
         let mut out = Vec::new();
         for proc in self.processes.values_mut() {
-            // non-blocking read: try_read won't exist; we use try from stdout if available
-            // For the prototype we do a best-effort non-blocking read via BufReader
-            // Real impl would use tokio async; this is synchronous skeleton
-            let Some(stdout) = proc.child.stdout.as_mut() else { continue };
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
-            // peek — only read if data ready (we'll improve with tokio in engine.rs)
-            match reader.read_line(&mut line) {
-                Ok(0) | Err(_) => {}
-                Ok(_) => {
-                    let line = line.trim_end();
-                    debug.ipc(&proc.mod_id, "←", line);
-                    match serde_json::from_str::<ScriptMessage>(line) {
-                        Ok(msg) => out.push((proc.mod_id.clone(), msg)),
-                        Err(e) => tracing::warn!(mod_id = %proc.mod_id, "bad IPC message: {e}: {line}"),
-                    }
+            while let Ok(line) = proc.stdout_rx.try_recv() {
+                debug.ipc(&proc.mod_id, "←", &line);
+                match serde_json::from_str::<ScriptMessage>(&line) {
+                    Ok(msg) => out.push((proc.mod_id.clone(), msg)),
+                    Err(e) => tracing::warn!(mod_id = %proc.mod_id, "bad IPC message: {e}: {line}"),
                 }
             }
         }
         out
     }
 
-    pub fn shutdown_all(&mut self, debug: &mut DebugLogger) {
-        let msg = EngineMessage::Shutdown;
+    /// Sends Shutdown to all scripts, waits briefly for final messages (e.g. exit-handler logs),
+    /// then kills any processes still running. Returns the final drained messages.
+    pub fn shutdown_all(
+        &mut self,
+        exit_code: i32,
+        debug: &mut DebugLogger,
+    ) -> Vec<(String, ScriptMessage)> {
+        let msg = EngineMessage::Shutdown { exit_code };
         for proc in self.processes.values_mut() {
             let _ = proc.send(&msg, debug);
+        }
+        // Give scripts a brief window to handle the exit event and write final messages.
+        thread::sleep(std::time::Duration::from_millis(100));
+        let final_messages = self.drain_messages(debug);
+        for proc in self.processes.values_mut() {
             let _ = proc.child.kill();
         }
+        final_messages
     }
 }

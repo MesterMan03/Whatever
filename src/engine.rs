@@ -50,7 +50,7 @@ impl Engine {
             let entry = loaded_mod.root.join(&script_cfg.entry);
             let mod_id = &loaded_mod.manifest.meta.id;
             if let Err(e) = script_host.spawn(mod_id, &entry, &mut debug) {
-                tracing::warn!("could not spawn script for '{mod_id}': {e}");
+                tracing::error!(mod_id, entry = %entry.display(), "script spawn failed: {e:#}");
             }
         }
 
@@ -163,11 +163,15 @@ impl ApplicationHandler for Engine {
 
         self.populate_scene();
 
-        let init_msg = EngineMessage::Init {
-            mod_id: String::new(),
-            engine_version: env!("CARGO_PKG_VERSION").to_owned(),
-        };
-        self.script_host.send_all(&init_msg, &mut self.debug);
+        let engine_version = env!("CARGO_PKG_VERSION").to_owned();
+        let mod_ids: Vec<String> = self.script_host.mod_ids().map(str::to_owned).collect();
+        for mod_id in mod_ids {
+            let init_msg = EngineMessage::Init {
+                mod_id: mod_id.clone(),
+                engine_version: engine_version.clone(),
+            };
+            self.script_host.send(&mod_id, &init_msg, &mut self.debug);
+        }
 
         window.request_redraw();
     }
@@ -176,7 +180,13 @@ impl ApplicationHandler for Engine {
         match event {
             WindowEvent::CloseRequested => {
                 self.debug.window("window close requested");
-                self.script_host.shutdown_all(&mut self.debug);
+                let final_msgs = self.script_host.shutdown_all(0, &mut self.debug);
+                if let Some(window) = self.window.as_ref() {
+                    let window = Arc::clone(window);
+                    for (mod_id, msg) in final_msgs {
+                        dispatch(&mod_id, msg, &window, &mut self.debug);
+                    }
+                }
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {

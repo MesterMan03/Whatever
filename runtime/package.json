@@ -1,0 +1,19 @@
+{
+  "name": "@whatever/api",
+  "version": "0.1.0",
+  "module": "./index.ts",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./index.ts",
+      "types": "./index.d.ts"
+    }
+  },
+  "scripts": {
+    "build:types": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}

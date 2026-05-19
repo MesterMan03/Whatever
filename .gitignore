@@ -1,3 +1,5 @@
 /target
 /mods_user
 /debug
+/node_modules
+/runtime/node_modules/

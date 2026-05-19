@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@whatever/api": ["./runtime/index.ts"]
+    }
+  }
+}

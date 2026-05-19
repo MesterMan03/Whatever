@@ -1,0 +1,5 @@
+{
+  "name": "whatever-engine",
+  "private": true,
+  "workspaces": ["runtime"]
+}

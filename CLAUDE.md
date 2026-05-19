@@ -16,7 +16,7 @@ The engine is a barebones backend. Every game is just a mod. The engine owns win
 | `src/mods/` | Mod manifest, discovery, toposort, registry |
 | `src/renderer/` | wgpu context, camera, texture loading, scene |
 | `src/script/` | Bun subprocess host, NDJSON IPC, message dispatch |
-| `runtime/engine_api.ts` | TypeScript IPC shim imported by mod scripts |
+| `runtime/` | `@whatever/api` npm package — TypeScript scripting API for mods |
 
 Every `mod.rs` is a thin re-export file only. Logic lives in named sibling files.
 
@@ -46,6 +46,9 @@ cargo run
 cargo run -- --debug=all
 cargo run -- --debug=ipc,modloader
 cargo test
+
+# Regenerate @whatever/api type declarations after editing runtime/index.ts
+bun run --cwd runtime build:types
 ```
 
 ## Adding a New Mod
