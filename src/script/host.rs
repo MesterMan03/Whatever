@@ -24,14 +24,23 @@ impl ScriptProcess {
     }
 }
 
+pub struct PendingReply {
+    pub sender_mod_id: String,
+    /// The original numeric request_id from the sender's counter, sent back in ModMessageReplyDelivered.
+    pub original_request_id: String,
+}
+
 pub struct ScriptHost {
     processes: HashMap<String, ScriptProcess>,
+    /// Maps "<sender_mod_id>-<original_request_id>" → PendingReply.
+    pending_replies: HashMap<String, PendingReply>,
 }
 
 impl ScriptHost {
     pub fn new() -> Self {
         ScriptHost {
             processes: HashMap::new(),
+            pending_replies: HashMap::new(),
         }
     }
 
@@ -137,6 +146,24 @@ impl ScriptHost {
             }
         }
         out
+    }
+
+    pub fn has_process(&self, mod_id: &str) -> bool {
+        self.processes.contains_key(mod_id)
+    }
+
+    pub fn add_pending_reply(
+        &mut self,
+        sender_mod_id: &str,
+        original_request_id: &str,
+        reply: PendingReply,
+    ) {
+        let key = format!("{sender_mod_id}-{original_request_id}");
+        self.pending_replies.insert(key, reply);
+    }
+
+    pub fn take_pending_reply(&mut self, namespaced_key: &str) -> Option<PendingReply> {
+        self.pending_replies.remove(namespaced_key)
     }
 
     /// Sends Shutdown to all scripts, waits briefly for final messages (e.g. exit-handler logs),

@@ -1,14 +1,21 @@
-import { engine } from "@whatever/api";
+import {Engine, Window, File, Mods, Message} from "@whatever/api";
 
-const randomText= Math.random().toString(36).substring(2);
+const randomText = Math.random().toString(36).substring(2);
 
-engine.on("init", async () => {
-  await engine.writeFile("test.txt", randomText);
-  const content = await engine.readFile("test.txt");
-  engine.log("info", `Content of test.txt: ${content}`);
-  engine.setWindowTitle("script-mod: " + randomText);
+Engine.on("init", async () => {
+  await File.write("test.txt", randomText);
+  const content = await File.read("test.txt");
+  Engine.log("info", `Content of test.txt: ${content}`);
+  Window.setTitle("script-mod: " + randomText);
+
+  const allMods = await Mods.list();
+  for(const mod of allMods) {
+    Message.send(mod.id, { type: "test", data: "hi" }, 1000).then(data => {
+      Engine.log("info", `We got a reply from ${mod.id}: ${JSON.stringify(data)}`)
+    })
+  }
 });
 
-engine.on("exit", () => {
-  engine.log("info", "Goodbye, cruel world");
+Engine.on("exit", () => {
+  Engine.log("info", "Goodbye, cruel world");
 });

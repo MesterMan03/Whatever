@@ -2,11 +2,11 @@ use crate::debug::{DebugConfig, DebugLogger};
 use crate::input::InputState;
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
 use crate::renderer::{Renderer, WgpuContext, grid_pos, load_from_vfs};
-use crate::script::ipc::EngineMessage;
+use crate::script::ipc::{EngineMessage, ScriptMessage};
 use crate::script::{ScriptHost, dispatch};
 use crate::vfs::{LayeredVfs, VfsHandle, VfsPath};
 use anyhow::Context;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -29,7 +29,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(debug_config: &DebugConfig, cwd: &PathBuf) -> anyhow::Result<Self> {
+    pub fn new(debug_config: &DebugConfig, cwd: &Path) -> anyhow::Result<Self> {
         let mut debug = DebugLogger::new(debug_config, cwd)?;
 
         let mut vfs = LayeredVfs::new();
@@ -141,26 +141,12 @@ impl Engine {
         }
 
         let messages = self.script_host.drain_messages(&mut self.debug);
-        if let Some(window) = self.window.as_ref() {
-            let window = Arc::clone(window);
-            for (mod_id, msg) in messages {
-                dispatch(
-                    &mod_id,
-                    msg,
-                    &window,
-                    &mut self.script_host,
-                    &self.game_meta.game.id,
-                    &mut self.debug,
-                );
-            }
-        }
+        self.dispatch_messages(messages);
 
         self.frame_number += 1;
 
-        if let Some(renderer) = self.renderer.as_mut() {
-            if let Err(e) = renderer.render() {
-                tracing::error!("render error: {e}");
-            }
+        if let Some(renderer) = self.renderer.as_mut() && let Err(e) = renderer.render() {
+            tracing::error!("render error: {e}");
         }
     }
 
@@ -175,6 +161,23 @@ impl Engine {
             } else {
                 let _ = window.set_cursor_grab(CursorGrabMode::None);
                 window.set_cursor_visible(true);
+            }
+        }
+    }
+
+    fn dispatch_messages(&mut self, messages: Vec<(String, ScriptMessage)>) {
+        if let Some(window) = self.window.as_ref() {
+            let window = Arc::clone(window);
+            for (mod_id, msg) in messages {
+                dispatch(
+                    &mod_id,
+                    msg,
+                    &window,
+                    &mut self.script_host,
+                    &self.registry,
+                    &self.game_meta.game.id,
+                    &mut self.debug,
+                );
             }
         }
     }
@@ -251,20 +254,8 @@ impl ApplicationHandler for Engine {
         match event {
             WindowEvent::CloseRequested => {
                 self.debug.window("window close requested");
-                let final_msgs = self.script_host.shutdown_all(0, &mut self.debug);
-                if let Some(window) = self.window.as_ref() {
-                    let window = Arc::clone(window);
-                    for (mod_id, msg) in final_msgs {
-                        dispatch(
-                            &mod_id,
-                            msg,
-                            &window,
-                            &mut self.script_host,
-                            &self.game_meta.game.id,
-                            &mut self.debug,
-                        );
-                    }
-                }
+                let final_messages = self.script_host.shutdown_all(0, &mut self.debug);
+                self.dispatch_messages(final_messages);
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {

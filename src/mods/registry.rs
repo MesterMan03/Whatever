@@ -31,6 +31,12 @@ impl ModRegistry {
         self.mods.iter()
     }
 
+    pub fn get(&self, id: &str) -> Option<&ModManifest> {
+        self.id_to_index
+            .get(id)
+            .map(|&idx| &self.mods[idx].manifest)
+    }
+
     pub fn mod_ids(&self) -> impl Iterator<Item = &str> {
         self.mods.iter().map(|m| m.manifest.meta.id.as_str())
     }

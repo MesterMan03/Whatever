@@ -7,6 +7,10 @@ type _EngineMsg =
   | { type: "Input"; keys_pressed: string[]; mouse_delta: [number, number] }
   | { type: "AssetResponse"; request_id: string; path: string; data_base64: string | null; error: string | null }
   | { type: "FileResponse"; request_id: string; data_base64: string | null; error: string | null }
+  | { type: "ModListResponse"; request_id: string; mods: ModManifest[] }
+  | { type: "ModGetResponse"; request_id: string; manifest: ModManifest | null; error: string | null }
+  | { type: "ModMessageReceived"; source_mod_id: string; request_id: string | null; payload: JsonValue }
+  | { type: "ModMessageReplyDelivered"; request_id: string; payload: JsonValue }
   | { type: "Shutdown"; exit_code: number };
 
 type _ScriptMsg =
@@ -19,7 +23,33 @@ type _ScriptMsg =
   | { type: "SetWindowTitle"; title: string }
   | { type: "FileWrite"; request_id: string; path: string; data_base64: string }
   | { type: "FileRead"; request_id: string; path: string }
-  | { type: "FileDelete"; request_id: string; path: string };
+  | { type: "FileDelete"; request_id: string; path: string }
+  | { type: "ModListRequest"; request_id: string }
+  | { type: "ModGetRequest"; request_id: string; mod_id: string }
+  | { type: "ModMessageSend"; target_mod_id: string; request_id: string | null; payload: JsonValue }
+  | { type: "ModMessageReply"; request_id: string; payload: JsonValue };
+
+/** Arbitrary JSON-serializable value used for inter-mod messages. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+/** Metadata about a loaded mod, mirroring mod.toml. */
+export type ModManifest = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  authors: string[];
+  license: string;
+  dependencies: Record<string, string>;
+  load_order: { after: string[]; before: string[] };
+  script?: { entry: string; runtime: string };
+};
 
 /** Payload types for each public event name. */
 export type EventPayloads = {
@@ -31,14 +61,21 @@ export type EventPayloads = {
   frame: { delta_seconds: number; frame_number: number };
   /** Fired every frame with the current input state. */
   input: { keys_pressed: string[]; mouse_delta: [number, number] };
-  /** Response to a prior `requestAsset` call. */
+  /** Response to a prior `Assets.request` call. */
   asset_response: { request_id: string; path: string; data_base64: string | null; error: string | null };
+  /**
+   * Fired when another mod sends this mod a message via `Message.send`.
+   * If `request_id` is present the sender is awaiting a reply — call `Message.reply(request_id, data)`.
+   * Not fired for replies that arrive via the `Message.send(id, msg, timeout)` overload.
+   */
+  mod_message: { source_mod_id: string; message: JsonValue; request_id?: string };
 };
 
 export type EventName = keyof EventPayloads;
 
 // Maps public event names → internal Rust message types.
-const EVENT_TYPE: Record<EventName, _EngineMsg["type"]> = {
+// mod_message is absent: it is dispatched specially and needs no Subscribe.
+const _EVENT_TYPE: Partial<Record<EventName, _EngineMsg["type"]>> = {
   init:           "Init",
   exit:           "Shutdown",
   frame:          "Frame",
@@ -46,114 +83,239 @@ const EVENT_TYPE: Record<EventName, _EngineMsg["type"]> = {
   asset_response: "AssetResponse",
 };
 
-class EngineApi {
-  private handlers = new Map<EventName, Set<(payload: any) => void>>();
-  private _fileCallbacks = new Map<string, { resolve: (v: string | null) => void; reject: (e: Error) => void }>();
-  private _fileReqCounter = 0;
+// --- Shared internal IPC state ---
 
-  constructor() {
-    const rl = createInterface({ input: process.stdin, terminal: false });
-    rl.on("line", (line) => {
-      try {
-        const msg = JSON.parse(line) as _EngineMsg;
-        this._dispatch(msg);
-      } catch {
-        // ignore malformed messages
-      }
-    });
-    rl.on("close", () => process.exit(0));
-  }
+const _handlers = new Map<EventName, Set<(payload: any) => void>>();
+const _fileCallbacks = new Map<string, { resolve: (v: string | null) => void; reject: (e: Error) => void }>();
+const _modListCallbacks = new Map<string, { resolve: (v: ModManifest[]) => void; reject: (e: Error) => void }>();
+const _modGetCallbacks = new Map<string, { resolve: (v: ModManifest) => void; reject: (e: Error) => void }>();
+const _msgCallbacks = new Map<string, { resolve: (v: JsonValue) => void; reject: (e: Error) => void }>();
+let _reqCounter = 0;
 
-  private _dispatch(msg: _EngineMsg): void {
-    if (msg.type === "FileResponse") {
-      const cb = this._fileCallbacks.get(msg.request_id);
-      if (cb) {
-        this._fileCallbacks.delete(msg.request_id);
-        msg.error ? cb.reject(new Error(msg.error)) : cb.resolve(msg.data_base64);
-      }
-      return;
+function _send(msg: _ScriptMsg): void {
+  process.stdout.write(JSON.stringify(msg) + "\n");
+}
+
+function _dispatch(msg: _EngineMsg): void {
+  if (msg.type === "FileResponse") {
+    const cb = _fileCallbacks.get(msg.request_id);
+    if (cb) {
+      _fileCallbacks.delete(msg.request_id);
+      msg.error ? cb.reject(new Error(msg.error)) : cb.resolve(msg.data_base64);
     }
-    for (const [event, msgType] of Object.entries(EVENT_TYPE) as [EventName, _EngineMsg["type"]][]) {
-      if (msg.type !== msgType) continue;
-      const handlers = this.handlers.get(event);
-      if (handlers) {
-        for (const fn_ of handlers) fn_(msg);
-      }
-      if (event === "exit") {
-        process.exit((msg as Extract<_EngineMsg, { type: "Shutdown" }>).exit_code);
-      }
+    return;
+  }
+
+  if (msg.type === "ModListResponse") {
+    const cb = _modListCallbacks.get(msg.request_id);
+    if (cb) {
+      _modListCallbacks.delete(msg.request_id);
+      cb.resolve(msg.mods);
     }
+    return;
   }
 
-  /**
-   * Subscribe to an engine event. The handler is called each time the event fires.
-   * Registering a handler also sends a `Subscribe` message to the engine automatically.
-   */
-  on<E extends EventName>(event: E, handler: (payload: EventPayloads[E]) => void): void {
-    if (!this.handlers.has(event)) this.handlers.set(event, new Set());
-    this.handlers.get(event)!.add(handler as (payload: any) => void);
-    this._send({ type: "Subscribe", events: [EVENT_TYPE[event]] });
+  if (msg.type === "ModGetResponse") {
+    const cb = _modGetCallbacks.get(msg.request_id);
+    if (cb) {
+      _modGetCallbacks.delete(msg.request_id);
+      msg.error ? cb.reject(new Error(msg.error)) : cb.resolve(msg.manifest!);
+    }
+    return;
   }
 
-  private _send(msg: _ScriptMsg): void {
-    process.stdout.write(JSON.stringify(msg) + "\n");
+  if (msg.type === "ModMessageReplyDelivered") {
+    const cb = _msgCallbacks.get(msg.request_id);
+    if (cb) {
+      _msgCallbacks.delete(msg.request_id);
+      cb.resolve(msg.payload);
+    }
+    return;
   }
 
-  /** Log a message via the engine logger. Output includes timestamp and mod ID. */
-  log(level: "info" | "warn" | "error", message: string): void {
-    this._send({ type: "Log", level, message });
+  if (msg.type === "ModMessageReceived") {
+    const handlers = _handlers.get("mod_message");
+    if (handlers) {
+      const payload: EventPayloads["mod_message"] = {
+        source_mod_id: msg.source_mod_id,
+        message: msg.payload,
+        ...(msg.request_id !== null && { request_id: msg.request_id }),
+      };
+      for (const fn_ of handlers) fn_(payload);
+    }
+    return;
   }
 
-  /** Set the title of the active window. */
-  setWindowTitle(title: string): void {
-    this._send({ type: "SetWindowTitle", title });
-  }
-
-  spawnSprite(entity_id: string, texture: string, position: [number, number, number], scale: [number, number, number] = [1, 1, 1]): void {
-    this._send({ type: "SpawnSprite", entity_id, texture, position, scale });
-  }
-
-  moveEntity(entity_id: string, position: [number, number, number]): void {
-    this._send({ type: "MoveEntity", entity_id, position });
-  }
-
-  destroyEntity(entity_id: string): void {
-    this._send({ type: "DestroyEntity", entity_id });
-  }
-
-  requestAsset(request_id: string, path: string): void {
-    this._send({ type: "AssetRequest", request_id, path });
-  }
-
-  /** Write a UTF-8 string to a sandboxed file for this mod. Path must not contain `..`. */
-  writeFile(path: string, data: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request_id = String(++this._fileReqCounter);
-      this._fileCallbacks.set(request_id, { resolve: () => resolve(), reject });
-      this._send({ type: "FileWrite", request_id, path, data_base64: Buffer.from(data, "utf8").toString("base64") });
-    });
-  }
-
-  /** Read a sandboxed file for this mod and return its contents as a UTF-8 string. */
-  readFile(path: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const request_id = String(++this._fileReqCounter);
-      this._fileCallbacks.set(request_id, {
-        resolve: (b64) => resolve(Buffer.from(b64!, "base64").toString("utf8")),
-        reject,
-      });
-      this._send({ type: "FileRead", request_id, path });
-    });
-  }
-
-  /** Delete a sandboxed file for this mod. */
-  deleteFile(path: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request_id = String(++this._fileReqCounter);
-      this._fileCallbacks.set(request_id, { resolve: () => resolve(), reject });
-      this._send({ type: "FileDelete", request_id, path });
-    });
+  for (const [event, msgType] of Object.entries(_EVENT_TYPE) as [EventName, _EngineMsg["type"]][]) {
+    if (msg.type !== msgType) continue;
+    const handlers = _handlers.get(event);
+    if (handlers) {
+      for (const fn_ of handlers) fn_(msg);
+    }
+    if (event === "exit") {
+      process.exit((msg as Extract<_EngineMsg, { type: "Shutdown" }>).exit_code);
+    }
   }
 }
 
-export const engine = new EngineApi();
+const _rl = createInterface({ input: process.stdin, terminal: false });
+_rl.on("line", (line) => {
+  try {
+    _dispatch(JSON.parse(line) as _EngineMsg);
+  } catch {
+    // ignore malformed messages
+  }
+});
+_rl.on("close", () => process.exit(0));
+
+// --- Public API namespaces ---
+
+/** Core engine events and logging. */
+export const Engine = {
+  /**
+   * Subscribe to an engine event. The handler is called each time the event fires.
+   * Registering a handler also sends a `Subscribe` message to the engine automatically
+   * (except for `mod_message`, which the engine routes unconditionally).
+   */
+  on<E extends EventName>(event: E, handler: (payload: EventPayloads[E]) => void): void {
+    if (!_handlers.has(event)) _handlers.set(event, new Set());
+    _handlers.get(event)!.add(handler as (payload: any) => void);
+    const msgType = _EVENT_TYPE[event];
+    if (msgType) _send({ type: "Subscribe", events: [msgType] });
+  },
+
+  /** Log a message via the engine logger. Output includes timestamp and mod ID. */
+  log(level: "info" | "warn" | "error", message: string): void {
+    _send({ type: "Log", level, message });
+  },
+};
+
+/** Window management. */
+export const Window = {
+  /** Set the title of the active window. */
+  setTitle(title: string): void {
+    _send({ type: "SetWindowTitle", title });
+  },
+};
+
+/** Sandboxed per-mod file I/O. Paths must not contain `..`. */
+export const File = {
+  /** Write a UTF-8 string to a sandboxed file for this mod. */
+  write(path: string, data: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request_id = String(++_reqCounter);
+      _fileCallbacks.set(request_id, { resolve: () => resolve(), reject });
+      _send({ type: "FileWrite", request_id, path, data_base64: Buffer.from(data, "utf8").toString("base64") });
+    });
+  },
+
+  /** Read a sandboxed file for this mod and return its contents as a UTF-8 string. */
+  read(path: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const request_id = String(++_reqCounter);
+      _fileCallbacks.set(request_id, {
+        resolve: (b64) => resolve(Buffer.from(b64!, "base64").toString("utf8")),
+        reject,
+      });
+      _send({ type: "FileRead", request_id, path });
+    });
+  },
+
+  /** Delete a sandboxed file for this mod. */
+  delete(path: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request_id = String(++_reqCounter);
+      _fileCallbacks.set(request_id, { resolve: () => resolve(), reject });
+      _send({ type: "FileDelete", request_id, path });
+    });
+  },
+};
+
+/** Scene entity management. */
+export const Scene = {
+  spawnSprite(entity_id: string, texture: string, position: [number, number, number], scale: [number, number, number] = [1, 1, 1]): void {
+    _send({ type: "SpawnSprite", entity_id, texture, position, scale });
+  },
+
+  moveEntity(entity_id: string, position: [number, number, number]): void {
+    _send({ type: "MoveEntity", entity_id, position });
+  },
+
+  destroyEntity(entity_id: string): void {
+    _send({ type: "DestroyEntity", entity_id });
+  },
+};
+
+/** Asset requests (VFS paths: `mod_id://relative/path`). */
+export const Assets = {
+  request(request_id: string, path: string): void {
+    _send({ type: "AssetRequest", request_id, path });
+  },
+};
+
+/** Query information about loaded mods. */
+export const Mods = {
+  /** Returns the manifests of all currently loaded mods in load order. */
+  list(): Promise<ModManifest[]> {
+    return new Promise((resolve, reject) => {
+      const request_id = String(++_reqCounter);
+      _modListCallbacks.set(request_id, { resolve, reject });
+      _send({ type: "ModListRequest", request_id });
+    });
+  },
+
+  /** Returns the manifest for a specific mod by ID. Rejects if the mod is not loaded. */
+  get(id: string): Promise<ModManifest> {
+    return new Promise((resolve, reject) => {
+      const request_id = String(++_reqCounter);
+      _modGetCallbacks.set(request_id, { resolve, reject });
+      _send({ type: "ModGetRequest", request_id, mod_id: id });
+    });
+  },
+};
+
+interface _MessageNamespace {
+  /** Send a fire-and-forget message to another mod. */
+  sendAndForget<T extends JsonValue>(id: string, message: T): void;
+  /**
+   * Send a message to another mod and wait for a reply.
+   * The receiving mod's handler must return a non-null value within `timeout` ms.
+   * Rejects with a timeout error if no reply arrives in time.
+   */
+  send<T extends JsonValue, U extends JsonValue>(id: string, message: T, timeout: number): Promise<U>;
+  /**
+   * Register a handler for incoming mod messages.
+   * Return a `JsonValue` to reply (only meaningful when the sender used `send`); return `null` to ignore.
+   * The `request_id` in the payload is an opaque engine token — do not inspect or store it.
+   */
+  registerMessageHandler(handler: (payload: EventPayloads["mod_message"]) => JsonValue | null): void;
+}
+
+/** Inter-mod communication. */
+export const Message: _MessageNamespace = {
+  sendAndForget<T extends JsonValue>(id: string, message: T): void {
+    _send({ type: "ModMessageSend", target_mod_id: id, request_id: null, payload: message });
+  },
+  send<T extends JsonValue, U extends JsonValue>(id: string, message: T, timeout: number): Promise<U> {
+    return new Promise<U>((resolve, reject) => {
+      const request_id = String(++_reqCounter);
+      const timer = setTimeout(() => {
+        _msgCallbacks.delete(request_id);
+        reject(new Error(`Message to '${id}' timed out after ${timeout}ms`));
+      }, timeout);
+      _msgCallbacks.set(request_id, {
+        resolve: (v) => { clearTimeout(timer); resolve(v as U); },
+        reject,
+      });
+      _send({ type: "ModMessageSend", target_mod_id: id, request_id, payload: message });
+    });
+  },
+  registerMessageHandler(handler: (payload: EventPayloads["mod_message"]) => JsonValue | null): void {
+    Engine.on("mod_message", (payload) => {
+      const result = handler(payload);
+      if (payload.request_id !== undefined && result !== null) {
+        _send({ type: "ModMessageReply", request_id: payload.request_id, payload: result });
+      }
+    });
+  },
+};

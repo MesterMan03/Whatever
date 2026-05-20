@@ -1,6 +1,7 @@
-use super::host::ScriptHost;
-use super::ipc::{EngineMessage, ScriptMessage};
+use super::host::{PendingReply, ScriptHost};
+use super::ipc::{EngineMessage, ModManifestDto, ScriptMessage};
 use crate::debug::DebugLogger;
+use crate::mods::ModRegistry;
 use base64::Engine as _;
 use std::sync::Arc;
 use winit::window::Window;
@@ -10,6 +11,7 @@ pub fn dispatch(
     msg: ScriptMessage,
     window: &Arc<Window>,
     script_host: &mut ScriptHost,
+    registry: &ModRegistry,
     game_id: &str,
     debug: &mut DebugLogger,
 ) {
@@ -95,6 +97,80 @@ pub fn dispatch(
                 error: result.err().map(|e| e.to_string()),
             };
             script_host.send(mod_id, &reply, debug);
+        }
+        ScriptMessage::ModListRequest { request_id } => {
+            let mods = registry
+                .iter()
+                .map(|lm| ModManifestDto::from(&lm.manifest))
+                .collect();
+            script_host.send(
+                mod_id,
+                &EngineMessage::ModListResponse { request_id, mods },
+                debug,
+            );
+        }
+        ScriptMessage::ModGetRequest {
+            request_id,
+            mod_id: target_id,
+        } => {
+            let reply = match registry.get(&target_id) {
+                Some(manifest) => EngineMessage::ModGetResponse {
+                    request_id,
+                    manifest: Some(ModManifestDto::from(manifest)),
+                    error: None,
+                },
+                None => EngineMessage::ModGetResponse {
+                    request_id,
+                    manifest: None,
+                    error: Some(format!("mod '{target_id}' not found")),
+                },
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+        ScriptMessage::ModMessageSend {
+            target_mod_id,
+            request_id,
+            payload,
+        } => {
+            if !script_host.has_process(&target_mod_id) {
+                tracing::warn!(mod_id, "ModMessageSend to unknown mod '{target_mod_id}'");
+                return;
+            }
+            // Build a namespaced key so two mods using the same numeric counter can't collide.
+            let namespaced_id = request_id.as_deref().map(|rid| format!("{mod_id}-{rid}"));
+            if let (Some(_), Some(rid)) = (&namespaced_id, &request_id) {
+                script_host.add_pending_reply(
+                    mod_id,
+                    rid,
+                    PendingReply {
+                        sender_mod_id: mod_id.to_owned(),
+                        original_request_id: rid.to_string(),
+                    },
+                );
+            }
+            // Forward the opaque namespaced key to the target — their lib echoes it back verbatim.
+            let outgoing = EngineMessage::ModMessageReceived {
+                source_mod_id: mod_id.to_owned(),
+                request_id: namespaced_id,
+                payload,
+            };
+            script_host.send(&target_mod_id, &outgoing, debug);
+        }
+        ScriptMessage::ModMessageReply {
+            request_id,
+            payload,
+        } => {
+            // request_id is the full namespaced key ("<sender_mod_id>-<original_id>") echoed by target.
+            match script_host.take_pending_reply(&request_id) {
+                Some(pending) => {
+                    let reply = EngineMessage::ModMessageReplyDelivered {
+                        request_id: pending.original_request_id,
+                        payload,
+                    };
+                    script_host.send(&pending.sender_mod_id, &reply, debug);
+                }
+                None => tracing::warn!(mod_id, "ModMessageReply for unknown key '{request_id}'"),
+            }
         }
     }
 }
