@@ -7,17 +7,24 @@ Message.registerMessageHandler((_) => {
 Console.register({
     name: "test",
     description: "Eyy, we're testing :D",
-    args: [{
+    subcommands: [{
         name: "subcommand",
         description: "Subcommand test :3",
-        required: false,
-        type: "int"
+        args: [{
+            name: "value",
+            description: "Test value !!",
+            required: false,
+            type: "int"
+        }],
+        handler: (args) => {
+            const value = args["value"];
+            if(value == null) {
+                return "Aww, nothing :(";
+            }
+            return "You have entered: " + value;
+        }
     }],
     handler: (args) => {
-        const subcommandArg = args["subcommand"];
-        if(subcommandArg != null) {
-            return "You have entered: " + subcommandArg;
-        }
-        return "Aww, nothing :(";
+        return "Nope, try again with the subcommand <3";
     }
 });

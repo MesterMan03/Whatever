@@ -65,3 +65,12 @@ bun run --cwd runtime build:types
 - No game logic in engine code
 - `mod.rs` files are re-exports only
 - Add dependencies only when correct implementation would take more than a day or requires significant platform complexity
+
+## Documentation
+
+**When modifying `runtime/index.ts`** (the `@whatever/api` scripting API), always update
+`docs/scripting-api.md` to reflect the changes. The doc must stay in sync with the actual
+exported namespaces, types, and IPC messages.
+
+**When the project layout changes** (new module added, directory renamed or removed, new
+top-level file), update the "Project Layout" block in `README.md` to match.

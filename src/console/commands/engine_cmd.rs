@@ -1,7 +1,7 @@
 use crate::console::types::{CommandContext, CommandNode, CommandResult, ParsedArgs};
 use std::sync::Arc;
 
-pub fn version_node() -> CommandNode {
+pub fn node() -> CommandNode {
     CommandNode::engine("engine", "Engine information")
         .with_subcommands(vec![
             CommandNode::engine("version", "Show engine version")

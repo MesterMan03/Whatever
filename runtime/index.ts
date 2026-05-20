@@ -15,7 +15,7 @@ type _EngineMsg =
   | { type: "Shutdown"; exit_code: number };
 
 type _ScriptMsg =
-  | { type: "RegisterCommand"; name: string; description: string; subcommands: _CommandNodeSpec[]; args: _ArgSpec[] }
+  | { type: "RegisterCommand"; name: string; description: string; subcommands: _CommandNodeSpec[]; args: _ArgSpec[]; has_handler: boolean }
   | { type: "CommandResponse"; request_id: string; output: string[]; error: string | null }
   | { type: "Subscribe"; events: string[] }
   | { type: "AssetRequest"; request_id: string; path: string }
@@ -313,6 +313,7 @@ type _CommandNodeSpec = {
   description: string;
   subcommands: _CommandNodeSpec[];
   args: _ArgSpec[];
+  has_handler: boolean;
 };
 
 // --- Inter-mod communication ---
@@ -368,24 +369,28 @@ export type CommandSpec = {
   handler?: (args: Record<string, string | number | boolean>) => string | string[] | Promise<string | string[]>;
 };
 
-// Handlers keyed by dot-joined command path (e.g. "mycmd" or "mycmd.sub")
+// Handlers and their arg specs, keyed by dot-joined command path (e.g. "mycmd" or "mycmd.sub")
 const _cmdHandlers = new Map<string, NonNullable<CommandSpec["handler"]>>();
+const _cmdArgSpecs = new Map<string, _ArgSpec[]>();
 
 function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpec {
   const path = pathPrefix ? `${pathPrefix}.${spec.name}` : spec.name;
+  const mappedArgs: _ArgSpec[] = (spec.args ?? []).map((a) => ({
+    name: a.name,
+    type: a.type,
+    required: a.required ?? false,
+    description: a.description ?? "",
+  }));
   if (spec.handler) {
     _cmdHandlers.set(path, spec.handler);
+    _cmdArgSpecs.set(path, mappedArgs);
   }
   return {
     name: spec.name,
     description: spec.description ?? "",
     subcommands: (spec.subcommands ?? []).map((s) => _specToInternal(s, path)),
-    args: (spec.args ?? []).map((a) => ({
-      name: a.name,
-      type: a.type,
-      required: a.required ?? false,
-      description: a.description ?? "",
-    })),
+    args: mappedArgs,
+    has_handler: !!spec.handler,
   };
 }
 
@@ -394,10 +399,13 @@ function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpe
 function _handleCommandInvoke(msg: Extract<_EngineMsg, { type: "CommandInvoke" }>): void {
   const handlerKey = msg.command_path.join(".");
   const handler = _cmdHandlers.get(handlerKey);
+  const argSpecs = _cmdArgSpecs.get(handlerKey) ?? [];
 
+  // Build args keyed by name (falling back to index if spec is missing)
   const argsRecord: Record<string, string | number | boolean> = {};
   msg.args.forEach((v, i) => {
-    argsRecord[String(i)] = v as string | number | boolean;
+    const name = argSpecs[i]?.name ?? String(i);
+    argsRecord[name] = v as string | number | boolean;
   });
 
   if (!handler) {
@@ -429,6 +437,7 @@ export const Console = {
       description: internal.description,
       subcommands: internal.subcommands,
       args: internal.args,
+      has_handler: internal.has_handler,
     });
   },
 };

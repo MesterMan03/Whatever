@@ -1,31 +1,10 @@
-/// Parse a raw input string into a command path and raw argument tokens.
-/// Handles basic quoting: "hello world" is one token.
-pub fn parse(input: &str) -> (Vec<String>, Vec<String>) {
-    let tokens = tokenize(input);
-    if tokens.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-
-    // First token is always the root command; subsequent tokens that don't
-    // look like positional args could be subcommands — the registry resolves that.
-    // We return all tokens and let the registry walk them.
-    let mut iter = tokens.into_iter();
-    let mut path = vec![iter.next().unwrap()];
-    let rest: Vec<String> = iter.collect();
-    (path.extend(rest.iter().cloned()), (path, rest)).1
-}
-
+/// Tokenize an input string, respecting double-quoted groups.
 pub fn tokenize_pub(input: &str) -> Vec<String> {
-    tokenize(input)
-}
-
-fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut in_quotes = false;
-    let mut chars = input.chars().peekable();
 
-    while let Some(c) = chars.next() {
+    for c in input.chars() {
         match c {
             '"' => in_quotes = !in_quotes,
             ' ' | '\t' if !in_quotes => {
@@ -41,33 +20,6 @@ fn tokenize(input: &str) -> Vec<String> {
         tokens.push(current);
     }
     tokens
-}
-
-/// Walk the token list against the command tree to split path from args.
-/// Returns (subcommand_path_tokens, arg_tokens).
-pub fn split_path_and_args(
-    tokens: &[String],
-    root_subcommands: &[crate::console::types::CommandNode],
-) -> (Vec<String>, Vec<String>) {
-    if tokens.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-
-    let mut path = vec![tokens[0].clone()];
-    let mut current_subs = root_subcommands;
-    let mut i = 1;
-
-    while i < tokens.len() {
-        if let Some(sub) = current_subs.iter().find(|s| s.name == tokens[i]) {
-            path.push(tokens[i].clone());
-            current_subs = &sub.subcommands;
-            i += 1;
-        } else {
-            break;
-        }
-    }
-
-    (path, tokens[i..].to_vec())
 }
 
 /// Parse raw arg strings into typed ArgValues according to specs.
@@ -87,7 +39,7 @@ pub fn parse_args(
             .unwrap_or("?");
         return Err(format!("missing required argument: <{missing}>"));
     }
-    if raw.len() > specs.len() && !specs.is_empty() {
+    if !specs.is_empty() && raw.len() > specs.len() {
         return Err(format!(
             "too many arguments: expected at most {}, got {}",
             specs.len(),
@@ -114,7 +66,12 @@ pub fn parse_args(
             ArgType::Bool => match raw_val.as_str() {
                 "true" | "1" | "yes" => ArgValue::Bool(true),
                 "false" | "0" | "no" => ArgValue::Bool(false),
-                _ => return Err(format!("argument <{}>: expected bool (true/false), got '{raw_val}'", spec.name)),
+                _ => {
+                    return Err(format!(
+                        "argument <{}>: expected bool (true/false), got '{raw_val}'",
+                        spec.name
+                    ))
+                }
             },
         };
         positional.push(val);

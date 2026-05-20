@@ -1,1 +1,1 @@
-import{Message as e}from"@whatever/api";e.registerMessageHandler((r)=>{return"Hi there! :D"});
+import{Console as n,Message as t}from"@whatever/api";t.registerMessageHandler((e)=>{return"Hi there! :D"});n.register({name:"test",description:"Eyy, we're testing :D",subcommands:[{name:"subcommand",description:"Subcommand test :3",args:[{name:"value",description:"Test value !!",required:!1,type:"int"}],handler:(e)=>{let r=e.value;if(r==null)return"Aww, nothing :(";return"You have entered: "+r}}],handler:(e)=>{return"Nope, try again with the subcommand <3"}});

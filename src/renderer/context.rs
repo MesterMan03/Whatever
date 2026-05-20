@@ -13,7 +13,8 @@ impl WgpuContext {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            // PRIMARY = Vulkan + Metal + DX12; skip GL/GLES to avoid libEGL noise on Linux
+            backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
 

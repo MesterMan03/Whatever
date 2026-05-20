@@ -242,6 +242,7 @@ impl Engine {
                     ref description,
                     ref subcommands,
                     ref args,
+                    has_handler,
                 } = msg
                 {
                     let mut node = command_node_from_spec(
@@ -250,6 +251,7 @@ impl Engine {
                             description: description.clone(),
                             subcommands: subcommands.clone(),
                             args: args.clone(),
+                            has_handler,
                         },
                         &mod_id,
                     );
@@ -381,9 +383,22 @@ impl ApplicationHandler for Engine {
                         self.console.toggle();
                         if self.console.is_open {
                             self.set_cursor_captured(false);
+                            // Release all held keys so camera doesn't get stuck
+                            if let Some(r) = self.renderer.as_mut() {
+                                r.camera_controller.release_all();
+                            }
+                            self.input.keys_pressed.clear();
                         }
                         return;
                     }
+                }
+                // Escape closes the console when it is open
+                if code == KeyCode::Escape
+                    && event.state == ElementState::Pressed
+                    && self.console.is_open
+                {
+                    self.console.toggle();
+                    return;
                 }
             }
         }

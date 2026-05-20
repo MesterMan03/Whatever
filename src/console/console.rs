@@ -8,6 +8,9 @@ use crate::script::ipc::EngineMessage;
 use crate::vfs::Vfs;
 use egui::{Color32, Context, FontId, Key, Modifiers, RichText, ScrollArea, TextEdit};
 
+const INPUT_ROW_HEIGHT: f32 = 26.0;
+const MAX_COMPLETIONS: usize = 8;
+
 pub struct DevConsole {
     pub is_open: bool,
     input_buf: String,
@@ -19,11 +22,11 @@ pub struct DevConsole {
     completions: Vec<String>,
     completion_idx: usize,
     pub pending_invoke: Option<PendingInvoke>,
+    needs_focus: bool,
 }
 
 pub struct PendingInvoke {
     pub request_id: String,
-    pub mod_id: String,
 }
 
 pub enum ConsoleAction {
@@ -34,7 +37,7 @@ pub enum ConsoleAction {
 impl DevConsole {
     pub fn new() -> Self {
         let mut registry = CommandRegistry::new();
-        registry.register_engine(engine_cmd::version_node());
+        registry.register_engine(engine_cmd::node());
         registry.register_engine(markbench::node());
         registry.register_engine(mods_cmd::node());
         registry.register_engine(vfs_cmd::node());
@@ -53,15 +56,20 @@ impl DevConsole {
             completions: Vec::new(),
             completion_idx: 0,
             pending_invoke: None,
+            needs_focus: false,
         }
     }
 
     pub fn toggle(&mut self) {
         self.is_open = !self.is_open;
+        if self.is_open {
+            self.needs_focus = true;
+        } else {
+            self.completions.clear();
+        }
     }
 
     pub fn handle_command_response(&mut self, output: Vec<String>, error: Option<String>) {
-        // Remove the "waiting…" placeholder line
         if let Some(last) = self.output.last() {
             if matches!(last, OutputLine::Text(s) if s == "(waiting for mod response…)") {
                 self.output.pop();
@@ -77,7 +85,6 @@ impl DevConsole {
         }
     }
 
-    /// Render the console panel. Returns any IPC action the engine must perform.
     pub fn render(
         &mut self,
         ctx: &Context,
@@ -88,24 +95,47 @@ impl DevConsole {
             return ConsoleAction::None;
         }
 
+        let te_id = egui::Id::new("console_te");
         let mut action = ConsoleAction::None;
         let mut submitted_input: Option<String> = None;
+        let mut apply_completion: Option<String> = None;
 
         egui::TopBottomPanel::top("dev_console")
             .resizable(true)
-            .min_height(200.0)
-            .max_height(600.0)
-            .frame(egui::Frame::none().fill(Color32::from_rgba_premultiplied(20, 20, 25, 230)))
+            .default_height(320.0)
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(220, 220, 220));
-                ui.style_mut().spacing.item_spacing = egui::vec2(4.0, 2.0);
+                // Dark terminal background
+                let bg = Color32::from_rgba_premultiplied(18, 18, 24, 200);
+                ui.painter().rect_filled(ui.max_rect(), 0.0, bg);
+                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(210, 210, 210));
+                ui.style_mut().spacing.item_spacing = egui::vec2(4.0, 1.0);
 
-                let output_height = ui.available_height() - 52.0;
+                // Calculate heights
+                let completion_rows = self.completions.len().min(MAX_COMPLETIONS) as f32;
+                let completion_area_h = if self.completions.is_empty() {
+                    0.0
+                } else {
+                    // 18.0 per item, plus 1.0 spacing per item
+                    let mut h = completion_rows * 19.0 + 6.0;
 
-                // Output history
+                    // Account for the "+ X more" label
+                    if self.completions.len() > MAX_COMPLETIONS {
+                        h += 15.0; // Approximate height of the extra label + spacing
+                    }
+
+                    h
+                };
+                let output_h = (ui.available_height()
+                    - INPUT_ROW_HEIGHT
+                    - completion_area_h
+                    - 8.0) // separator + padding
+                    .max(40.0);
+
+                // ── Output scroll area ─────────────────────────────────────────
                 ScrollArea::vertical()
                     .id_salt("console_output")
-                    .max_height(output_height.max(80.0))
+                    .max_height(output_h)
+                    .min_scrolled_height(output_h)
                     .auto_shrink([false, false])
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
@@ -116,7 +146,7 @@ impl DevConsole {
                                     ui.label(
                                         RichText::new(s)
                                             .font(FontId::monospace(13.0))
-                                            .color(Color32::from_rgb(100, 200, 255)),
+                                            .color(Color32::from_rgb(80, 180, 255)),
                                     );
                                 }
                                 OutputLine::Text(s) => {
@@ -131,70 +161,77 @@ impl DevConsole {
                                 }
                             }
                         }
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
                     });
 
                 ui.separator();
 
-                // Completion suggestions
+                // ── Completion dropdown list ───────────────────────────────────
                 if !self.completions.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_space(6.0);
-                        for (i, c) in self.completions.iter().enumerate() {
-                            let color = if i == self.completion_idx {
-                                Color32::from_rgb(255, 220, 80)
-                            } else {
-                                Color32::from_rgb(140, 140, 140)
-                            };
-                            ui.label(RichText::new(c).font(FontId::monospace(12.0)).color(color));
-                            if i + 1 < self.completions.len() {
-                                ui.label(
-                                    RichText::new("  ")
-                                        .font(FontId::monospace(12.0)),
-                                );
-                            }
+                    let shown = self.completions.len().min(MAX_COMPLETIONS);
+                    for i in 0..shown {
+                        let c = &self.completions[i];
+                        let selected = i == self.completion_idx;
+
+                        let item_bg = if selected {
+                            Color32::from_rgb(35, 65, 115)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 18.0),
+                            egui::Sense::click(),
+                        );
+                        ui.painter().rect_filled(rect, 2.0, item_bg);
+                        ui.painter().text(
+                            rect.left_center() + egui::vec2(6.0, 0.0),
+                            egui::Align2::LEFT_CENTER,
+                            c,
+                            FontId::monospace(12.0),
+                            if selected { Color32::WHITE } else { Color32::from_rgb(160, 160, 160) },
+                        );
+
+                        if response.clicked() {
+                            apply_completion = Some(c.clone());
                         }
-                    });
+                    }
+                    if self.completions.len() > MAX_COMPLETIONS {
+                        ui.label(
+                            RichText::new(format!(
+                                "  … {} more",
+                                self.completions.len() - MAX_COMPLETIONS
+                            ))
+                            .font(FontId::monospace(11.0))
+                            .color(Color32::DARK_GRAY),
+                        );
+                    }
                 }
 
-                // Input row
-                ui.horizontal(|ui| {
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new("> ")
-                            .font(FontId::monospace(13.0))
-                            .color(Color32::from_rgb(100, 200, 255)),
-                    );
+                // ── Key handling (before TextEdit so Tab doesn't trigger focus traversal) ──
+                let tab   = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
+                let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+                let up    = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
+                let down  = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
+                let esc   = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
 
-                    let te = TextEdit::singleline(&mut self.input_buf)
-                        .font(FontId::monospace(13.0))
-                        .desired_width(f32::INFINITY)
-                        .frame(false);
-                    let response = ui.add_sized([ui.available_width(), 22.0], te);
-                    response.request_focus();
+                if esc {
+                    self.completions.clear();
+                    self.completion_idx = 0;
+                }
 
-                    if response.changed() {
-                        self.completions =
-                            completer::complete(&self.input_buf, &self.registry.roots);
-                        self.completion_idx = 0;
-                        self.history_pos = None;
-                    }
+                // Tab applies the currently highlighted completion
+                if tab && !self.completions.is_empty() {
+                    apply_completion = Some(self.completions[self.completion_idx].clone());
+                }
 
-                    // Key handling
-                    let tab = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
-                    let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-                    let up = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
-                    let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
-
-                    if tab && !self.completions.is_empty() {
-                        let c = self.completions[self.completion_idx].clone();
-                        self.input_buf = if c.contains('<') { c } else { format!("{c} ") };
-                        self.completions =
-                            completer::complete(&self.input_buf, &self.registry.roots);
-                        self.completion_idx = 0;
-                    }
-
-                    if up && !self.history.is_empty() {
+                // Arrow keys: navigate completions when visible, history otherwise
+                if up {
+                    if !self.completions.is_empty() {
+                        let max = self.completions.len().min(MAX_COMPLETIONS);
+                        self.completion_idx =
+                            if self.completion_idx == 0 { max - 1 } else { self.completion_idx - 1 };
+                    } else if !self.history.is_empty() {
                         let pos = match self.history_pos {
                             None => self.history.len() - 1,
                             Some(0) => 0,
@@ -202,10 +239,17 @@ impl DevConsole {
                         };
                         self.history_pos = Some(pos);
                         self.input_buf = self.history[pos].clone();
-                        self.completions.clear();
+                        self.completions =
+                            completer::complete(&self.input_buf, &self.registry.roots);
+                        self.completion_idx = 0;
                     }
+                }
 
-                    if down {
+                if down {
+                    if !self.completions.is_empty() {
+                        let max = self.completions.len().min(MAX_COMPLETIONS);
+                        self.completion_idx = (self.completion_idx + 1) % max;
+                    } else {
                         match self.history_pos {
                             None => {}
                             Some(n) if n + 1 >= self.history.len() => {
@@ -216,22 +260,76 @@ impl DevConsole {
                             Some(n) => {
                                 self.history_pos = Some(n + 1);
                                 self.input_buf = self.history[n + 1].clone();
-                                self.completions.clear();
+                                self.completions =
+                                    completer::complete(&self.input_buf, &self.registry.roots);
+                                self.completion_idx = 0;
                             }
                         }
                     }
+                }
 
-                    if enter {
-                        let trimmed = self.input_buf.trim().to_owned();
-                        if !trimmed.is_empty() {
-                            submitted_input = Some(trimmed);
-                            self.input_buf.clear();
-                            self.completions.clear();
-                            self.history_pos = None;
-                        }
+                if enter {
+                    let trimmed = self.input_buf.trim().to_owned();
+                    if !trimmed.is_empty() {
+                        submitted_input = Some(trimmed);
+                        self.input_buf.clear();
+                        self.completions.clear();
+                        self.completion_idx = 0;
+                        self.history_pos = None;
+                    }
+                }
+
+                // ── Input row ─────────────────────────────────────────────────
+                ui.horizontal(|ui| {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new("> ")
+                            .font(FontId::monospace(13.0))
+                            .color(Color32::from_rgb(80, 180, 255)),
+                    );
+
+                    let te = TextEdit::singleline(&mut self.input_buf)
+                        .font(FontId::monospace(13.0))
+                        .desired_width(f32::INFINITY)
+                        .frame(false)
+                        .id(te_id);
+                    let response = ui.add_sized([ui.available_width(), INPUT_ROW_HEIGHT], te);
+
+                    if self.needs_focus || !response.has_focus() {
+                        response.request_focus();
+                        self.needs_focus = false;
+                    }
+
+                    if response.changed() {
+                        self.completions =
+                            completer::complete(&self.input_buf, &self.registry.roots);
+                        self.completion_idx = 0;
+                        self.history_pos = None;
                     }
                 });
+
+                // Fill any remaining space so egui's Resize widget never auto-shrinks the panel.
+                let remaining = ui.available_height();
+                if remaining > 0.0 {
+                    ui.allocate_space(egui::vec2(ui.available_width(), remaining));
+                }
             });
+
+        // Apply clicked / Tab'd completion outside the closure
+        if let Some(c) = apply_completion {
+            self.input_buf = if c.contains('<') { c } else { format!("{c} ") };
+            self.completions = completer::complete(&self.input_buf, &self.registry.roots);
+
+            // Move cursor to end of the newly applied text
+            let char_count = self.input_buf.chars().count();
+            if let Some(mut state) = TextEdit::load_state(ctx, te_id) {
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(char_count),
+                    egui::text::CCursor::new(char_count),
+                )));
+                TextEdit::store_state(ctx, te_id, state);
+            }
+        }
 
         if let Some(input) = submitted_input {
             self.history.push(input.clone());
@@ -254,7 +352,7 @@ impl DevConsole {
             return ConsoleAction::None;
         }
 
-        // Built-in special commands handled here (need registry access)
+        // Built-in special commands (need registry access, handled inline)
         match tokens[0].as_str() {
             "clear" => {
                 self.output.clear();
@@ -268,75 +366,61 @@ impl DevConsole {
                 return ConsoleAction::None;
             }
             "echo" => {
-                let text = tokens[1..].join(" ");
-                self.output.push(OutputLine::Text(text));
+                self.output.push(OutputLine::Text(tokens[1..].join(" ")));
                 return ConsoleAction::None;
             }
             _ => {}
         }
 
-        // Registry lookup
         let root_name = &tokens[0];
         let root_node = match self.registry.roots.iter().find(|n| n.name == *root_name) {
             Some(n) => n,
             None => {
                 self.output.push(OutputLine::Error(format!(
-                    "unknown command '{root_name}' — type 'help' for a list"
+                    "unknown command '{root_name}' — type 'help'"
                 )));
                 return ConsoleAction::None;
             }
         };
 
-        // Walk subcommands to find deepest matching node
-        // We need owned data to avoid borrow issues
-        let mut path_indices: Vec<usize> = Vec::new(); // indices into roots/subcommands
+        // Walk subcommands
         let mut node: &CommandNode = root_node;
         let mut arg_start = 1usize;
-
-        'walk: loop {
+        loop {
             if arg_start >= tokens.len() {
                 break;
             }
-            for (idx, sub) in node.subcommands.iter().enumerate() {
-                if sub.name == tokens[arg_start] {
-                    path_indices.push(idx);
-                    node = &node.subcommands[path_indices.last().copied().unwrap()];
-                    arg_start += 1;
-                    continue 'walk;
-                }
+            if let Some(sub) = node.subcommands.iter().find(|s| s.name == tokens[arg_start]) {
+                node = sub;
+                arg_start += 1;
+            } else {
+                break;
             }
-            break;
         }
 
-        // Re-resolve node (borrow checker) by cloning what we need
-        let node_clone = node.clone();
+        let node = node.clone();
         let raw_args: Vec<String> = tokens[arg_start..].to_vec();
 
-        if node_clone.handler.is_none() {
-            let subs: Vec<&str> = node_clone.subcommands.iter().map(|s| s.name.as_str()).collect();
-            self.output.push(OutputLine::Error(format!(
-                "incomplete command — subcommands: {}",
-                subs.join(", ")
-            )));
-            return ConsoleAction::None;
-        }
-
-        match &node_clone.source {
+        match &node.source {
             CommandSource::Engine => {
-                let parsed = match parser::parse_args(&raw_args, &node_clone.args) {
+                if node.handler.is_none() {
+                    let subs: Vec<&str> =
+                        node.subcommands.iter().map(|s| s.name.as_str()).collect();
+                    self.output.push(OutputLine::Error(format!(
+                        "incomplete command — subcommands: {}",
+                        subs.join(", ")
+                    )));
+                    return ConsoleAction::None;
+                }
+                let parsed = match parser::parse_args(&raw_args, &node.args) {
                     Ok(p) => p,
                     Err(e) => {
                         self.output.push(OutputLine::Error(e));
                         return ConsoleAction::None;
                     }
                 };
-                let ctx = CommandContext {
-                    mod_registry,
-                    vfs,
-                    fps: self.fps,
-                };
-                let handler = node_clone.handler.clone().unwrap();
-                match handler(parsed, &ctx) {
+                let ctx = CommandContext { mod_registry, vfs, fps: self.fps };
+                match (node.handler.unwrap())(parsed, &ctx) {
                     Ok(lines) => {
                         for line in lines {
                             self.output.push(OutputLine::Text(line));
@@ -347,6 +431,15 @@ impl DevConsole {
                 ConsoleAction::None
             }
             CommandSource::Mod(mod_id) => {
+                if node.handler.is_none() {
+                    let subs: Vec<&str> =
+                        node.subcommands.iter().map(|s| s.name.as_str()).collect();
+                    self.output.push(OutputLine::Error(format!(
+                        "incomplete command — subcommands: {}",
+                        subs.join(", ")
+                    )));
+                    return ConsoleAction::None;
+                }
                 let request_id = format!(
                     "cmd_{:x}",
                     std::time::SystemTime::now()
@@ -354,7 +447,6 @@ impl DevConsole {
                         .map(|d| d.as_nanos())
                         .unwrap_or(0)
                 );
-                // Include root name so the script knows which command was invoked
                 let command_path: Vec<String> = tokens[0..arg_start].to_vec();
                 let args_json: Vec<serde_json::Value> = raw_args
                     .iter()
@@ -363,10 +455,7 @@ impl DevConsole {
 
                 self.output
                     .push(OutputLine::Text("(waiting for mod response…)".into()));
-                self.pending_invoke = Some(PendingInvoke {
-                    request_id: request_id.clone(),
-                    mod_id: mod_id.clone(),
-                });
+                self.pending_invoke = Some(PendingInvoke { request_id: request_id.clone() });
 
                 ConsoleAction::SendIpc {
                     mod_id: mod_id.clone(),
@@ -381,19 +470,16 @@ impl DevConsole {
     }
 
     fn run_help(&self, command: Option<&str>) -> Vec<String> {
-        // Add the special built-ins that aren't in the registry
         let builtins = [
             ("help [command]", "Show this help or details for a command"),
-            ("clear", "Clear the console output"),
-            ("echo <text…>", "Echo text back to the console"),
+            ("clear", "Clear console output"),
+            ("echo <text…>", "Echo text back"),
         ];
 
         if let Some(cmd) = command {
-            // Try to find in registry
             if let Some(node) = self.registry.roots.iter().find(|n| n.name == cmd) {
-                return describe_node(node, &[]);
+                return describe_node(node);
             }
-            // Check builtins
             for (name, desc) in &builtins {
                 if name.starts_with(cmd) {
                     return vec![format!("{name}  —  {desc}")];
@@ -404,17 +490,23 @@ impl DevConsole {
 
         let mut lines = vec!["Available commands:".into(), String::new()];
         for (name, desc) in &builtins {
-            lines.push(format!("  {name:<28}{desc}"));
+            lines.push(format!("  {name:<30}{desc}"));
         }
         for node in &self.registry.roots {
             if node.subcommands.is_empty() {
-                let usage = format_usage(node);
-                lines.push(format!("  {usage:<28}{}", node.description));
+                lines.push(format!(
+                    "  {:<30}{}",
+                    format_usage(node),
+                    node.description
+                ));
             } else {
-                lines.push(format!("  {:<28}{}", node.name, node.description));
+                lines.push(format!("  {:<30}{}", node.name, node.description));
                 for sub in &node.subcommands {
-                    let usage = format!("{} {}", node.name, format_usage(sub));
-                    lines.push(format!("    {usage:<26}{}", sub.description));
+                    lines.push(format!(
+                        "    {:<28}{}",
+                        format!("{} {}", node.name, format_usage(sub)),
+                        sub.description
+                    ));
                 }
             }
         }
@@ -434,12 +526,9 @@ fn format_usage(node: &CommandNode) -> String {
     s
 }
 
-fn describe_node(node: &CommandNode, path: &[&str]) -> Vec<String> {
-    let mut lines = vec![
-        format!("  {}", node.description),
-        String::new(),
-        format!("usage: {} {}", path.join(" "), format_usage(node)).trim().to_owned(),
-    ];
+fn describe_node(node: &CommandNode) -> Vec<String> {
+    let mut lines = vec![format!("  {}", node.description), String::new()];
+    lines.push(format!("usage:  {}", format_usage(node)));
     if !node.subcommands.is_empty() {
         lines.push(String::new());
         lines.push("subcommands:".into());
@@ -452,7 +541,10 @@ fn describe_node(node: &CommandNode, path: &[&str]) -> Vec<String> {
         lines.push("arguments:".into());
         for arg in &node.args {
             let req = if arg.required { "required" } else { "optional" };
-            lines.push(format!("  <{}>  ({req})  {}", arg.name, arg.description));
+            lines.push(format!(
+                "  <{}>  ({req})  {}",
+                arg.name, arg.description
+            ));
         }
     }
     lines

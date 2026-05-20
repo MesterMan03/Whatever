@@ -31,23 +31,33 @@ cargo test
 ## Project Layout
 
 ```
-mods/               Engine-shipped mods (tracked in git)
-  core/             Built-in core mod (shaders, base assets)
-  script-test/      Scripting API integration test
-mods_user/          User-installed mods (gitignored)
-runtime/            @whatever/api — TypeScript scripting API package
-  index.ts          Source
-  index.d.ts        Generated type declarations (for IDE autocomplete)
+mods/                   Engine-shipped mods (tracked in git)
+  core/                 Built-in core mod (shaders, base assets, dev commands)
+    src/                TypeScript source for the core script
+    scripts/            Compiled JS entry point (built from src/ via bun build:core)
+  script_test/          Scripting API integration test
+mods_user/              User-installed mods (gitignored)
+runtime/                @whatever/api — TypeScript scripting API package
+  index.ts              Source
+  index.d.ts            Generated type declarations (for IDE autocomplete)
 src/
-  engine.rs         Main loop, owns all subsystems
-  script/           Bun subprocess host + NDJSON IPC
-  renderer/         wgpu context, camera, sprites
-  vfs/              Layered virtual filesystem
-  mods/             Mod manifest, discovery, toposort
-  debug.rs          Debug flags + file loggers
-  input.rs          Keyboard/mouse accumulator
+  main.rs               CLI args, Engine::new(), engine.run()
+  engine.rs             Engine struct; owns all subsystems; drives main loop
+  debug.rs              Debug flags + file loggers
+  input.rs              Keyboard/mouse accumulator
+  console/              Developer console (egui UI, command registry, tab completion)
+    commands/           Built-in engine commands (version, markbench, mods, vfs)
+    completer.rs        Tab-completion logic
+    console.rs          DevConsole render + execute
+    parser.rs           Command tokenizer and argument parser
+    registry.rs         CommandRegistry + script-to-node conversion
+    types.rs            Shared types (CommandNode, ArgSpec, …)
+  script/               Bun subprocess host + NDJSON IPC
+  renderer/             wgpu context, camera, sprites
+  vfs/                  Layered virtual filesystem
+  mods/                 Mod manifest, discovery, toposort, registry
 docs/
-  scripting-api.md  Full scripting API reference
+  scripting-api.md      Full scripting API reference
 ```
 
 ## Mod System

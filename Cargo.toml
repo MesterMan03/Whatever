@@ -27,6 +27,7 @@ base64         = "0.22"
 egui = "0.29"
 egui-wgpu = "0.29"
 egui-winit = "0.29"
+chrono = "0.4.44"
 
 [profile.dev]
 opt-level = 1

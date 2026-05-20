@@ -88,7 +88,8 @@ impl DebugLogger {
 
     fn write_line(writer: &mut Option<BufWriter<File>>, msg: &str) {
         if let Some(w) = writer {
-            let _ = writeln!(w, "{msg}");
+            let now = chrono::Local::now().format("%H:%M:%S");
+            let _ = writeln!(w, "[{now}] {msg}");
             let _ = w.flush();
         }
     }

@@ -60,6 +60,15 @@ impl CameraController {
         }
     }
 
+    pub fn release_all(&mut self) {
+        self.move_forward = false;
+        self.move_backward = false;
+        self.move_left = false;
+        self.move_right = false;
+        self.move_up = false;
+        self.move_down = false;
+    }
+
     pub fn process_key(&mut self, key: winit::keyboard::KeyCode, pressed: bool) {
         use winit::keyboard::KeyCode;
         match key {

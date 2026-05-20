@@ -1,4 +1,5 @@
-use crate::console::types::{ArgSpec, ArgType, CommandNode, CommandSource};
+use crate::console::types::{ArgSpec, ArgType, CommandHandler, CommandNode, CommandSource};
+use std::sync::Arc;
 
 fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
@@ -9,6 +10,12 @@ pub fn command_node_from_spec(
     spec: &crate::script::ipc::CommandNodeSpec,
     mod_id: &str,
 ) -> CommandNode {
+    // A sentinel marks that the script side has a handler; it is never called directly.
+    let handler: Option<CommandHandler> = if spec.has_handler {
+        Some(Arc::new(|_, _| Ok(vec![])))
+    } else {
+        None
+    };
     CommandNode {
         name: spec.name.clone(),
         description: spec.description.clone(),
@@ -32,7 +39,7 @@ pub fn command_node_from_spec(
                 description: a.description.clone(),
             })
             .collect(),
-        handler: None,
+        handler,
         source: CommandSource::Mod(mod_id.to_owned()),
     }
 }
@@ -87,7 +94,7 @@ impl CommandRegistry {
         Some(namespaced)
     }
 
-    /// Walk the path (first element = root command name, rest = subcommand names).
+    #[allow(dead_code)]
     pub fn find(&self, path: &[&str]) -> Option<&CommandNode> {
         if path.is_empty() {
             return None;
@@ -102,6 +109,7 @@ impl CommandRegistry {
     /// Return completion candidates given a partial path (as string slices).
     /// `partial_path` is the already-complete segments; `partial_last` is what
     /// the user has typed so far for the next segment (may be empty).
+    #[allow(dead_code)]
     pub fn completions(&self, partial_path: &[&str], partial_last: &str) -> Vec<String> {
         let candidates: &[CommandNode] = if partial_path.is_empty() {
             &self.roots

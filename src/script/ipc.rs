@@ -175,6 +175,8 @@ pub enum ScriptMessage {
         description: String,
         subcommands: Vec<CommandNodeSpec>,
         args: Vec<ArgSpecDto>,
+        #[serde(default)]
+        has_handler: bool,
     },
     CommandResponse {
         request_id: String,
@@ -189,6 +191,8 @@ pub struct CommandNodeSpec {
     pub description: String,
     pub subcommands: Vec<CommandNodeSpec>,
     pub args: Vec<ArgSpecDto>,
+    #[serde(default)]
+    pub has_handler: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
