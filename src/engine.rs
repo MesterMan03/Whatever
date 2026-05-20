@@ -117,7 +117,7 @@ impl Engine {
                         index += 1;
                     }
                     Err(e) => {
-                        tracing::warn!("failed to load texture {}: {e}", vfs_path.to_string())
+                        tracing::warn!("failed to load texture {}: {e}", vfs_path.as_string())
                     }
                 }
             }

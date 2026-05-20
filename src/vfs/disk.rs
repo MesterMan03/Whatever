@@ -18,12 +18,12 @@ impl DiskLayer {
 impl Vfs for DiskLayer {
     fn read(&self, path: &VfsPath) -> Result<Vec<u8>, VfsError> {
         if path.mod_id != self.mod_id {
-            return Err(VfsError::NotFound(path.to_string()));
+            return Err(VfsError::NotFound(path.as_string()));
         }
         let full = self.root.join(&path.path);
         std::fs::read(&full).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                VfsError::NotFound(path.to_string())
+                VfsError::NotFound(path.as_string())
             } else {
                 VfsError::Io(e)
             }

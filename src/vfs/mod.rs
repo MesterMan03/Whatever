@@ -21,7 +21,7 @@ impl VfsPath {
             path: path.to_owned(),
         })
     }
-    pub fn to_string(&self) -> String {
+    pub fn as_string(&self) -> String {
         format!("{}://{}", self.mod_id, self.path)
     }
 }

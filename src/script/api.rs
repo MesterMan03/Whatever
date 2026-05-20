@@ -116,7 +116,7 @@ pub fn dispatch(
             let reply = match registry.get(&target_id) {
                 Some(manifest) => EngineMessage::ModGetResponse {
                     request_id,
-                    manifest: Some(ModManifestDto::from(manifest)),
+                    manifest: Some(Box::new(ModManifestDto::from(manifest))),
                     error: None,
                 },
                 None => EngineMessage::ModGetResponse {

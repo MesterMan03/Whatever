@@ -19,23 +19,23 @@ impl LayeredVfs {
     }
 
     pub fn add_override(&mut self, from: VfsPath, to: VfsPath) {
-        self.overrides.insert(from.to_string(), to);
+        self.overrides.insert(from.as_string(), to);
     }
 }
 
 impl Vfs for LayeredVfs {
     fn read(&self, path: &VfsPath) -> Result<Vec<u8>, VfsError> {
-        let resolved = self.overrides.get(&path.to_string()).unwrap_or(path);
+        let resolved = self.overrides.get(&path.as_string()).unwrap_or(path);
         for layer in self.layers.iter().rev() {
             if layer.exists(resolved) {
                 return layer.read(resolved);
             }
         }
-        Err(VfsError::NotFound(path.to_string()))
+        Err(VfsError::NotFound(path.as_string()))
     }
 
     fn exists(&self, path: &VfsPath) -> bool {
-        let resolved = self.overrides.get(&path.to_string()).unwrap_or(path);
+        let resolved = self.overrides.get(&path.as_string()).unwrap_or(path);
         self.layers.iter().any(|l| l.exists(resolved))
     }
 

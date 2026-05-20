@@ -14,13 +14,13 @@ pub fn load_from_vfs(
 ) -> anyhow::Result<GpuTexture> {
     let bytes = vfs
         .read(path)
-        .with_context(|| format!("reading {}", path.to_string()))?;
+        .with_context(|| format!("reading {}", path.as_string()))?;
     let img = image::load_from_memory(&bytes).context("decode image")?;
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(&path.to_string()),
+        label: Some(&path.as_string()),
         size: wgpu::Extent3d {
             width,
             height,

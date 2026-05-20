@@ -87,7 +87,7 @@ pub enum EngineMessage {
     },
     ModGetResponse {
         request_id: String,
-        manifest: Option<ModManifestDto>,
+        manifest: Option<Box<ModManifestDto>>,
         error: Option<String>,
     },
     ModMessageReceived {

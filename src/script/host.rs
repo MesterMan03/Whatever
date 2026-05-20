@@ -127,11 +127,10 @@ impl ScriptHost {
     }
 
     pub fn send(&mut self, mod_id: &str, msg: &EngineMessage, debug: &mut DebugLogger) {
-        if let Some(proc) = self.processes.get_mut(mod_id) {
-            if let Err(e) = proc.send(msg, debug) {
+        if let Some(proc) = self.processes.get_mut(mod_id)
+            && let Err(e) = proc.send(msg, debug) {
                 tracing::warn!(mod_id, "send error: {e}");
             }
-        }
     }
 
     pub fn drain_messages(&mut self, debug: &mut DebugLogger) -> Vec<(String, ScriptMessage)> {

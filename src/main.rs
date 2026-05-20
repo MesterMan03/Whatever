@@ -10,7 +10,6 @@ use anyhow::Context;
 use debug::DebugConfig;
 use engine::Engine;
 use std::env;
-use std::path::PathBuf;
 use winit::event_loop::EventLoop;
 
 fn main() -> anyhow::Result<()> {
@@ -20,7 +19,7 @@ fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = env::args().collect();
     let debug_config = DebugConfig::from_args(&args);
-    let cwd = PathBuf::from(env::current_dir().context("get cwd")?);
+    let cwd = env::current_dir().context("get cwd")?;
 
     let mut engine = Engine::new(&debug_config, &cwd)?;
 
