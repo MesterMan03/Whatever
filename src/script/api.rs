@@ -156,6 +156,12 @@ pub fn dispatch(
             };
             script_host.send(&target_mod_id, &outgoing, debug);
         }
+        ScriptMessage::RegisterCommand { name, .. } => {
+            tracing::warn!(mod_id, "RegisterCommand for '{name}' reached dispatcher unexpectedly");
+        }
+        ScriptMessage::CommandResponse { request_id, .. } => {
+            tracing::warn!(mod_id, "CommandResponse '{request_id}' reached dispatcher unexpectedly");
+        }
         ScriptMessage::ModMessageReply {
             request_id,
             payload,

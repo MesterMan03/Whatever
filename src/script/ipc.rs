@@ -102,6 +102,11 @@ pub enum EngineMessage {
     Shutdown {
         exit_code: i32,
     },
+    CommandInvoke {
+        request_id: String,
+        command_path: Vec<String>,
+        args: Vec<serde_json::Value>,
+    },
 }
 
 // --- Script → Engine messages ---
@@ -165,4 +170,34 @@ pub enum ScriptMessage {
         request_id: String,
         payload: serde_json::Value,
     },
+    RegisterCommand {
+        name: String,
+        description: String,
+        subcommands: Vec<CommandNodeSpec>,
+        args: Vec<ArgSpecDto>,
+    },
+    CommandResponse {
+        request_id: String,
+        output: Vec<String>,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommandNodeSpec {
+    pub name: String,
+    pub description: String,
+    pub subcommands: Vec<CommandNodeSpec>,
+    pub args: Vec<ArgSpecDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArgSpecDto {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub arg_type: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: String,
 }

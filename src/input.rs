@@ -34,4 +34,8 @@ impl InputState {
         self.mouse_delta = (0.0, 0.0);
         delta
     }
+
+    pub fn is_pressed(&self, key: KeyCode) -> bool {
+        self.keys_pressed.contains(&key)
+    }
 }

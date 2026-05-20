@@ -13,6 +13,12 @@ use anyhow::{Context, anyhow};
 use bytemuck::cast_slice;
 use glam::Mat4;
 
+pub struct EguiOutput {
+    pub paint_jobs: Vec<egui::ClippedPrimitive>,
+    pub textures_delta: egui::TexturesDelta,
+    pub screen_descriptor: egui_wgpu::ScreenDescriptor,
+}
+
 pub struct Renderer {
     pub ctx: WgpuContext,
     pub camera: Camera,
@@ -21,6 +27,7 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    egui_renderer: egui_wgpu::Renderer,
 }
 
 impl Renderer {
@@ -114,6 +121,14 @@ impl Renderer {
         let aspect = ctx.config.width as f32 / ctx.config.height as f32;
         let camera = Camera::new(aspect);
 
+        let egui_renderer = egui_wgpu::Renderer::new(
+            &ctx.device,
+            ctx.config.format,
+            None,
+            1,
+            false,
+        );
+
         Ok(Renderer {
             ctx,
             camera,
@@ -122,10 +137,11 @@ impl Renderer {
             pipeline,
             camera_buffer,
             camera_bind_group,
+            egui_renderer,
         })
     }
 
-    pub fn render(&mut self) -> anyhow::Result<()> {
+    pub fn render(&mut self, egui_output: Option<&EguiOutput>) -> anyhow::Result<()> {
         let vp: Mat4 = self.camera.view_proj();
         let vp_arr: [f32; 16] = vp.to_cols_array();
         self.ctx
@@ -145,6 +161,24 @@ impl Renderer {
                 label: Some("render_encoder"),
             });
 
+        // Upload egui texture deltas and staging buffers before any render pass
+        let egui_staging = if let Some(egui) = egui_output {
+            for (id, delta) in &egui.textures_delta.set {
+                self.egui_renderer
+                    .update_texture(&self.ctx.device, &self.ctx.queue, *id, delta);
+            }
+            self.egui_renderer.update_buffers(
+                &self.ctx.device,
+                &self.ctx.queue,
+                &mut encoder,
+                &egui.paint_jobs,
+                &egui.screen_descriptor,
+            )
+        } else {
+            Vec::new()
+        };
+
+        // Main scene pass
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
@@ -177,7 +211,41 @@ impl Renderer {
             }
         }
 
-        self.ctx.queue.submit(std::iter::once(encoder.finish()));
+        // egui overlay pass (LoadOp::Load to draw on top of the scene)
+        // forget_lifetime() converts RenderPass<'encoder> → RenderPass<'static> as required by egui-wgpu
+        if let Some(egui) = egui_output {
+            let mut rpass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("egui_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
+            self.egui_renderer
+                .render(&mut rpass, &egui.paint_jobs, &egui.screen_descriptor);
+        }
+
+        let main_cmd = encoder.finish();
+        self.ctx
+            .queue
+            .submit(egui_staging.into_iter().chain(std::iter::once(main_cmd)));
+
+        // Free released egui textures after submission
+        if let Some(egui) = egui_output {
+            for id in &egui.textures_delta.free {
+                self.egui_renderer.free_texture(id);
+            }
+        }
+
         output.present();
         Ok(())
     }

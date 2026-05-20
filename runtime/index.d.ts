@@ -120,4 +120,25 @@ interface _MessageNamespace {
 }
 /** Inter-mod communication. */
 export declare const Message: _MessageNamespace;
+/** Public arg type for Console.register(). */
+export type ArgType = "string" | "int" | "float" | "bool";
+/** Argument specification for a command. */
+export type ArgSpec = {
+    name: string;
+    type: ArgType;
+    required?: boolean;
+    description?: string;
+};
+/** A command or subcommand specification. */
+export type CommandSpec = {
+    name: string;
+    description?: string;
+    subcommands?: CommandSpec[];
+    args?: ArgSpec[];
+    handler?: (args: Record<string, string | number | boolean>) => string | string[] | Promise<string | string[]>;
+};
+/** Register a command that users can invoke from the developer console. */
+export declare const Console: {
+    register(spec: CommandSpec): void;
+};
 export {};

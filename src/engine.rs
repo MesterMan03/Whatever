@@ -1,7 +1,9 @@
+use crate::console::command_node_from_spec;
+use crate::console::{ConsoleAction, DevConsole};
 use crate::debug::{DebugConfig, DebugLogger};
 use crate::input::InputState;
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
-use crate::renderer::{Renderer, WgpuContext, grid_pos, load_from_vfs};
+use crate::renderer::{EguiOutput, Renderer, WgpuContext, grid_pos, load_from_vfs};
 use crate::script::ipc::{EngineMessage, ScriptMessage};
 use crate::script::{ScriptHost, dispatch};
 use crate::vfs::{LayeredVfs, VfsHandle, VfsPath};
@@ -26,6 +28,9 @@ pub struct Engine {
     last_frame: Instant,
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
+    console: DevConsole,
+    egui_ctx: egui::Context,
+    egui_state: Option<egui_winit::State>,
 }
 
 impl Engine {
@@ -79,6 +84,9 @@ impl Engine {
             last_frame: Instant::now(),
             renderer: None,
             window: None,
+            console: DevConsole::new(),
+            egui_ctx: egui::Context::default(),
+            egui_state: None,
         })
     }
 
@@ -129,6 +137,8 @@ impl Engine {
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
 
+        self.console.fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+
         let (dx, dy) = self.input.flush_mouse();
 
         if let Some(renderer) = self.renderer.as_mut() {
@@ -145,8 +155,65 @@ impl Engine {
 
         self.frame_number += 1;
 
-        if let Some(renderer) = self.renderer.as_mut() && let Err(e) = renderer.render() {
-            tracing::error!("render error: {e}");
+        // Run egui for this frame
+        let egui_raw_input = if let (Some(state), Some(window)) =
+            (self.egui_state.as_mut(), self.window.as_ref())
+        {
+            Some(state.take_egui_input(window))
+        } else {
+            None
+        };
+
+        let egui_render_data = if let Some(raw_input) = egui_raw_input {
+            let egui_ctx = self.egui_ctx.clone();
+            let vfs = Arc::clone(&self.vfs);
+
+            let mut console_action = ConsoleAction::None;
+            let full_output = egui_ctx.run(raw_input, |ctx| {
+                console_action = self.console.render(ctx, &self.registry, vfs.as_ref());
+            });
+
+            match console_action {
+                ConsoleAction::SendIpc { mod_id, message } => {
+                    self.script_host.send(&mod_id, &message, &mut self.debug);
+                }
+                ConsoleAction::None => {}
+            }
+
+            if let (Some(state), Some(window)) =
+                (self.egui_state.as_mut(), self.window.as_ref())
+            {
+                state.handle_platform_output(window, full_output.platform_output);
+            }
+
+            let paint_jobs =
+                egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+
+            Some((paint_jobs, full_output.textures_delta, full_output.pixels_per_point))
+        } else {
+            None
+        };
+
+        // Build egui render output (needs renderer dimensions)
+        let egui_out = if let (Some((paint_jobs, textures_delta, ppp)), Some(renderer)) =
+            (egui_render_data, self.renderer.as_ref())
+        {
+            Some(EguiOutput {
+                paint_jobs,
+                textures_delta,
+                screen_descriptor: egui_wgpu::ScreenDescriptor {
+                    size_in_pixels: [renderer.ctx.config.width, renderer.ctx.config.height],
+                    pixels_per_point: ppp,
+                },
+            })
+        } else {
+            None
+        };
+
+        if let Some(renderer) = self.renderer.as_mut() {
+            if let Err(e) = renderer.render(egui_out.as_ref()) {
+                tracing::error!("render error: {e}");
+            }
         }
     }
 
@@ -169,6 +236,47 @@ impl Engine {
         if let Some(window) = self.window.as_ref() {
             let window = Arc::clone(window);
             for (mod_id, msg) in messages {
+                // Intercept console-specific messages before the general dispatcher
+                if let ScriptMessage::RegisterCommand {
+                    ref name,
+                    ref description,
+                    ref subcommands,
+                    ref args,
+                } = msg
+                {
+                    let mut node = command_node_from_spec(
+                        &crate::script::ipc::CommandNodeSpec {
+                            name: name.clone(),
+                            description: description.clone(),
+                            subcommands: subcommands.clone(),
+                            args: args.clone(),
+                        },
+                        &mod_id,
+                    );
+                    // Override the top-level source (from_spec sets it for children too)
+                    node.source = crate::console::CommandSource::Mod(mod_id.clone());
+                    self.console.registry.register_mod(&mod_id, node);
+                    continue;
+                }
+
+                if let ScriptMessage::CommandResponse {
+                    ref request_id,
+                    ref output,
+                    ref error,
+                } = msg
+                {
+                    let matches = self
+                        .console
+                        .pending_invoke
+                        .as_ref()
+                        .map(|p| &p.request_id == request_id)
+                        .unwrap_or(false);
+                    if matches {
+                        self.console.handle_command_response(output.clone(), error.clone());
+                    }
+                    continue;
+                }
+
                 dispatch(
                     &mod_id,
                     msg,
@@ -222,6 +330,16 @@ impl ApplicationHandler for Engine {
             }
         };
 
+        // egui_winit state needs a display handle source (event_loop satisfies HasDisplayHandle)
+        self.egui_state = Some(egui_winit::State::new(
+            self.egui_ctx.clone(),
+            egui::ViewportId::ROOT,
+            event_loop,
+            None,
+            None, // theme
+            None, // max_texture_side
+        ));
+
         let renderer = rt.block_on(Renderer::new(ctx, self.vfs.as_ref()));
         let renderer = match renderer {
             Ok(r) => r,
@@ -251,6 +369,48 @@ impl ApplicationHandler for Engine {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Check Ctrl+Alt+Enter console toggle BEFORE anything else
+        if let WindowEvent::KeyboardInput { ref event, .. } = event {
+            if let PhysicalKey::Code(code) = event.physical_key {
+                if code == KeyCode::Enter && event.state == ElementState::Pressed {
+                    let ctrl = self.input.is_pressed(KeyCode::ControlLeft)
+                        || self.input.is_pressed(KeyCode::ControlRight);
+                    let alt = self.input.is_pressed(KeyCode::AltLeft)
+                        || self.input.is_pressed(KeyCode::AltRight);
+                    if ctrl && alt {
+                        self.console.toggle();
+                        if self.console.is_open {
+                            self.set_cursor_captured(false);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Feed event to egui
+        let egui_consumed = if let (Some(state), Some(window)) =
+            (self.egui_state.as_mut(), self.window.as_ref())
+        {
+            state.on_window_event(window, &event).consumed
+        } else {
+            false
+        };
+
+        // If console is open and egui handled it, don't propagate to game input
+        if self.console.is_open && egui_consumed {
+            // Still track physical key state so modifier detection stays accurate
+            if let WindowEvent::KeyboardInput { ref event, .. } = event {
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    match event.state {
+                        ElementState::Pressed => self.input.press(code),
+                        ElementState::Released => self.input.release(code),
+                    }
+                }
+            }
+            return;
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 self.debug.window("window close requested");
@@ -275,7 +435,9 @@ impl ApplicationHandler for Engine {
                 state: ElementState::Pressed,
                 ..
             } => {
-                self.set_cursor_captured(!self.input.mouse_captured);
+                if !self.console.is_open {
+                    self.set_cursor_captured(!self.input.mouse_captured);
+                }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {

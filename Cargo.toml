@@ -24,6 +24,9 @@ semver         = { version = "1", features = ["serde"] }
 thiserror      = "1"
 dirs           = "5"
 base64         = "0.22"
+egui = "0.29"
+egui-wgpu = "0.29"
+egui-winit = "0.29"
 
 [profile.dev]
 opt-level = 1

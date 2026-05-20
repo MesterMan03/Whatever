@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
+  | { type: "CommandInvoke"; request_id: string; command_path: string[]; args: JsonValue[] }
   | { type: "Init"; mod_id: string; engine_version: string }
   | { type: "Frame"; delta_seconds: number; frame_number: number }
   | { type: "Input"; keys_pressed: string[]; mouse_delta: [number, number] }
@@ -14,6 +15,8 @@ type _EngineMsg =
   | { type: "Shutdown"; exit_code: number };
 
 type _ScriptMsg =
+  | { type: "RegisterCommand"; name: string; description: string; subcommands: _CommandNodeSpec[]; args: _ArgSpec[] }
+  | { type: "CommandResponse"; request_id: string; output: string[]; error: string | null }
   | { type: "Subscribe"; events: string[] }
   | { type: "AssetRequest"; request_id: string; path: string }
   | { type: "SpawnSprite"; entity_id: string; texture: string; position: [number, number, number]; scale: [number, number, number] }
@@ -97,6 +100,11 @@ function _send(msg: _ScriptMsg): void {
 }
 
 function _dispatch(msg: _EngineMsg): void {
+  if (msg.type === "CommandInvoke") {
+    _handleCommandInvoke(msg);
+    return;
+  }
+
   if (msg.type === "FileResponse") {
     const cb = _fileCallbacks.get(msg.request_id);
     if (cb) {
@@ -291,6 +299,24 @@ interface _MessageNamespace {
   registerMessageHandler(handler: (payload: EventPayloads["mod_message"]) => JsonValue | null): void;
 }
 
+// --- Console command types (internal) ---
+
+type _ArgSpec = {
+  name: string;
+  type: "string" | "int" | "float" | "bool";
+  required: boolean;
+  description: string;
+};
+
+type _CommandNodeSpec = {
+  name: string;
+  description: string;
+  subcommands: _CommandNodeSpec[];
+  args: _ArgSpec[];
+};
+
+// --- Inter-mod communication ---
+
 /** Inter-mod communication. */
 export const Message: _MessageNamespace = {
   sendAndForget<T extends JsonValue>(id: string, message: T): void {
@@ -319,3 +345,91 @@ export const Message: _MessageNamespace = {
     });
   },
 };
+
+// --- Console command registration ---
+
+/** Public arg type for Console.register(). */
+export type ArgType = "string" | "int" | "float" | "bool";
+
+/** Argument specification for a command. */
+export type ArgSpec = {
+  name: string;
+  type: ArgType;
+  required?: boolean;
+  description?: string;
+};
+
+/** A command or subcommand specification. */
+export type CommandSpec = {
+  name: string;
+  description?: string;
+  subcommands?: CommandSpec[];
+  args?: ArgSpec[];
+  handler?: (args: Record<string, string | number | boolean>) => string | string[] | Promise<string | string[]>;
+};
+
+// Handlers keyed by dot-joined command path (e.g. "mycmd" or "mycmd.sub")
+const _cmdHandlers = new Map<string, NonNullable<CommandSpec["handler"]>>();
+
+function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpec {
+  const path = pathPrefix ? `${pathPrefix}.${spec.name}` : spec.name;
+  if (spec.handler) {
+    _cmdHandlers.set(path, spec.handler);
+  }
+  return {
+    name: spec.name,
+    description: spec.description ?? "",
+    subcommands: (spec.subcommands ?? []).map((s) => _specToInternal(s, path)),
+    args: (spec.args ?? []).map((a) => ({
+      name: a.name,
+      type: a.type,
+      required: a.required ?? false,
+      description: a.description ?? "",
+    })),
+  };
+}
+
+// Handle CommandInvoke from the engine
+// command_path includes the root name, e.g. ["myfoo"] or ["myfoo", "sub"]
+function _handleCommandInvoke(msg: Extract<_EngineMsg, { type: "CommandInvoke" }>): void {
+  const handlerKey = msg.command_path.join(".");
+  const handler = _cmdHandlers.get(handlerKey);
+
+  const argsRecord: Record<string, string | number | boolean> = {};
+  msg.args.forEach((v, i) => {
+    argsRecord[String(i)] = v as string | number | boolean;
+  });
+
+  if (!handler) {
+    _send({ type: "CommandResponse", request_id: msg.request_id, output: [], error: `no handler registered for '${handlerKey}'` });
+    return;
+  }
+
+  Promise.resolve(handler(argsRecord))
+    .then((result) => {
+      const lines = Array.isArray(result) ? result : [result];
+      _send({ type: "CommandResponse", request_id: msg.request_id, output: lines, error: null });
+    })
+    .catch((err: unknown) => {
+      const msg2 = err instanceof Error ? err.message : String(err);
+      _send({ type: "CommandResponse", request_id: msg.request_id, output: [], error: msg2 });
+    });
+}
+
+/** Register a command that users can invoke from the developer console. */
+export const Console = {
+  register(spec: CommandSpec): void {
+    if (!/^[a-z_]+$/.test(spec.name)) {
+      throw new Error(`Console.register: command name '${spec.name}' must match [a-z_]+`);
+    }
+    const internal = _specToInternal(spec, "");
+    _send({
+      type: "RegisterCommand",
+      name: internal.name,
+      description: internal.description,
+      subcommands: internal.subcommands,
+      args: internal.args,
+    });
+  },
+};
+
