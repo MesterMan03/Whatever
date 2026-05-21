@@ -5,7 +5,8 @@
     "moduleResolution": "bundler",
     "strict": true,
     "declaration": true,
-    "emitDeclarationOnly": true
+    "emitDeclarationOnly": true,
+    "skipLibCheck": true
   },
   "include": ["index.ts"]
 }
