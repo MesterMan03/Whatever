@@ -82,6 +82,24 @@ pub fn discover_and_load(
     // Kahn's toposort
     let sorted = toposort(manifests, &id_to_version, debug)?;
 
+    // asset root per mod — used for dangling override validation
+    let mod_assets: HashMap<String, std::path::PathBuf> = sorted
+        .iter()
+        .map(|(m, root)| (m.meta.id.clone(), root.join(&m.assets.root)))
+        .collect();
+
+    // (after, before, dep_ids) per mod — used to check if conflicting override order is deterministic
+    let mod_order: HashMap<String, (Vec<String>, Vec<String>, Vec<String>)> = sorted
+        .iter()
+        .map(|(m, _)| {
+            let deps: Vec<String> = m.dependencies.keys().cloned().collect();
+            (m.meta.id.clone(), (m.load_order.after.clone(), m.load_order.before.clone(), deps))
+        })
+        .collect();
+
+    // source path string -> current winning overrider mod_id
+    let mut first_overriders: HashMap<String, String> = HashMap::new();
+
     for (manifest, mod_root) in sorted {
         let assets_root = mod_root.join(&manifest.assets.root);
         let mod_id = manifest.meta.id.clone();
@@ -102,6 +120,16 @@ pub fn discover_and_load(
             };
             if let (Some(from), Some(to)) = (VfsPath::parse(from_str), VfsPath::parse(&to_resolved))
             {
+                let from_key = from.as_string();
+                if let Some(prev_mod) = first_overriders.get(&from_key) {
+                    if !has_explicit_order(prev_mod, &mod_id, &mod_order) {
+                        tracing::warn!(
+                            "override conflict: '{}' and '{}' both override '{}' with no explicit load order between them; '{}' wins — add [load_order] to make this deterministic",
+                            prev_mod, mod_id, from_key, mod_id
+                        );
+                    }
+                }
+                first_overriders.insert(from_key, mod_id.clone());
                 vfs.add_override(from, to);
             }
         }
@@ -110,6 +138,27 @@ pub fn discover_and_load(
             manifest,
             root: mod_root,
         });
+    }
+
+    // Warn about dangling overrides: source asset doesn't physically exist
+    for (source_str, declaring_mod) in &first_overriders {
+        let Some(from) = VfsPath::parse(source_str) else {
+            continue;
+        };
+        match mod_assets.get(&from.mod_id) {
+            None => tracing::warn!(
+                "dangling override by '{}': source mod '{}' is not loaded",
+                declaring_mod, from.mod_id
+            ),
+            Some(assets_root) => {
+                if !assets_root.join(&from.path).exists() {
+                    tracing::warn!(
+                        "dangling override by '{}': '{}' does not exist in mod '{}'",
+                        declaring_mod, from.path, from.mod_id
+                    );
+                }
+            }
+        }
     }
 
     Ok(())
@@ -177,7 +226,7 @@ fn toposort(
         bail!("mod dependency cycle detected");
     }
 
-    let _ = id_to_version; // used for validation above
+    let _ = id_to_version;
 
     let mut indexed: Vec<Option<(ModManifest, std::path::PathBuf)>> =
         manifests.into_iter().map(Some).collect();
@@ -197,4 +246,21 @@ fn toposort(
     ));
 
     Ok(sorted)
+}
+
+fn has_explicit_order(
+    mod_a: &str,
+    mod_b: &str,
+    mod_order: &HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>,
+) -> bool {
+    let references = |m: &str, other: &str| -> bool {
+        if let Some((after, before, deps)) = mod_order.get(m) {
+            after.iter().any(|id| id == other)
+                || before.iter().any(|id| id == other)
+                || deps.iter().any(|id| id == other)
+        } else {
+            false
+        }
+    };
+    references(mod_a, mod_b) || references(mod_b, mod_a)
 }

@@ -4,6 +4,7 @@ pub enum OutputLine {
     Input(String),
     Text(String),
     Error(String),
+    Debug(String),
 }
 
 #[derive(Debug, Clone)]

@@ -13,7 +13,7 @@ Console.register({
         args: [{
             name: "value",
             description: "Test value !!",
-            required: false,
+            required: true,
             type: "int"
         }],
         handler: (args) => {

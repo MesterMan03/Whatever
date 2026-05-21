@@ -1,0 +1,17 @@
+[mod]
+id          = "override_test"
+name        = "Override Test"
+version     = "0.1.0"
+license     = "Other"
+
+[assets]
+root = "assets"
+
+# [dependencies]
+# other_mod = "^1.0"
+
+[load_order]
+after = ["asset_mod"]
+
+[overrides]
+"asset_mod://humoros.png" = "humoros.png"

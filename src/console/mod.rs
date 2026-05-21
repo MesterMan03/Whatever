@@ -7,4 +7,4 @@ mod types;
 
 pub use console::{ConsoleAction, DevConsole};
 pub use registry::command_node_from_spec;
-pub use types::{CommandSource};
+pub use types::CommandSource;

@@ -69,6 +69,10 @@ impl DevConsole {
         }
     }
 
+    pub fn push_debug_line(&mut self, msg: String) {
+        self.output.push(OutputLine::Debug(msg));
+    }
+
     pub fn handle_command_response(&mut self, output: Vec<String>, error: Option<String>) {
         if let Some(last) = self.output.last() {
             if matches!(last, OutputLine::Text(s) if s == "(waiting for mod response…)") {
@@ -157,6 +161,13 @@ impl DevConsole {
                                         RichText::new(s)
                                             .font(FontId::monospace(13.0))
                                             .color(Color32::from_rgb(255, 80, 80)),
+                                    );
+                                }
+                                OutputLine::Debug(s) => {
+                                    ui.label(
+                                        RichText::new(s)
+                                            .font(FontId::monospace(12.0))
+                                            .color(Color32::from_rgb(110, 140, 120)),
                                     );
                                 }
                             }

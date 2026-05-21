@@ -19,6 +19,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 pub struct Engine {
     debug: DebugLogger,
+    debug_mirror: Option<Arc<std::sync::Mutex<Vec<String>>>>,
     game_meta: GameMeta,
     vfs: VfsHandle,
     registry: ModRegistry,
@@ -37,7 +38,11 @@ impl Engine {
     pub fn new(debug_config: &DebugConfig, cwd: &Path) -> anyhow::Result<Self> {
         let mut debug = DebugLogger::new(debug_config, cwd)?;
 
+        let debug_mirror = debug.console_mirror();
         let mut vfs = LayeredVfs::new();
+        if let Some(w) = debug.vfs_writer() {
+            vfs.set_log(w, debug_mirror.clone());
+        }
         let mut registry = ModRegistry::new();
 
         let mods_dir = cwd.join("mods");
@@ -75,6 +80,7 @@ impl Engine {
 
         Ok(Engine {
             debug,
+            debug_mirror,
             game_meta,
             vfs,
             registry,
@@ -133,6 +139,14 @@ impl Engine {
     }
 
     fn frame(&mut self) {
+        if let Some(ref mirror) = self.debug_mirror {
+            if let Ok(mut lines) = mirror.lock() {
+                for line in lines.drain(..) {
+                    self.console.push_debug_line(line);
+                }
+            }
+        }
+
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;

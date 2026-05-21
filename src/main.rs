@@ -16,6 +16,7 @@ use winit::event_loop::EventLoop;
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stdout)
         .init();
 
     let args: Vec<String> = env::args().collect();
