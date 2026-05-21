@@ -53,6 +53,7 @@ pub struct CommandContext<'a> {
     pub mod_registry: &'a crate::mods::ModRegistry,
     pub vfs: &'a dyn crate::vfs::Vfs,
     pub fps: f32,
+    pub debug: crate::debug::SharedDebugSwitches,
 }
 
 pub type CommandHandler =

@@ -1,8 +1,8 @@
 use super::{Vfs, VfsError, VfsPath};
-use crate::debug::DebugLogger;
+use crate::debug::{DebugSwitches, SharedDebugSwitches};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::sync::{Arc, Mutex};
 
 pub struct LayeredVfs {
@@ -10,7 +10,8 @@ pub struct LayeredVfs {
     overrides: HashMap<String, VfsPath>,
     override_dests: HashSet<String>,
     log_file: Option<Arc<Mutex<BufWriter<File>>>>,
-    log_console: Option<Arc<Mutex<Vec<String>>>>,
+    log_console: Arc<Mutex<Vec<String>>>,
+    switches: SharedDebugSwitches,
 }
 
 impl LayeredVfs {
@@ -20,17 +21,20 @@ impl LayeredVfs {
             overrides: HashMap::new(),
             override_dests: HashSet::new(),
             log_file: None,
-            log_console: None,
+            log_console: Arc::new(Mutex::new(Vec::new())),
+            switches: Arc::new(DebugSwitches::new(false, false, false, false)),
         }
     }
 
     pub fn set_log(
         &mut self,
-        file: Arc<Mutex<BufWriter<File>>>,
-        console: Option<Arc<Mutex<Vec<String>>>>,
+        file: Option<Arc<Mutex<BufWriter<File>>>>,
+        console: Arc<Mutex<Vec<String>>>,
+        switches: SharedDebugSwitches,
     ) {
-        self.log_file = Some(file);
+        self.log_file = file;
         self.log_console = console;
+        self.switches = switches;
     }
 
     pub fn push_layer(&mut self, layer: Box<dyn Vfs>) {
@@ -44,8 +48,16 @@ impl LayeredVfs {
     }
 
     fn vfs_log(&self, msg: &str) {
+        if !self.switches.vfs() { return; }
+        let now = chrono::Local::now().format("%H:%M:%S%.3f");
         if let Some(ref w) = self.log_file {
-            DebugLogger::write_vfs(w, self.log_console.as_ref(), msg);
+            if let Ok(mut writer) = w.lock() {
+                let _ = writeln!(writer, "[{now}] {msg}");
+                let _ = writer.flush();
+            }
+        }
+        if let Ok(mut v) = self.log_console.lock() {
+            v.push(format!("[{now}] [vfs] {msg}"));
         }
     }
 }

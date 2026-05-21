@@ -1,4 +1,4 @@
-use crate::console::commands::{engine_cmd, markbench, mods_cmd, vfs_cmd};
+use crate::console::commands::{debug_cmd, engine_cmd, markbench, mods_cmd, vfs_cmd};
 use crate::console::completer;
 use crate::console::parser;
 use crate::console::registry::CommandRegistry;
@@ -31,12 +31,14 @@ pub struct PendingInvoke {
 
 pub enum ConsoleAction {
     None,
+    Quit,
     SendIpc { mod_id: String, message: EngineMessage },
 }
 
 impl DevConsole {
     pub fn new() -> Self {
         let mut registry = CommandRegistry::new();
+        registry.register_engine(debug_cmd::node());
         registry.register_engine(engine_cmd::node());
         registry.register_engine(markbench::node());
         registry.register_engine(mods_cmd::node());
@@ -94,6 +96,7 @@ impl DevConsole {
         ctx: &Context,
         mod_registry: &ModRegistry,
         vfs: &dyn Vfs,
+        debug: crate::debug::SharedDebugSwitches,
     ) -> ConsoleAction {
         if !self.is_open {
             return ConsoleAction::None;
@@ -344,7 +347,7 @@ impl DevConsole {
 
         if let Some(input) = submitted_input {
             self.history.push(input.clone());
-            action = self.execute(&input, mod_registry, vfs);
+            action = self.execute(&input, mod_registry, vfs, debug);
         }
 
         action
@@ -355,6 +358,7 @@ impl DevConsole {
         input: &str,
         mod_registry: &ModRegistry,
         vfs: &dyn Vfs,
+        debug: crate::debug::SharedDebugSwitches,
     ) -> ConsoleAction {
         self.output.push(OutputLine::Input(format!("> {input}")));
 
@@ -376,9 +380,8 @@ impl DevConsole {
                 }
                 return ConsoleAction::None;
             }
-            "echo" => {
-                self.output.push(OutputLine::Text(tokens[1..].join(" ")));
-                return ConsoleAction::None;
+            "quit" => {
+                return ConsoleAction::Quit;
             }
             _ => {}
         }
@@ -412,26 +415,29 @@ impl DevConsole {
         let node = node.clone();
         let raw_args: Vec<String> = tokens[arg_start..].to_vec();
 
+        if node.handler.is_none() {
+            let subs: Vec<&str> =
+                node.subcommands.iter().map(|s| s.name.as_str()).collect();
+            self.output.push(OutputLine::Error(format!(
+                "incomplete command — subcommands: {}",
+                subs.join(", ")
+            )));
+            return ConsoleAction::None;
+        }
+        let parsed = match parser::parse_args(&raw_args, &node.args) {
+            Ok(p) => p,
+            Err(e) => {
+                self.output.push(OutputLine::Error(e));
+                return ConsoleAction::None;
+            }
+        };
+
         match &node.source {
             CommandSource::Engine => {
-                if node.handler.is_none() {
-                    let subs: Vec<&str> =
-                        node.subcommands.iter().map(|s| s.name.as_str()).collect();
-                    self.output.push(OutputLine::Error(format!(
-                        "incomplete command — subcommands: {}",
-                        subs.join(", ")
-                    )));
-                    return ConsoleAction::None;
-                }
-                let parsed = match parser::parse_args(&raw_args, &node.args) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        self.output.push(OutputLine::Error(e));
-                        return ConsoleAction::None;
-                    }
-                };
-                let ctx = CommandContext { mod_registry, vfs, fps: self.fps };
-                match (node.handler.unwrap())(parsed, &ctx) {
+                let ctx = CommandContext { mod_registry, vfs, fps: self.fps, debug };
+                // we've verified handler exists, so unwrap() should be safe
+                // but probably best to refactor asap
+                match node.handler.unwrap()(parsed, &ctx) {
                     Ok(lines) => {
                         for line in lines {
                             self.output.push(OutputLine::Text(line));
@@ -442,26 +448,31 @@ impl DevConsole {
                 ConsoleAction::None
             }
             CommandSource::Mod(mod_id) => {
-                if node.handler.is_none() {
-                    let subs: Vec<&str> =
-                        node.subcommands.iter().map(|s| s.name.as_str()).collect();
-                    self.output.push(OutputLine::Error(format!(
-                        "incomplete command — subcommands: {}",
-                        subs.join(", ")
-                    )));
-                    return ConsoleAction::None;
-                }
                 let request_id = format!(
-                    "cmd_{:x}",
+                    "cmd_{mod_id}_{:x}",
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_nanos())
                         .unwrap_or(0)
                 );
                 let command_path: Vec<String> = tokens[0..arg_start].to_vec();
-                let args_json: Vec<serde_json::Value> = raw_args
+                let args_json: Vec<serde_json::Value> = parsed
+                    .positional
                     .iter()
-                    .map(|a| serde_json::Value::String(a.clone()))
+                    .map(|v| match v {
+                        crate::console::types::ArgValue::String(s) => {
+                            serde_json::Value::String(s.clone())
+                        }
+                        crate::console::types::ArgValue::Int(n) => {
+                            serde_json::Value::Number((*n).into())
+                        }
+                        crate::console::types::ArgValue::Float(n) => {
+                            serde_json::Number::from_f64(*n)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or(serde_json::Value::Null)
+                        }
+                        crate::console::types::ArgValue::Bool(b) => serde_json::Value::Bool(*b),
+                    })
                     .collect();
 
                 self.output
@@ -484,7 +495,7 @@ impl DevConsole {
         let builtins = [
             ("help [command]", "Show this help or details for a command"),
             ("clear", "Clear console output"),
-            ("echo <text…>", "Echo text back"),
+            ("quit", "Shutdown the engine"),
         ];
 
         if let Some(cmd) = command {

@@ -18,7 +18,7 @@ pub struct ScriptProcess {
 impl ScriptProcess {
     pub fn send(&mut self, msg: &EngineMessage, debug: &mut DebugLogger) -> anyhow::Result<()> {
         let line = serde_json::to_string(msg)?;
-        debug.ipc(&self.mod_id, "→", &line);
+        debug.ipc(&self.mod_id, "←", &line);
         writeln!(self.stdin, "{line}")?;
         Ok(())
     }
@@ -109,7 +109,7 @@ impl ScriptHost {
         });
 
         tracing::info!(mod_id, "script process ready");
-        debug.ipc(mod_id, "→", &format!("spawned bun: {}", entry.display()));
+        debug.ipc(mod_id, "←", &format!("spawned bun: {}", entry.display()));
         self.processes.insert(
             mod_id.to_owned(),
             ScriptProcess {
@@ -137,7 +137,7 @@ impl ScriptHost {
         let mut out = Vec::new();
         for proc in self.processes.values_mut() {
             while let Ok(line) = proc.stdout_rx.try_recv() {
-                debug.ipc(&proc.mod_id, "←", &line);
+                debug.ipc(&proc.mod_id, "→", &line);
                 match serde_json::from_str::<ScriptMessage>(&line) {
                     Ok(msg) => out.push((proc.mod_id.clone(), msg)),
                     Err(e) => tracing::warn!(mod_id = %proc.mod_id, "bad IPC message: {e}: {line}"),

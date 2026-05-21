@@ -19,7 +19,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 
 pub struct Engine {
     debug: DebugLogger,
-    debug_mirror: Option<Arc<std::sync::Mutex<Vec<String>>>>,
+    debug_mirror: Arc<std::sync::Mutex<Vec<String>>>,
     game_meta: GameMeta,
     vfs: VfsHandle,
     registry: ModRegistry,
@@ -32,6 +32,7 @@ pub struct Engine {
     console: DevConsole,
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
+    should_quit: bool,
 }
 
 impl Engine {
@@ -40,9 +41,7 @@ impl Engine {
 
         let debug_mirror = debug.console_mirror();
         let mut vfs = LayeredVfs::new();
-        if let Some(w) = debug.vfs_writer() {
-            vfs.set_log(w, debug_mirror.clone());
-        }
+        vfs.set_log(debug.vfs_writer(), Arc::clone(&debug_mirror), debug.shared_switches());
         let mut registry = ModRegistry::new();
 
         let mods_dir = cwd.join("mods");
@@ -93,6 +92,7 @@ impl Engine {
             console: DevConsole::new(),
             egui_ctx: egui::Context::default(),
             egui_state: None,
+            should_quit: false,
         })
     }
 
@@ -139,11 +139,9 @@ impl Engine {
     }
 
     fn frame(&mut self) {
-        if let Some(ref mirror) = self.debug_mirror {
-            if let Ok(mut lines) = mirror.lock() {
-                for line in lines.drain(..) {
-                    self.console.push_debug_line(line);
-                }
+        if let Ok(mut lines) = self.debug_mirror.lock() {
+            for line in lines.drain(..) {
+                self.console.push_debug_line(line);
             }
         }
 
@@ -182,12 +180,14 @@ impl Engine {
             let egui_ctx = self.egui_ctx.clone();
             let vfs = Arc::clone(&self.vfs);
 
+            let debug = self.debug.shared_switches();
             let mut console_action = ConsoleAction::None;
             let full_output = egui_ctx.run(raw_input, |ctx| {
-                console_action = self.console.render(ctx, &self.registry, vfs.as_ref());
+                console_action = self.console.render(ctx, &self.registry, vfs.as_ref(), Arc::clone(&debug));
             });
 
             match console_action {
+                ConsoleAction::Quit => self.should_quit = true,
                 ConsoleAction::SendIpc { mod_id, message } => {
                     self.script_host.send(&mod_id, &message, &mut self.debug);
                 }
@@ -456,6 +456,13 @@ impl ApplicationHandler for Engine {
             }
             WindowEvent::RedrawRequested => {
                 self.frame();
+                if self.should_quit {
+                    self.debug.window("quit command issued");
+                    let final_messages = self.script_host.shutdown_all(0, &mut self.debug);
+                    self.dispatch_messages(final_messages);
+                    event_loop.exit();
+                    return;
+                }
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
