@@ -1,5 +1,6 @@
 use super::ipc::{EngineMessage, ScriptMessage};
 use crate::debug::DebugLogger;
+use crate::sandbox::{SandboxConfig, SandboxGuard};
 use anyhow::Context;
 use std::collections::HashMap;
 use std::io::Write;
@@ -13,6 +14,7 @@ pub struct ScriptProcess {
     child: Child,
     stdin: ChildStdin,
     stdout_rx: mpsc::Receiver<String>,
+    _sandbox_guard: SandboxGuard,
 }
 
 impl ScriptProcess {
@@ -48,6 +50,7 @@ impl ScriptHost {
         &mut self,
         mod_id: &str,
         entry: &Path,
+        sandbox_cfg: &SandboxConfig,
         debug: &mut DebugLogger,
     ) -> anyhow::Result<()> {
         tracing::info!(mod_id, entry = %entry.display(), "spawning script process");
@@ -56,20 +59,24 @@ impl ScriptHost {
             anyhow::bail!("script entry not found: {}", entry.display());
         }
 
-        let mut child = std::process::Command::new("bun")
-            .arg("run")
+        let mut cmd = std::process::Command::new("bun");
+        cmd.arg("run")
             .arg(entry)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn bun for mod '{mod_id}' (entry: {}). \
-                     Is bun installed and in PATH?",
-                    entry.display()
-                )
-            })?;
+            .stderr(Stdio::piped());
+
+        crate::sandbox::apply_pre_spawn(&mut cmd, sandbox_cfg)?;
+
+        let mut child = cmd.spawn().with_context(|| {
+            format!(
+                "failed to spawn bun for mod '{mod_id}' (entry: {}). \
+                 Is bun installed and in PATH?",
+                entry.display()
+            )
+        })?;
+
+        let sandbox_guard = crate::sandbox::apply_post_spawn(&child, sandbox_cfg)?;
 
         let stdin = child.stdin.take().context("take stdin")?;
         let stdout = child.stdout.take().context("take stdout")?;
@@ -117,6 +124,7 @@ impl ScriptHost {
                 child,
                 stdin,
                 stdout_rx: rx,
+                _sandbox_guard: sandbox_guard,
             },
         );
         Ok(())

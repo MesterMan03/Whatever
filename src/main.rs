@@ -4,6 +4,7 @@ mod engine;
 mod input;
 mod mods;
 mod renderer;
+mod sandbox;
 mod script;
 mod vfs;
 

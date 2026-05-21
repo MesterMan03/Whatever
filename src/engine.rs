@@ -4,8 +4,9 @@ use crate::debug::{DebugConfig, DebugLogger};
 use crate::input::InputState;
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
 use crate::renderer::{EguiOutput, Renderer, WgpuContext, grid_pos, load_from_vfs};
+use crate::sandbox::SandboxConfig;
 use crate::script::ipc::{EngineMessage, ScriptMessage};
-use crate::script::{ScriptHost, dispatch};
+use crate::script::{ScriptHost, dispatch, mod_data_root};
 use crate::vfs::{LayeredVfs, VfsHandle, VfsPath};
 use anyhow::Context;
 use std::path::Path;
@@ -76,7 +77,27 @@ impl Engine {
             };
             let entry = loaded_mod.root.join(&script_cfg.entry);
             let mod_id = &loaded_mod.manifest.meta.id;
-            if let Err(e) = script_host.spawn(mod_id, &entry, &mut debug) {
+
+            let mod_data_dir = match mod_data_root(&game_meta.game.id, mod_id) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!(mod_id, "could not determine mod data dir: {e:#}");
+                    continue;
+                }
+            };
+            if let Err(e) = std::fs::create_dir_all(&mod_data_dir) {
+                tracing::error!(mod_id, "could not create mod data dir: {e:#}");
+                continue;
+            }
+
+            let sandbox_cfg = SandboxConfig {
+                mod_id: mod_id.clone(),
+                mod_root: loaded_mod.root.clone(),
+                mod_data_dir,
+                engine_root: cwd.to_path_buf(),
+            };
+
+            if let Err(e) = script_host.spawn(mod_id, &entry, &sandbox_cfg, &mut debug) {
                 tracing::error!(mod_id, entry = %entry.display(), "script spawn failed: {e:#}");
             }
         }

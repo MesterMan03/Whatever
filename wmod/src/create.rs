@@ -179,14 +179,14 @@ fn generate_mod_toml(
 
 fn generate_script_starter() -> String {
     format!(
-        r#"import {{ engine }} from "@whatever/api";
+        r#"import {{ Engine }} from "@whatever/api";
 
-engine.on("init", ({{ mod_id }}) => {{
-  engine.log("info", `${{mod_id}} loaded`);
+Engine.on("init", ({{ mod_id }}) => {{
+  Engine.log("info", `${{mod_id}} loaded`);
 }});
 
-engine.on("exit", () => {{
-  engine.log("info", "goodbye");
+Engine.on("exit", () => {{
+  Engine.log("info", "goodbye");
 }});
 "#
     )

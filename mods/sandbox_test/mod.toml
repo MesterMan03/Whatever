@@ -1,0 +1,16 @@
+[mod]
+id          = "sandbox_test"
+name        = "Sandbox Test"
+version     = "0.1.0"
+description = "Tests the sandbox capabilities"
+authors     = ["Mester"]
+license     = "MIT"
+
+[assets]
+root = "assets"
+
+[script]
+entry = "scripts/index.ts"
+
+# [dependencies]
+# other_mod = "^1.0"

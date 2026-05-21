@@ -187,6 +187,13 @@ pub fn dispatch(
     }
 }
 
+/// Returns the root of a mod's persistent data directory, creating no files.
+pub fn mod_data_root(game_id: &str, mod_id: &str) -> anyhow::Result<std::path::PathBuf> {
+    let base = dirs::data_local_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not determine local data directory"))?;
+    Ok(base.join("Whatever").join(game_id).join(mod_id))
+}
+
 fn resolve_mod_data_path(
     game_id: &str,
     mod_id: &str,
@@ -195,7 +202,5 @@ fn resolve_mod_data_path(
     if path.split('/').any(|c| c == "..") {
         anyhow::bail!("path traversal rejected: {path}");
     }
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine local data directory"))?;
-    Ok(base.join("Whatever").join(game_id).join(mod_id).join(path))
+    Ok(mod_data_root(game_id, mod_id)?.join(path))
 }
