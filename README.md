@@ -68,7 +68,7 @@ Mods live in `mods/` (engine-shipped) or `mods_user/` (user-installed, gitignore
 
 ```toml
 [mod]
-id          = "my-game"
+id          = "my_game"
 name        = "My Game"
 version     = "0.1.0"
 description = "A game built on the Whatever engine"
@@ -88,7 +88,7 @@ Assets are accessed via `mod_id://relative/path`:
 
 ```
 core://shaders/sprite.wgsl
-my-game://textures/player.png
+my_game://textures/player.png
 ```
 
 ### Adding a mod
@@ -102,46 +102,8 @@ my-game://textures/player.png
 
 Scripted mods run as a Bun subprocess per mod. The engine communicates over NDJSON on stdin/stdout.
 
-### Setup
-
-```ts
-import { engine } from "@whatever/api";
-```
-
-The `@whatever/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory.
-
-### Events
-
-```ts
-engine.on("init", ({ mod_id, engine_version }) => {
-  // Fired once after the window and renderer are ready.
-  // Safe to set window title, spawn sprites, etc.
-});
-
-engine.on("exit", ({ exit_code }) => {
-  // Fired when the engine is shutting down.
-  // Process exits automatically after all handlers return.
-});
-
-engine.on("frame", ({ delta_seconds, frame_number }) => {
-  // Fired every rendered frame.
-});
-
-engine.on("input", ({ keys_pressed, mouse_delta }) => {
-  // Fired every frame with current input state.
-});
-```
-
-### Methods
-
-```ts
-engine.log("info" | "warn" | "error", message)
-engine.setWindowTitle(title)
-engine.spawnSprite(entity_id, texture, position, scale?)
-engine.moveEntity(entity_id, position)
-engine.destroyEntity(entity_id)
-engine.requestAsset(request_id, path)  // response arrives as "asset_response" event
-```
+The `@whatever/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory. 
+It contains all the necessary abstractions for the IPC messaging so that devs can work with properly typed structures without extra boilerplate.
 
 See [`docs/scripting-api.md`](docs/scripting-api.md) for the full reference.
 
@@ -150,7 +112,7 @@ See [`docs/scripting-api.md`](docs/scripting-api.md) for the full reference.
 After editing `runtime/index.ts`, regenerate `index.d.ts`:
 
 ```sh
-bun run --cwd runtime build:types
+bun run build:runtime
 ```
 
 ## Debug flags
@@ -161,5 +123,6 @@ bun run --cwd runtime build:types
 | `ipc` | Every raw NDJSON message between engine and scripts |
 | `modloader` | Mod discovery, dependency resolution, load order |
 | `window` | Window lifecycle events |
+| `vfs` | VFS events (file access, asset overrides) |
 
-Logs write to `debug/<flag>.log`.
+Logs write to `debug/<flag>.log` and to the dev console which can be opened with Ctrl + Alt + Enter.
