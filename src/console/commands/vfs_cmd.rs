@@ -1,4 +1,6 @@
-use crate::console::types::{ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs};
+use crate::console::types::{
+    ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs,
+};
 use crate::vfs::VfsPath;
 use std::sync::Arc;
 
@@ -8,22 +10,25 @@ pub fn node() -> CommandNode {
 }
 
 fn list_node() -> CommandNode {
-    CommandNode::engine("list", "List files for a mod (optionally filtered by prefix)")
-        .with_args(vec![
-            ArgSpec {
-                name: "mod_id".into(),
-                arg_type: ArgType::String,
-                required: true,
-                description: "mod identifier".into(),
-            },
-            ArgSpec {
-                name: "prefix".into(),
-                arg_type: ArgType::String,
-                required: false,
-                description: "path prefix to filter by".into(),
-            },
-        ])
-        .with_handler(Arc::new(run_list))
+    CommandNode::engine(
+        "list",
+        "List files for a mod (optionally filtered by prefix)",
+    )
+    .with_args(vec![
+        ArgSpec {
+            name: "mod_id".into(),
+            arg_type: ArgType::String,
+            required: true,
+            description: "mod identifier".into(),
+        },
+        ArgSpec {
+            name: "prefix".into(),
+            arg_type: ArgType::String,
+            required: false,
+            description: "path prefix to filter by".into(),
+        },
+    ])
+    .with_handler(Arc::new(run_list))
 }
 
 fn read_node() -> CommandNode {
@@ -56,10 +61,7 @@ fn run_list(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         return Ok(vec![format!("(no files found for {mod_id}://)")]);
     }
 
-    let mut lines: Vec<String> = entries
-        .iter()
-        .map(|p| format!("{mod_id}://{p}"))
-        .collect();
+    let mut lines: Vec<String> = entries.iter().map(|p| format!("{mod_id}://{p}")).collect();
     lines.insert(0, format!("{} file(s):", entries.len()));
     Ok(lines)
 }
@@ -70,8 +72,9 @@ fn run_read(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         _ => return Err("expected path argument".into()),
     };
 
-    let vfs_path = VfsPath::parse(&raw_path)
-        .ok_or_else(|| format!("invalid VFS path '{raw_path}' — expected mod_id://relative/path"))?;
+    let vfs_path = VfsPath::parse(&raw_path).ok_or_else(|| {
+        format!("invalid VFS path '{raw_path}' — expected mod_id://relative/path")
+    })?;
 
     let bytes = ctx
         .vfs

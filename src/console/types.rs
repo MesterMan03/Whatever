@@ -56,8 +56,7 @@ pub struct CommandContext<'a> {
     pub debug: crate::debug::SharedDebugSwitches,
 }
 
-pub type CommandHandler =
-    Arc<dyn Fn(ParsedArgs, &CommandContext) -> CommandResult + Send + Sync>;
+pub type CommandHandler = Arc<dyn Fn(ParsedArgs, &CommandContext) -> CommandResult + Send + Sync>;
 
 #[derive(Clone)]
 pub enum CommandSource {

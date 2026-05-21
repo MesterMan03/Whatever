@@ -21,21 +21,45 @@ impl DebugSwitches {
         }
     }
 
-    pub fn window(&self) -> bool    { self.window.load(Relaxed) }
-    pub fn modloader(&self) -> bool { self.modloader.load(Relaxed) }
-    pub fn ipc(&self) -> bool       { self.ipc.load(Relaxed) }
-    pub fn vfs(&self) -> bool       { self.vfs.load(Relaxed) }
+    pub fn window(&self) -> bool {
+        self.window.load(Relaxed)
+    }
+    pub fn modloader(&self) -> bool {
+        self.modloader.load(Relaxed)
+    }
+    pub fn ipc(&self) -> bool {
+        self.ipc.load(Relaxed)
+    }
+    pub fn vfs(&self) -> bool {
+        self.vfs.load(Relaxed)
+    }
 
-    pub fn set_window(&self, v: bool)    { self.window.store(v, Relaxed) }
-    pub fn set_modloader(&self, v: bool) { self.modloader.store(v, Relaxed) }
-    pub fn set_ipc(&self, v: bool)       { self.ipc.store(v, Relaxed) }
-    pub fn set_vfs(&self, v: bool)       { self.vfs.store(v, Relaxed) }
+    pub fn set_window(&self, v: bool) {
+        self.window.store(v, Relaxed)
+    }
+    pub fn set_modloader(&self, v: bool) {
+        self.modloader.store(v, Relaxed)
+    }
+    pub fn set_ipc(&self, v: bool) {
+        self.ipc.store(v, Relaxed)
+    }
+    pub fn set_vfs(&self, v: bool) {
+        self.vfs.store(v, Relaxed)
+    }
 
     /// Toggle and return the new value.
-    pub fn toggle_window(&self) -> bool    { !self.window.fetch_xor(true, Relaxed) }
-    pub fn toggle_modloader(&self) -> bool { !self.modloader.fetch_xor(true, Relaxed) }
-    pub fn toggle_ipc(&self) -> bool       { !self.ipc.fetch_xor(true, Relaxed) }
-    pub fn toggle_vfs(&self) -> bool       { !self.vfs.fetch_xor(true, Relaxed) }
+    pub fn toggle_window(&self) -> bool {
+        !self.window.fetch_xor(true, Relaxed)
+    }
+    pub fn toggle_modloader(&self) -> bool {
+        !self.modloader.fetch_xor(true, Relaxed)
+    }
+    pub fn toggle_ipc(&self) -> bool {
+        !self.ipc.fetch_xor(true, Relaxed)
+    }
+    pub fn toggle_vfs(&self) -> bool {
+        !self.vfs.fetch_xor(true, Relaxed)
+    }
 }
 
 pub type SharedDebugSwitches = Arc<DebugSwitches>;
@@ -49,16 +73,30 @@ pub struct DebugConfig {
 
 impl DebugConfig {
     pub fn from_args(args: &[String]) -> Self {
-        let mut cfg = DebugConfig { window: false, modloader: false, ipc: false, vfs: false };
+        let mut cfg = DebugConfig {
+            window: false,
+            modloader: false,
+            ipc: false,
+            vfs: false,
+        };
         for arg in args {
-            let val = if let Some(v) = arg.strip_prefix("--debug=") { v } else { continue };
+            let val = if let Some(v) = arg.strip_prefix("--debug=") {
+                v
+            } else {
+                continue;
+            };
             for part in val.split(',') {
                 match part.trim() {
-                    "all" => { cfg.window = true; cfg.modloader = true; cfg.ipc = true; cfg.vfs = true; }
-                    "window"    => cfg.window = true,
+                    "all" => {
+                        cfg.window = true;
+                        cfg.modloader = true;
+                        cfg.ipc = true;
+                        cfg.vfs = true;
+                    }
+                    "window" => cfg.window = true,
                     "modloader" => cfg.modloader = true,
-                    "ipc"       => cfg.ipc = true,
-                    "vfs"       => cfg.vfs = true,
+                    "ipc" => cfg.ipc = true,
+                    "vfs" => cfg.vfs = true,
                     _ => {}
                 }
             }
@@ -87,13 +125,32 @@ impl DebugLogger {
         let open = |name: &str| -> anyhow::Result<BufWriter<File>> {
             Ok(BufWriter::new(File::create(debug_dir.join(name))?))
         };
-        let window    = if config.window    { Some(open("window.log")?)    } else { None };
-        let modloader = if config.modloader { Some(open("modloader.log")?) } else { None };
-        let ipc       = if config.ipc       { Some(open("ipc.log")?)       } else { None };
-        let vfs = if config.vfs { Some(Arc::new(Mutex::new(open("vfs.log")?))) } else { None };
+        let window = if config.window {
+            Some(open("window.log")?)
+        } else {
+            None
+        };
+        let modloader = if config.modloader {
+            Some(open("modloader.log")?)
+        } else {
+            None
+        };
+        let ipc = if config.ipc {
+            Some(open("ipc.log")?)
+        } else {
+            None
+        };
+        let vfs = if config.vfs {
+            Some(Arc::new(Mutex::new(open("vfs.log")?)))
+        } else {
+            None
+        };
         Ok(DebugLogger {
             switches: Arc::new(DebugSwitches::new(
-                config.window, config.modloader, config.ipc, config.vfs,
+                config.window,
+                config.modloader,
+                config.ipc,
+                config.vfs,
             )),
             debug_dir,
             window,
@@ -117,7 +174,9 @@ impl DebugLogger {
     }
 
     pub fn window(&mut self, msg: &str) {
-        if !self.switches.window() { return; }
+        if !self.switches.window() {
+            return;
+        }
         if self.window.is_none() {
             self.window = Self::try_open(&self.debug_dir, "window.log");
         }
@@ -126,7 +185,9 @@ impl DebugLogger {
     }
 
     pub fn modloader(&mut self, msg: &str) {
-        if !self.switches.modloader() { return; }
+        if !self.switches.modloader() {
+            return;
+        }
         if self.modloader.is_none() {
             self.modloader = Self::try_open(&self.debug_dir, "modloader.log");
         }
@@ -135,7 +196,9 @@ impl DebugLogger {
     }
 
     pub fn ipc(&mut self, mod_id: &str, direction: &str, msg: &str) {
-        if !self.switches.ipc() { return; }
+        if !self.switches.ipc() {
+            return;
+        }
         let line = format!("[{mod_id}] {direction} {msg}");
         if self.ipc.is_none() {
             self.ipc = Self::try_open(&self.debug_dir, "ipc.log");
@@ -172,5 +235,4 @@ impl DebugLogger {
             let _ = w.flush();
         }
     }
-
 }

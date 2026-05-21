@@ -42,19 +42,25 @@ impl LayeredVfs {
     }
 
     pub fn add_override(&mut self, from: VfsPath, to: VfsPath) {
-        self.vfs_log(&format!("override: {} -> {}", from.as_string(), to.as_string()));
+        self.vfs_log(&format!(
+            "override: {} -> {}",
+            from.as_string(),
+            to.as_string()
+        ));
         self.override_dests.insert(to.as_string());
         self.overrides.insert(from.as_string(), to);
     }
 
     fn vfs_log(&self, msg: &str) {
-        if !self.switches.vfs() { return; }
+        if !self.switches.vfs() {
+            return;
+        }
         let now = chrono::Local::now().format("%H:%M:%S%.3f");
-        if let Some(ref w) = self.log_file {
-            if let Ok(mut writer) = w.lock() {
-                let _ = writeln!(writer, "[{now}] {msg}");
-                let _ = writer.flush();
-            }
+        if let Some(ref w) = self.log_file
+            && let Ok(mut writer) = w.lock()
+        {
+            let _ = writeln!(writer, "[{now}] {msg}");
+            let _ = writer.flush();
         }
         if let Ok(mut v) = self.log_console.lock() {
             v.push(format!("[{now}] [vfs] {msg}"));
@@ -65,7 +71,10 @@ impl LayeredVfs {
 impl Vfs for LayeredVfs {
     fn read(&self, path: &VfsPath) -> Result<Vec<u8>, VfsError> {
         if self.override_dests.contains(&path.as_string()) {
-            self.vfs_log(&format!("read {} -> blocked (override destination)", path.as_string()));
+            self.vfs_log(&format!(
+                "read {} -> blocked (override destination)",
+                path.as_string()
+            ));
             return Err(VfsError::NotFound(path.as_string()));
         }
         let resolved = self.overrides.get(&path.as_string()).unwrap_or(path);
@@ -82,7 +91,11 @@ impl Vfs for LayeredVfs {
                                 resolved.as_string()
                             ));
                         } else {
-                            self.vfs_log(&format!("read {} -> ok ({} bytes)", path.as_string(), bytes.len()));
+                            self.vfs_log(&format!(
+                                "read {} -> ok ({} bytes)",
+                                path.as_string(),
+                                bytes.len()
+                            ));
                         }
                     }
                     Err(e) => self.vfs_log(&format!("read {} -> err: {e}", path.as_string())),
@@ -96,7 +109,10 @@ impl Vfs for LayeredVfs {
 
     fn exists(&self, path: &VfsPath) -> bool {
         if self.override_dests.contains(&path.as_string()) {
-            self.vfs_log(&format!("exists {} -> false (override destination)", path.as_string()));
+            self.vfs_log(&format!(
+                "exists {} -> false (override destination)",
+                path.as_string()
+            ));
             return false;
         }
         let resolved = self.overrides.get(&path.as_string()).unwrap_or(path);
@@ -129,14 +145,21 @@ impl Vfs for LayeredVfs {
                 }
             }
         }
-        let prefix_display = if prefix.is_empty() { String::new() } else { format!("{prefix}/") };
+        let prefix_display = if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{prefix}/")
+        };
         if suppressed > 0 {
             self.vfs_log(&format!(
                 "list {mod_id}://{prefix_display} -> {} entries ({suppressed} suppressed as override destinations)",
                 results.len()
             ));
         } else {
-            self.vfs_log(&format!("list {mod_id}://{prefix_display} -> {} entries", results.len()));
+            self.vfs_log(&format!(
+                "list {mod_id}://{prefix_display} -> {} entries",
+                results.len()
+            ));
         }
         Ok(results)
     }

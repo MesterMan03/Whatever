@@ -121,13 +121,8 @@ impl Renderer {
         let aspect = ctx.config.width as f32 / ctx.config.height as f32;
         let camera = Camera::new(aspect);
 
-        let egui_renderer = egui_wgpu::Renderer::new(
-            &ctx.device,
-            ctx.config.format,
-            None,
-            1,
-            false,
-        );
+        let egui_renderer =
+            egui_wgpu::Renderer::new(&ctx.device, ctx.config.format, None, 1, false);
 
         Ok(Renderer {
             ctx,

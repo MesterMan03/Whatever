@@ -1,5 +1,5 @@
-use crate::console::types::CommandNode;
 use super::parser::tokenize_pub;
+use crate::console::types::CommandNode;
 
 /// Given the current input string and the registered root commands, return
 /// a list of completion candidates (full replacement strings for the input).
@@ -38,7 +38,9 @@ pub fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
         }
     }
 
-    let prefix_already = tokens[..tokens.len().saturating_sub(if trailing_space { 0 } else { 1 })]
+    let prefix_already = tokens[..tokens
+        .len()
+        .saturating_sub(if trailing_space { 0 } else { 1 })]
         .join(" ");
 
     let suggestions: Vec<String> = if trailing_space {

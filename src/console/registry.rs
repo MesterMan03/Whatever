@@ -80,7 +80,11 @@ impl CommandRegistry {
 
         // Plain name taken — try namespaced form
         if self.roots.iter().any(|r| r.name == namespaced) {
-            tracing::warn!(mod_id, name = plain, "command name conflict and namespaced form also taken; skipping");
+            tracing::warn!(
+                mod_id,
+                name = plain,
+                "command name conflict and namespaced form also taken; skipping"
+            );
             return None;
         }
 

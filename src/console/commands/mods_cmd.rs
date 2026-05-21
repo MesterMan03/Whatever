@@ -1,4 +1,6 @@
-use crate::console::types::{ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs};
+use crate::console::types::{
+    ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs,
+};
 use std::sync::Arc;
 
 pub fn node() -> CommandNode {
@@ -7,8 +9,7 @@ pub fn node() -> CommandNode {
 }
 
 fn list_node() -> CommandNode {
-    CommandNode::engine("list", "List all loaded mods")
-        .with_handler(Arc::new(run_list))
+    CommandNode::engine("list", "List all loaded mods").with_handler(Arc::new(run_list))
 }
 
 fn get_node() -> CommandNode {

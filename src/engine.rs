@@ -41,7 +41,11 @@ impl Engine {
 
         let debug_mirror = debug.console_mirror();
         let mut vfs = LayeredVfs::new();
-        vfs.set_log(debug.vfs_writer(), Arc::clone(&debug_mirror), debug.shared_switches());
+        vfs.set_log(
+            debug.vfs_writer(),
+            Arc::clone(&debug_mirror),
+            debug.shared_switches(),
+        );
         let mut registry = ModRegistry::new();
 
         let mods_dir = cwd.join("mods");
@@ -168,13 +172,12 @@ impl Engine {
         self.frame_number += 1;
 
         // Run egui for this frame
-        let egui_raw_input = if let (Some(state), Some(window)) =
-            (self.egui_state.as_mut(), self.window.as_ref())
-        {
-            Some(state.take_egui_input(window))
-        } else {
-            None
-        };
+        let egui_raw_input =
+            if let (Some(state), Some(window)) = (self.egui_state.as_mut(), self.window.as_ref()) {
+                Some(state.take_egui_input(window))
+            } else {
+                None
+            };
 
         let egui_render_data = if let Some(raw_input) = egui_raw_input {
             let egui_ctx = self.egui_ctx.clone();
@@ -183,7 +186,9 @@ impl Engine {
             let debug = self.debug.shared_switches();
             let mut console_action = ConsoleAction::None;
             let full_output = egui_ctx.run(raw_input, |ctx| {
-                console_action = self.console.render(ctx, &self.registry, vfs.as_ref(), Arc::clone(&debug));
+                console_action =
+                    self.console
+                        .render(ctx, &self.registry, vfs.as_ref(), Arc::clone(&debug));
             });
 
             match console_action {
@@ -194,16 +199,17 @@ impl Engine {
                 ConsoleAction::None => {}
             }
 
-            if let (Some(state), Some(window)) =
-                (self.egui_state.as_mut(), self.window.as_ref())
-            {
+            if let (Some(state), Some(window)) = (self.egui_state.as_mut(), self.window.as_ref()) {
                 state.handle_platform_output(window, full_output.platform_output);
             }
 
-            let paint_jobs =
-                egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+            let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
 
-            Some((paint_jobs, full_output.textures_delta, full_output.pixels_per_point))
+            Some((
+                paint_jobs,
+                full_output.textures_delta,
+                full_output.pixels_per_point,
+            ))
         } else {
             None
         };
@@ -224,10 +230,10 @@ impl Engine {
             None
         };
 
-        if let Some(renderer) = self.renderer.as_mut() {
-            if let Err(e) = renderer.render(egui_out.as_ref()) {
-                tracing::error!("render error: {e}");
-            }
+        if let Some(renderer) = self.renderer.as_mut()
+            && let Err(e) = renderer.render(egui_out.as_ref())
+        {
+            tracing::error!("render error: {e}");
         }
     }
 
@@ -288,7 +294,8 @@ impl Engine {
                         .map(|p| &p.request_id == request_id)
                         .unwrap_or(false);
                     if matches {
-                        self.console.handle_command_response(output.clone(), error.clone());
+                        self.console
+                            .handle_command_response(output.clone(), error.clone());
                     }
                     continue;
                 }
@@ -386,55 +393,54 @@ impl ApplicationHandler for Engine {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         // Check Ctrl+Alt+Enter console toggle BEFORE anything else
-        if let WindowEvent::KeyboardInput { ref event, .. } = event {
-            if let PhysicalKey::Code(code) = event.physical_key {
-                if code == KeyCode::Enter && event.state == ElementState::Pressed {
-                    let ctrl = self.input.is_pressed(KeyCode::ControlLeft)
-                        || self.input.is_pressed(KeyCode::ControlRight);
-                    let alt = self.input.is_pressed(KeyCode::AltLeft)
-                        || self.input.is_pressed(KeyCode::AltRight);
-                    if ctrl && alt {
-                        self.console.toggle();
-                        if self.console.is_open {
-                            self.set_cursor_captured(false);
-                            // Release all held keys so camera doesn't get stuck
-                            if let Some(r) = self.renderer.as_mut() {
-                                r.camera_controller.release_all();
-                            }
-                            self.input.keys_pressed.clear();
-                        }
-                        return;
-                    }
-                }
-                // Escape closes the console when it is open
-                if code == KeyCode::Escape
-                    && event.state == ElementState::Pressed
-                    && self.console.is_open
-                {
+        if let WindowEvent::KeyboardInput { ref event, .. } = event
+            && let PhysicalKey::Code(code) = event.physical_key
+        {
+            if code == KeyCode::Enter && event.state == ElementState::Pressed {
+                let ctrl = self.input.is_pressed(KeyCode::ControlLeft)
+                    || self.input.is_pressed(KeyCode::ControlRight);
+                let alt = self.input.is_pressed(KeyCode::AltLeft)
+                    || self.input.is_pressed(KeyCode::AltRight);
+                if ctrl && alt {
                     self.console.toggle();
+                    if self.console.is_open {
+                        self.set_cursor_captured(false);
+                        // Release all held keys so camera doesn't get stuck
+                        if let Some(r) = self.renderer.as_mut() {
+                            r.camera_controller.release_all();
+                        }
+                        self.input.keys_pressed.clear();
+                    }
                     return;
                 }
+            }
+            // Escape closes the console when it is open
+            if code == KeyCode::Escape
+                && event.state == ElementState::Pressed
+                && self.console.is_open
+            {
+                self.console.toggle();
+                return;
             }
         }
 
         // Feed event to egui
-        let egui_consumed = if let (Some(state), Some(window)) =
-            (self.egui_state.as_mut(), self.window.as_ref())
-        {
-            state.on_window_event(window, &event).consumed
-        } else {
-            false
-        };
+        let egui_consumed =
+            if let (Some(state), Some(window)) = (self.egui_state.as_mut(), self.window.as_ref()) {
+                state.on_window_event(window, &event).consumed
+            } else {
+                false
+            };
 
         // If console is open and egui handled it, don't propagate to game input
         if self.console.is_open && egui_consumed {
             // Still track physical key state so modifier detection stays accurate
-            if let WindowEvent::KeyboardInput { ref event, .. } = event {
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    match event.state {
-                        ElementState::Pressed => self.input.press(code),
-                        ElementState::Released => self.input.release(code),
-                    }
+            if let WindowEvent::KeyboardInput { ref event, .. } = event
+                && let PhysicalKey::Code(code) = event.physical_key
+            {
+                match event.state {
+                    ElementState::Pressed => self.input.press(code),
+                    ElementState::Released => self.input.release(code),
                 }
             }
             return;
@@ -470,10 +476,8 @@ impl ApplicationHandler for Engine {
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 ..
-            } => {
-                if !self.console.is_open {
-                    self.set_cursor_captured(!self.input.mouse_captured);
-                }
+            } if !self.console.is_open => {
+                self.set_cursor_captured(!self.input.mouse_captured);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {

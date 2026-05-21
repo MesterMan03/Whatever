@@ -1,4 +1,6 @@
-use crate::console::types::{ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs};
+use crate::console::types::{
+    ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs,
+};
 use std::sync::Arc;
 
 const WIDTH: usize = 80;
@@ -8,22 +10,25 @@ const DEFAULT_MAX_ITER: u32 = 128;
 const CHARS: &[u8] = b" .:-=+*#%@";
 
 pub fn node() -> CommandNode {
-    CommandNode::engine("markbench", "Mandelbrot benchmark: render ASCII fractal across N threads")
-        .with_args(vec![
-            ArgSpec {
-                name: "threads".into(),
-                arg_type: ArgType::Int,
-                required: false,
-                description: "number of threads (default: all available)".into(),
-            },
-            ArgSpec {
-                name: "max_iter".into(),
-                arg_type: ArgType::Int,
-                required: false,
-                description: format!("max iterations per pixel (default: {DEFAULT_MAX_ITER})"),
-            },
-        ])
-        .with_handler(Arc::new(run))
+    CommandNode::engine(
+        "markbench",
+        "Mandelbrot benchmark: render ASCII fractal across N threads",
+    )
+    .with_args(vec![
+        ArgSpec {
+            name: "threads".into(),
+            arg_type: ArgType::Int,
+            required: false,
+            description: "number of threads (default: all available)".into(),
+        },
+        ArgSpec {
+            name: "max_iter".into(),
+            arg_type: ArgType::Int,
+            required: false,
+            description: format!("max iterations per pixel (default: {DEFAULT_MAX_ITER})"),
+        },
+    ])
+    .with_handler(Arc::new(run))
 }
 
 #[inline(always)]
@@ -100,7 +105,9 @@ fn run(args: ParsedArgs, _ctx: &CommandContext) -> CommandResult {
     let actual_threads = handles.len();
     let mut grid: Vec<Option<String>> = (0..HEIGHT).map(|_| None).collect();
     for handle in handles {
-        let rows = handle.join().map_err(|_| "worker thread panicked".to_owned())?;
+        let rows = handle
+            .join()
+            .map_err(|_| "worker thread panicked".to_owned())?;
         for (idx, line) in rows {
             grid[idx] = Some(line);
         }
@@ -112,7 +119,11 @@ fn run(args: ParsedArgs, _ctx: &CommandContext) -> CommandResult {
     output.push(String::new());
     output.push(format!(
         "{}×{}  max_iter={}  threads={}  time={:.3}s",
-        WIDTH, HEIGHT, max_iter, actual_threads, elapsed.as_secs_f64()
+        WIDTH,
+        HEIGHT,
+        max_iter,
+        actual_threads,
+        elapsed.as_secs_f64()
     ));
 
     Ok(output)

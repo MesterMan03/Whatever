@@ -32,7 +32,10 @@ pub struct PendingInvoke {
 pub enum ConsoleAction {
     None,
     Quit,
-    SendIpc { mod_id: String, message: EngineMessage },
+    SendIpc {
+        mod_id: String,
+        message: EngineMessage,
+    },
 }
 
 impl DevConsole {
@@ -76,10 +79,10 @@ impl DevConsole {
     }
 
     pub fn handle_command_response(&mut self, output: Vec<String>, error: Option<String>) {
-        if let Some(last) = self.output.last() {
-            if matches!(last, OutputLine::Text(s) if s == "(waiting for mod response…)") {
-                self.output.pop();
-            }
+        if let Some(last) = self.output.last()
+            && matches!(last, OutputLine::Text(s) if s == "(waiting for mod response…)")
+        {
+            self.output.pop();
         }
         self.pending_invoke = None;
         if let Some(err) = error {
@@ -132,10 +135,7 @@ impl DevConsole {
 
                     h
                 };
-                let output_h = (ui.available_height()
-                    - INPUT_ROW_HEIGHT
-                    - completion_area_h
-                    - 8.0) // separator + padding
+                let output_h = (ui.available_height() - INPUT_ROW_HEIGHT - completion_area_h - 8.0) // separator + padding
                     .max(40.0);
 
                 // ── Output scroll area ─────────────────────────────────────────
@@ -203,7 +203,11 @@ impl DevConsole {
                             egui::Align2::LEFT_CENTER,
                             c,
                             FontId::monospace(12.0),
-                            if selected { Color32::WHITE } else { Color32::from_rgb(160, 160, 160) },
+                            if selected {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_rgb(160, 160, 160)
+                            },
                         );
 
                         if response.clicked() {
@@ -223,11 +227,11 @@ impl DevConsole {
                 }
 
                 // ── Key handling (before TextEdit so Tab doesn't trigger focus traversal) ──
-                let tab   = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
+                let tab = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
                 let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-                let up    = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
-                let down  = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
-                let esc   = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+                let up = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
+                let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
+                let esc = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
 
                 if esc {
                     self.completions.clear();
@@ -243,8 +247,11 @@ impl DevConsole {
                 if up {
                     if !self.completions.is_empty() {
                         let max = self.completions.len().min(MAX_COMPLETIONS);
-                        self.completion_idx =
-                            if self.completion_idx == 0 { max - 1 } else { self.completion_idx - 1 };
+                        self.completion_idx = if self.completion_idx == 0 {
+                            max - 1
+                        } else {
+                            self.completion_idx - 1
+                        };
                     } else if !self.history.is_empty() {
                         let pos = match self.history_pos {
                             None => self.history.len() - 1,
@@ -337,10 +344,12 @@ impl DevConsole {
             // Move cursor to end of the newly applied text
             let char_count = self.input_buf.chars().count();
             if let Some(mut state) = TextEdit::load_state(ctx, te_id) {
-                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(char_count),
-                    egui::text::CCursor::new(char_count),
-                )));
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(char_count),
+                        egui::text::CCursor::new(char_count),
+                    )));
                 TextEdit::store_state(ctx, te_id, state);
             }
         }
@@ -404,7 +413,11 @@ impl DevConsole {
             if arg_start >= tokens.len() {
                 break;
             }
-            if let Some(sub) = node.subcommands.iter().find(|s| s.name == tokens[arg_start]) {
+            if let Some(sub) = node
+                .subcommands
+                .iter()
+                .find(|s| s.name == tokens[arg_start])
+            {
                 node = sub;
                 arg_start += 1;
             } else {
@@ -416,8 +429,7 @@ impl DevConsole {
         let raw_args: Vec<String> = tokens[arg_start..].to_vec();
 
         if node.handler.is_none() {
-            let subs: Vec<&str> =
-                node.subcommands.iter().map(|s| s.name.as_str()).collect();
+            let subs: Vec<&str> = node.subcommands.iter().map(|s| s.name.as_str()).collect();
             self.output.push(OutputLine::Error(format!(
                 "incomplete command — subcommands: {}",
                 subs.join(", ")
@@ -434,7 +446,12 @@ impl DevConsole {
 
         match &node.source {
             CommandSource::Engine => {
-                let ctx = CommandContext { mod_registry, vfs, fps: self.fps, debug };
+                let ctx = CommandContext {
+                    mod_registry,
+                    vfs,
+                    fps: self.fps,
+                    debug,
+                };
                 // we've verified handler exists, so unwrap() should be safe
                 // but probably best to refactor asap
                 match node.handler.unwrap()(parsed, &ctx) {
@@ -477,7 +494,9 @@ impl DevConsole {
 
                 self.output
                     .push(OutputLine::Text("(waiting for mod response…)".into()));
-                self.pending_invoke = Some(PendingInvoke { request_id: request_id.clone() });
+                self.pending_invoke = Some(PendingInvoke {
+                    request_id: request_id.clone(),
+                });
 
                 ConsoleAction::SendIpc {
                     mod_id: mod_id.clone(),
@@ -516,11 +535,7 @@ impl DevConsole {
         }
         for node in &self.registry.roots {
             if node.subcommands.is_empty() {
-                lines.push(format!(
-                    "  {:<30}{}",
-                    format_usage(node),
-                    node.description
-                ));
+                lines.push(format!("  {:<30}{}", format_usage(node), node.description));
             } else {
                 lines.push(format!("  {:<30}{}", node.name, node.description));
                 for sub in &node.subcommands {
@@ -563,10 +578,7 @@ fn describe_node(node: &CommandNode) -> Vec<String> {
         lines.push("arguments:".into());
         for arg in &node.args {
             let req = if arg.required { "required" } else { "optional" };
-            lines.push(format!(
-                "  <{}>  ({req})  {}",
-                arg.name, arg.description
-            ));
+            lines.push(format!("  <{}>  ({req})  {}", arg.name, arg.description));
         }
     }
     lines

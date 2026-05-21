@@ -55,14 +55,15 @@ pub fn parse_args(
         };
         let val = match spec.arg_type {
             ArgType::String => ArgValue::String(raw_val.clone()),
-            ArgType::Int => raw_val
-                .parse::<i64>()
-                .map(ArgValue::Int)
-                .map_err(|_| format!("argument <{}>: expected integer, got '{raw_val}'", spec.name))?,
-            ArgType::Float => raw_val
-                .parse::<f64>()
-                .map(ArgValue::Float)
-                .map_err(|_| format!("argument <{}>: expected number, got '{raw_val}'", spec.name))?,
+            ArgType::Int => raw_val.parse::<i64>().map(ArgValue::Int).map_err(|_| {
+                format!(
+                    "argument <{}>: expected integer, got '{raw_val}'",
+                    spec.name
+                )
+            })?,
+            ArgType::Float => raw_val.parse::<f64>().map(ArgValue::Float).map_err(|_| {
+                format!("argument <{}>: expected number, got '{raw_val}'", spec.name)
+            })?,
             ArgType::Bool => match raw_val.as_str() {
                 "true" | "1" | "yes" => ArgValue::Bool(true),
                 "false" | "0" | "no" => ArgValue::Bool(false),
@@ -70,7 +71,7 @@ pub fn parse_args(
                     return Err(format!(
                         "argument <{}>: expected bool (true/false), got '{raw_val}'",
                         spec.name
-                    ))
+                    ));
                 }
             },
         };

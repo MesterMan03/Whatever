@@ -2,21 +2,17 @@ use crate::console::types::{CommandContext, CommandNode, CommandResult, ParsedAr
 use std::sync::Arc;
 
 pub fn node() -> CommandNode {
-    CommandNode::engine("debug", "Manage live debug logging")
-        .with_subcommands(vec![
-            CommandNode::engine("disable", "Disable all debug logging")
-                .with_handler(Arc::new(run_disable)),
-            CommandNode::engine("all", "Enable all debug logging")
-                .with_handler(Arc::new(run_all)),
-            CommandNode::engine("window", "Toggle window debug logging")
-                .with_handler(Arc::new(run_window)),
-            CommandNode::engine("modloader", "Toggle modloader debug logging")
-                .with_handler(Arc::new(run_modloader)),
-            CommandNode::engine("ipc", "Toggle IPC debug logging")
-                .with_handler(Arc::new(run_ipc)),
-            CommandNode::engine("vfs", "Toggle VFS debug logging")
-                .with_handler(Arc::new(run_vfs)),
-        ])
+    CommandNode::engine("debug", "Manage live debug logging").with_subcommands(vec![
+        CommandNode::engine("disable", "Disable all debug logging")
+            .with_handler(Arc::new(run_disable)),
+        CommandNode::engine("all", "Enable all debug logging").with_handler(Arc::new(run_all)),
+        CommandNode::engine("window", "Toggle window debug logging")
+            .with_handler(Arc::new(run_window)),
+        CommandNode::engine("modloader", "Toggle modloader debug logging")
+            .with_handler(Arc::new(run_modloader)),
+        CommandNode::engine("ipc", "Toggle IPC debug logging").with_handler(Arc::new(run_ipc)),
+        CommandNode::engine("vfs", "Toggle VFS debug logging").with_handler(Arc::new(run_vfs)),
+    ])
 }
 
 fn state(on: bool) -> &'static str {
@@ -40,17 +36,29 @@ fn run_all(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
 }
 
 fn run_window(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
-    Ok(vec![format!("window debug: {}", state(ctx.debug.toggle_window()))])
+    Ok(vec![format!(
+        "window debug: {}",
+        state(ctx.debug.toggle_window())
+    )])
 }
 
 fn run_modloader(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
-    Ok(vec![format!("modloader debug: {}", state(ctx.debug.toggle_modloader()))])
+    Ok(vec![format!(
+        "modloader debug: {}",
+        state(ctx.debug.toggle_modloader())
+    )])
 }
 
 fn run_ipc(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
-    Ok(vec![format!("ipc debug: {}", state(ctx.debug.toggle_ipc()))])
+    Ok(vec![format!(
+        "ipc debug: {}",
+        state(ctx.debug.toggle_ipc())
+    )])
 }
 
 fn run_vfs(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
-    Ok(vec![format!("vfs debug: {}", state(ctx.debug.toggle_vfs()))])
+    Ok(vec![format!(
+        "vfs debug: {}",
+        state(ctx.debug.toggle_vfs())
+    )])
 }

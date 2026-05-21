@@ -396,7 +396,7 @@ function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpe
 
 // Handle CommandInvoke from the engine
 // command_path includes the root name, e.g. ["myfoo"] or ["myfoo", "sub"]
-function _handleCommandInvoke(msg: Extract<_EngineMsg, { type: "CommandInvoke" }>): void {
+async function _handleCommandInvoke(msg: Extract<_EngineMsg, { type: "CommandInvoke" }>): Promise<void> {
   const handlerKey = msg.command_path.join(".");
   const handler = _cmdHandlers.get(handlerKey);
   const argSpecs = _cmdArgSpecs.get(handlerKey) ?? [];
@@ -413,15 +413,14 @@ function _handleCommandInvoke(msg: Extract<_EngineMsg, { type: "CommandInvoke" }
     return;
   }
 
-  Promise.resolve(handler(argsRecord))
-    .then((result) => {
-      const lines = Array.isArray(result) ? result : [result];
-      _send({ type: "CommandResponse", request_id: msg.request_id, output: lines, error: null });
-    })
-    .catch((err: unknown) => {
-      const msg2 = err instanceof Error ? err.message : String(err);
-      _send({ type: "CommandResponse", request_id: msg.request_id, output: [], error: msg2 });
-    });
+  try {
+    const result = await handler(argsRecord);
+    const lines = Array.isArray(result) ? result : [result];
+    _send({ type: "CommandResponse", request_id: msg.request_id, output: lines, error: null });
+  } catch(error: unknown) {
+    const message = error instanceof Error ? error.message + "\n" + error.stack : String(error);
+    _send({ type: "CommandResponse", request_id: msg.request_id, output: [], error: message });
+  }
 }
 
 /** Register a command that users can invoke from the developer console. */

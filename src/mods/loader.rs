@@ -5,6 +5,8 @@ use crate::vfs::{DiskLayer, LayeredVfs, VfsPath};
 use anyhow::{Context, bail};
 use semver::{Version, VersionReq};
 use std::collections::{HashMap, VecDeque};
+
+type ModOrder = HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>;
 use std::path::Path;
 
 pub fn discover_and_load(
@@ -89,11 +91,18 @@ pub fn discover_and_load(
         .collect();
 
     // (after, before, dep_ids) per mod — used to check if conflicting override order is deterministic
-    let mod_order: HashMap<String, (Vec<String>, Vec<String>, Vec<String>)> = sorted
+    let mod_order: ModOrder = sorted
         .iter()
         .map(|(m, _)| {
             let deps: Vec<String> = m.dependencies.keys().cloned().collect();
-            (m.meta.id.clone(), (m.load_order.after.clone(), m.load_order.before.clone(), deps))
+            (
+                m.meta.id.clone(),
+                (
+                    m.load_order.after.clone(),
+                    m.load_order.before.clone(),
+                    deps,
+                ),
+            )
         })
         .collect();
 
@@ -121,13 +130,16 @@ pub fn discover_and_load(
             if let (Some(from), Some(to)) = (VfsPath::parse(from_str), VfsPath::parse(&to_resolved))
             {
                 let from_key = from.as_string();
-                if let Some(prev_mod) = first_overriders.get(&from_key) {
-                    if !has_explicit_order(prev_mod, &mod_id, &mod_order) {
-                        tracing::warn!(
-                            "override conflict: '{}' and '{}' both override '{}' with no explicit load order between them; '{}' wins — add [load_order] to make this deterministic",
-                            prev_mod, mod_id, from_key, mod_id
-                        );
-                    }
+                if let Some(prev_mod) = first_overriders.get(&from_key)
+                    && !has_explicit_order(prev_mod, &mod_id, &mod_order)
+                {
+                    tracing::warn!(
+                        "override conflict: '{}' and '{}' both override '{}' with no explicit load order between them; '{}' wins — add [load_order] to make this deterministic",
+                        prev_mod,
+                        mod_id,
+                        from_key,
+                        mod_id
+                    );
                 }
                 first_overriders.insert(from_key, mod_id.clone());
                 vfs.add_override(from, to);
@@ -148,13 +160,16 @@ pub fn discover_and_load(
         match mod_assets.get(&from.mod_id) {
             None => tracing::warn!(
                 "dangling override by '{}': source mod '{}' is not loaded",
-                declaring_mod, from.mod_id
+                declaring_mod,
+                from.mod_id
             ),
             Some(assets_root) => {
                 if !assets_root.join(&from.path).exists() {
                     tracing::warn!(
                         "dangling override by '{}': '{}' does not exist in mod '{}'",
-                        declaring_mod, from.path, from.mod_id
+                        declaring_mod,
+                        from.path,
+                        from.mod_id
                     );
                 }
             }
@@ -248,11 +263,7 @@ fn toposort(
     Ok(sorted)
 }
 
-fn has_explicit_order(
-    mod_a: &str,
-    mod_b: &str,
-    mod_order: &HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>,
-) -> bool {
+fn has_explicit_order(mod_a: &str, mod_b: &str, mod_order: &ModOrder) -> bool {
     let references = |m: &str, other: &str| -> bool {
         if let Some((after, before, deps)) = mod_order.get(m) {
             after.iter().any(|id| id == other)
