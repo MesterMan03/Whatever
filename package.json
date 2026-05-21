@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["runtime"],
   "scripts": {
-    "build:core": "cd mods/core && bun build src/index.ts --outfile scripts/index.js --minify --external=@whatever/api",
+    "build:core": "cd mods/core && bun build src/index.ts --outfile scripts/index.js --minify --external=@whatever-engine/api",
     "build:runtime": "bun run --cwd runtime build:types"
   },
   "dependencies": {

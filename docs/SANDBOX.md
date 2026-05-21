@@ -18,7 +18,7 @@ Three independent layers are applied in the forked child before `exec`:
 |---|---|
 | `/usr`, `/lib`, `/lib64`, `/lib32`, `/etc`, `/dev`, `/proc/self`, `/run`, `/sys` | read + execute (needed by the dynamic linker and libc) |
 | Bun install directory (`~/.bun` or `$BUN_INSTALL`) | read + execute |
-| Engine root (contains `node_modules/@whatever/api`) | read-only |
+| Engine root (contains `node_modules/@whatever-engine/api`) | read-only |
 | Mod root (script entry and sibling imports) | read-only |
 | Mod data directory | full read-write (the only persistent storage a mod has) |
 | `/tmp` | read-write (Bun's transpilation cache) |
@@ -74,7 +74,7 @@ The engine uses Apple's **Seatbelt** (`sandbox_init`) to apply a Scheme-like pro
 (deny default)                       ; deny everything not explicitly allowed
 (allow file-read* /usr /System /Library /private/etc /private/tmp /private/var/folders)
 (allow file-read* <bun_dir>)         ; Bun install directory
-(allow file-read* <engine_root>)     ; node_modules/@whatever/api
+(allow file-read* <engine_root>)     ; node_modules/@whatever-engine/api
 (allow file-read* <mod_root>)        ; mod script files
 (allow file-write* <mod_data_dir>)   ; mod persistent storage
 (allow file-write* /private/tmp)     ; Bun transpilation cache

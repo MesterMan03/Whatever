@@ -1,4 +1,4 @@
-import {Console, Message} from "@whatever/api";
+import {Console, Message} from "@whatever-engine/api";
 
 Message.registerMessageHandler((_) => {
     return "Hi there! :D";

@@ -1,11 +1,11 @@
 # Scripting API
 
 Mods with a `[script]` section in `mod.toml` run as a Bun subprocess. The engine
-communicates with each script over NDJSON on stdin/stdout. The `@whatever/api`
+communicates with each script over NDJSON on stdin/stdout. The `@whatever-engine/api`
 package abstracts the wire protocol.
 
 ```ts
-import { Engine, Window, Scene, Assets, File, Mods, Message, Console } from "@whatever/api";
+import { Engine, Window, Scene, Assets, File, Mods, Message, Console } from "@whatever-engine/api";
 ```
 
 The package is provided by the engine's workspace (`runtime/`). No install step

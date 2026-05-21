@@ -28,7 +28,7 @@
     "noPropertyAccessFromIndexSignature": false,
 
     "paths": {
-      "@whatever/api": ["./runtime/index.ts"]
+      "@whatever-engine/api": ["./runtime/index.ts"]
     }
   },
   "include": [

@@ -37,7 +37,7 @@ mods/                   Engine-shipped mods (tracked in git)
     scripts/            Compiled JS entry point (built from src/ via bun build:core)
   script_test/          Scripting API integration test
 mods_user/              User-installed mods (gitignored)
-runtime/                @whatever/api — TypeScript scripting API package
+runtime/                @whatever-engine/api — TypeScript scripting API package
   index.ts              Source
   index.d.ts            Generated type declarations (for IDE autocomplete)
 src/
@@ -102,7 +102,7 @@ my_game://textures/player.png
 
 Scripted mods run as a Bun subprocess per mod. The engine communicates over NDJSON on stdin/stdout.
 
-The `@whatever/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory. 
+The `@whatever-engine/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory. 
 It contains all the necessary abstractions for the IPC messaging so that devs can work with properly typed structures without extra boilerplate.
 
 See [`docs/scripting-api.md`](docs/scripting-api.md) for the full reference.

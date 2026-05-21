@@ -1,11 +1,11 @@
-# @whatever/api
+# @whatever-engine/api
 
 TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC protocol between the engine and Bun script subprocesses.
 
 ## Usage
 
 ```ts
-import { Engine, Window, Scene, Assets, File, Mods, Message, Console } from "@whatever/api";
+import { Engine, Window, Scene, Assets, File, Mods, Message, Console } from "@whatever-engine/api";
 
 Engine.on("init", ({ mod_id }) => {
   Engine.log("info", `loaded as ${mod_id}`);

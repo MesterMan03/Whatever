@@ -21,5 +21,5 @@ You can see an example of this here, where `src` contains the original TypeScrip
 The following command was used to bundle the scripts:
 
 ```bash
-bun build src/index.ts --outfile scripts/index.js --minify --external=@whatever/api
+bun build src/index.ts --outfile scripts/index.js --minify --external=@whatever-engine/api
 ```

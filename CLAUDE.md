@@ -16,7 +16,7 @@ The engine is a barebones backend. Every game is just a mod. The engine owns win
 | `src/mods/` | Mod manifest, discovery, toposort, registry |
 | `src/renderer/` | wgpu context, camera, texture loading, scene |
 | `src/script/` | Bun subprocess host, NDJSON IPC, message dispatch |
-| `runtime/` | `@whatever/api` npm package — TypeScript scripting API for mods |
+| `runtime/` | `@whatever-engine/api` npm package — TypeScript scripting API for mods |
 
 Every `mod.rs` is a thin re-export file only. Logic lives in named sibling files.
 
@@ -47,8 +47,8 @@ cargo run -- --debug=all
 cargo run -- --debug=ipc,modloader
 cargo test
 
-# Regenerate @whatever/api type declarations after editing runtime/index.ts
-bun run --cwd runtime build:types
+# Regenerate @whatever-engine/api type declarations after editing runtime/index.ts
+bun run build:runtime
 ```
 
 ## Adding a New Mod
@@ -68,9 +68,10 @@ bun run --cwd runtime build:types
 
 ## Documentation
 
-**When modifying `runtime/index.ts`** (the `@whatever/api` scripting API), always update
-`docs/scripting-api.md` to reflect the changes. The doc must stay in sync with the actual
-exported namespaces, types, and IPC messages.
+**When modifying `runtime/index.ts`** (the `@whatever-engine/api` scripting API), always update
+`docs/scripting-api.md` and `runtime/README.md` to reflect the changes (`docs/scripting-api.md` may contain detailed
+type descriptions, while `runtime/README.md` should only have basic function headers). 
+The doc must stay in sync with the actual exported namespaces, types, and IPC messages.
 
 **When the project layout changes** (new module added, directory renamed or removed, new
 top-level file), update the "Project Layout" block in `README.md` to match.

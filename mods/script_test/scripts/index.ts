@@ -1,4 +1,4 @@
-import {Engine, Window, File, Mods, Message} from "@whatever/api";
+import {Engine, Window, File, Mods, Message} from "@whatever-engine/api";
 
 const randomText = Math.random().toString(36).substring(2);
 

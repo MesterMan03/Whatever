@@ -1,5 +1,5 @@
 import {$} from "bun";
-import {Console, Engine} from "@whatever/api";
+import {Console, Engine} from "@whatever-engine/api";
 
 async function run(label: string, fn: () => Promise<unknown>) {
   try {

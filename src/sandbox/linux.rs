@@ -102,7 +102,7 @@ fn apply_landlock(bun_dir: &Path, mod_root: &Path, mod_data_dir: &Path, engine_r
             created = created.add_rule(PathBeneath::new(PathFd::new(bun_dir)?, exec_sys))?;
         }
 
-        // Engine root: read-only (node_modules/@whatever/api lives here)
+        // Engine root: read-only (node_modules/@whatever-engine/api lives here)
         if engine_root.exists() {
             created = created.add_rule(PathBeneath::new(PathFd::new(engine_root)?, read_only))?;
         }

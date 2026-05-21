@@ -14,7 +14,7 @@ pub struct SandboxConfig {
     pub mod_root: PathBuf,
     /// Mod's persistent data dir — the only path with write access.
     pub mod_data_dir: PathBuf,
-    /// Engine working directory (contains node_modules/@whatever/api).
+    /// Engine working directory (contains node_modules/@whatever-engine/api).
     pub engine_root: PathBuf,
 }
 
