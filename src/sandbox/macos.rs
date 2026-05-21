@@ -41,7 +41,9 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
                     sandbox_free_error(errp);
                 }
                 // Seatbelt is deprecated; degrade gracefully rather than killing the mod.
-                eprintln!("[sandbox:{mod_id}] sandbox_init failed (rc={rc}); running without Seatbelt");
+                eprintln!(
+                    "[sandbox:{mod_id}] sandbox_init failed (rc={rc}); running without Seatbelt"
+                );
             }
             Ok(())
         });

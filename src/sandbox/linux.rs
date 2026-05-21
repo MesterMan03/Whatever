@@ -1,7 +1,6 @@
 use super::SandboxConfig;
 use landlock::{
-    ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr,
-    RulesetCreatedAttr,
+    ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
 };
 use seccompiler::{
     BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
@@ -36,8 +35,8 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
     // Derive the bun home directory from the binary path:
     // ~/.bun/bin/bun → ~/.bun   or   /usr/local/bin/bun → /usr/local
     let bun_dir = bun_bin
-        .parent()  // .../bin/
-        .and_then(|p| p.parent())  // install root
+        .parent() // .../bin/
+        .and_then(|p| p.parent()) // install root
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/"));
 
@@ -59,12 +58,7 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
     Ok(())
 }
 
-fn apply_landlock(
-    bun_dir: &Path,
-    mod_root: &Path,
-    mod_data_dir: &Path,
-    engine_root: &Path,
-) {
+fn apply_landlock(bun_dir: &Path, mod_root: &Path, mod_data_dir: &Path, engine_root: &Path) {
     // Ruleset::default() already uses BestEffort compatibility mode in landlock 0.4 —
     // unsupported rules are silently skipped rather than causing an error.
     let abi = ABI::V4;
@@ -84,13 +78,20 @@ fn apply_landlock(
         // System paths: read + execute (dynamic linker /lib64/ld-linux-x86-64.so.2 needs
         // Execute, and it resolves to a path under /usr on this distro).
         let sys_paths: &[&str] = &[
-            "/usr", "/lib", "/lib64", "/lib32", "/etc", "/dev", "/proc/self", "/run", "/sys",
+            "/usr",
+            "/lib",
+            "/lib64",
+            "/lib32",
+            "/etc",
+            "/dev",
+            "/proc/self",
+            "/run",
+            "/sys",
         ];
         for &path_str in sys_paths {
             let path = Path::new(path_str);
             if path.exists() {
-                created =
-                    created.add_rule(PathBeneath::new(PathFd::new(path)?, exec_sys))?;
+                created = created.add_rule(PathBeneath::new(PathFd::new(path)?, exec_sys))?;
             }
         }
 
@@ -103,20 +104,17 @@ fn apply_landlock(
 
         // Engine root: read-only (node_modules/@whatever/api lives here)
         if engine_root.exists() {
-            created =
-                created.add_rule(PathBeneath::new(PathFd::new(engine_root)?, read_only))?;
+            created = created.add_rule(PathBeneath::new(PathFd::new(engine_root)?, read_only))?;
         }
 
         // Mod root: read-only (script entry + sibling .ts/.js imports)
         if mod_root.exists() {
-            created =
-                created.add_rule(PathBeneath::new(PathFd::new(mod_root)?, read_only))?;
+            created = created.add_rule(PathBeneath::new(PathFd::new(mod_root)?, read_only))?;
         }
 
         // Mod data dir: full read-write (the only place a mod can persist data)
         if mod_data_dir.exists() {
-            created =
-                created.add_rule(PathBeneath::new(PathFd::new(mod_data_dir)?, read_write))?;
+            created = created.add_rule(PathBeneath::new(PathFd::new(mod_data_dir)?, read_write))?;
         }
 
         // /tmp: read-write (Bun needs this for its transpilation cache)
@@ -204,14 +202,7 @@ fn drop_capabilities(mod_id: &str) {
                 *libc::__errno_location()
             );
         }
-        if libc::prctl(
-            PR_CAP_AMBIENT,
-            PR_CAP_AMBIENT_CLEAR_ALL,
-            0u64,
-            0u64,
-            0u64,
-        ) != 0
-        {
+        if libc::prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0u64, 0u64, 0u64) != 0 {
             eprintln!(
                 "[sandbox:{mod_id}] PR_CAP_AMBIENT_CLEAR_ALL failed (errno {})",
                 *libc::__errno_location()

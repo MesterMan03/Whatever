@@ -2,9 +2,10 @@ use super::SandboxConfig;
 use std::process::Child;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_BASIC_LIMIT_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_ALL_ACCESS};
 
@@ -60,7 +61,9 @@ fn try_apply_job(child: &Child) -> anyhow::Result<SandboxGuard> {
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         )?;
 
-        let pid = child.id().ok_or_else(|| anyhow::anyhow!("child has no PID"))?;
+        let pid = child
+            .id()
+            .ok_or_else(|| anyhow::anyhow!("child has no PID"))?;
         let process = OpenProcess(PROCESS_ALL_ACCESS, false, pid)?;
         let assign_result = AssignProcessToJobObject(job, process);
         let _ = CloseHandle(process); // we only needed the handle for this call
