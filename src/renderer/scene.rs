@@ -1,6 +1,8 @@
-use super::texture::GpuTexture;
+use super::texture::{GpuTexture, load_from_vfs};
+use crate::ecs::{SpriteRenderer, Transform};
+use crate::vfs::{Vfs, VfsPath};
 use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
+use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -29,102 +31,148 @@ pub struct TexturedQuad {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
+    /// Cached VFS path; used to skip texture reloads when only the transform changed.
+    pub texture_path: String,
 }
 
 pub struct Scene {
-    pub quads: Vec<TexturedQuad>,
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    /// Entity index → GPU sprite resources.
+    pub entity_sprites: HashMap<u32, TexturedQuad>,
+}
+
+pub struct RenderContext<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub bgl: &'a wgpu::BindGroupLayout,
+}
+
+pub struct SpriteUpdateTarget<'a> {
+    pub entity_idx: u32,
+    pub transform: &'a Transform,
+    pub sprite: &'a SpriteRenderer,
 }
 
 impl Scene {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
+    pub fn new() -> Self {
         Scene {
-            quads: Vec::new(),
-            texture_bind_group_layout,
+            entity_sprites: HashMap::new(),
         }
     }
 
-    pub fn add_sprite(&mut self, device: &wgpu::Device, texture: GpuTexture, position: Vec3) {
-        let half = 1.0_f32;
-        let verts = [
-            Vertex {
-                position: [position.x - half, position.y, position.z - half],
-                tex_coords: [0.0, 1.0],
-            },
-            Vertex {
-                position: [position.x + half, position.y, position.z - half],
-                tex_coords: [1.0, 1.0],
-            },
-            Vertex {
-                position: [position.x + half, position.y, position.z + half],
-                tex_coords: [1.0, 0.0],
-            },
-            Vertex {
-                position: [position.x - half, position.y, position.z + half],
-                tex_coords: [0.0, 0.0],
-            },
-        ];
-        let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+    /// Create or update the sprite for `entity_idx`.
+    ///
+    /// - If the entity already has a quad and the texture path is unchanged,
+    ///   only the vertex buffer is updated (cheap `queue.write_buffer`).
+    /// - If the texture path changed or the entity is new, GPU resources are
+    ///   (re)created.
+    pub fn update_sprite(
+        &mut self,
+        vfs: &dyn Vfs,
+        target: SpriteUpdateTarget,
+        ctx: RenderContext,
+    ) -> anyhow::Result<()> {
+        let RenderContext { device, queue, bgl } = ctx;
+        let SpriteUpdateTarget {
+            entity_idx,
+            transform,
+            sprite,
+        } = target;
+        let verts = build_vertices(transform);
 
+        if let Some(quad) = self.entity_sprites.get_mut(&entity_idx) {
+            queue.write_buffer(&quad.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+            if quad.texture_path != sprite.texture {
+                let tex = load_texture(device, queue, vfs, &sprite.texture)?;
+                quad.bind_group = make_bind_group(device, bgl, &tex);
+                quad.texture_path = sprite.texture.clone();
+            }
+            return Ok(());
+        }
+
+        let tex = load_texture(device, queue, vfs, &sprite.texture)?;
+        let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("quad_vb"),
             contents: bytemuck::cast_slice(&verts),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("quad_ib"),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("texture_bg"),
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture.sampler),
-                },
-            ],
-        });
+        self.entity_sprites.insert(
+            entity_idx,
+            TexturedQuad {
+                vertex_buffer,
+                index_buffer,
+                bind_group: make_bind_group(device, bgl, &tex),
+                texture_path: sprite.texture.clone(),
+            },
+        );
+        Ok(())
+    }
 
-        self.quads.push(TexturedQuad {
-            vertex_buffer,
-            index_buffer,
-            bind_group,
-        });
+    pub fn remove_sprite(&mut self, entity_idx: u32) {
+        self.entity_sprites.remove(&entity_idx);
     }
 }
 
-pub fn grid_pos(index: usize) -> Vec3 {
-    const COLS: usize = 8;
-    let col = index % COLS;
-    let row = index / COLS;
-    Vec3::new(col as f32 * 2.5, 0.0, row as f32 * 2.5)
+// --- helpers -----------------------------------------------------------------
+
+fn build_vertices(transform: &Transform) -> [Vertex; 4] {
+    let [x, y, z] = transform.position;
+    let [sx, _, sz] = transform.scale;
+    let hw = sx * 0.5;
+    let hd = sz * 0.5;
+    [
+        Vertex {
+            position: [x - hw, y, z - hd],
+            tex_coords: [0.0, 1.0],
+        },
+        Vertex {
+            position: [x + hw, y, z - hd],
+            tex_coords: [1.0, 1.0],
+        },
+        Vertex {
+            position: [x + hw, y, z + hd],
+            tex_coords: [1.0, 0.0],
+        },
+        Vertex {
+            position: [x - hw, y, z + hd],
+            tex_coords: [0.0, 0.0],
+        },
+    ]
+}
+
+fn load_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    vfs: &dyn Vfs,
+    texture_path: &str,
+) -> anyhow::Result<GpuTexture> {
+    let vfs_path = VfsPath::parse(texture_path)
+        .ok_or_else(|| anyhow::anyhow!("invalid VFS texture path: {texture_path}"))?;
+    load_from_vfs(device, queue, vfs, &vfs_path)
+}
+
+fn make_bind_group(
+    device: &wgpu::Device,
+    bgl: &wgpu::BindGroupLayout,
+    texture: &GpuTexture,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("texture_bg"),
+        layout: bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&texture.sampler),
+            },
+        ],
+    })
 }

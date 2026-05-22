@@ -1,3 +1,4 @@
 [game]
 id   = "first_game"
 name = "First Game"
+tick_rate = 60

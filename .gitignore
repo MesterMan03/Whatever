@@ -1,6 +1,6 @@
 /target
 /mods_user
 /debug
-/node_modules
-/runtime/node_modules/
+**/node_modules
 /logs
+/runtime/dist/

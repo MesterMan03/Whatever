@@ -38,8 +38,10 @@ mods/                   Engine-shipped mods (tracked in git)
   script_test/          Scripting API integration test
 mods_user/              User-installed mods (gitignored)
 runtime/                @whatever-engine/api — TypeScript scripting API package
-  index.ts              Source
-  index.d.ts            Generated type declarations (for IDE autocomplete)
+  src/                  Source
+  dist/
+    index.js            Compiled API bundle (built from src/ via bun build:runtime)
+    index.d.ts          Type declarations for the API
 src/
   main.rs               CLI args, Engine::new(), engine.run()
   engine.rs             Engine struct; owns all subsystems; drives main loop
@@ -57,6 +59,7 @@ src/
   renderer/             wgpu context, camera, sprites
   vfs/                  Layered virtual filesystem
   mods/                 Mod manifest, discovery, toposort, registry
+  ecs/                  Entity-component system
 docs/
   scripting-api.md      Full scripting API reference
   SANDBOX.md            Security sandbox design and implementation details

@@ -5,14 +5,14 @@ TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC prot
 ## Usage
 
 ```ts
-import { Engine, Window, Scene, Assets, File, Mods, Message, Console } from "@whatever-engine/api";
+import { Engine, Window, File, Scene, Entity, Mods, Message, Console } from "@whatever-engine/api";
 
 Engine.on("init", ({ mod_id }) => {
   Engine.log("info", `loaded as ${mod_id}`);
 });
 
-Engine.on("frame", ({ delta_seconds }) => {
-  // per-frame logic
+Engine.on("tick", async ({ delta_seconds }) => {
+  // game logic — engine waits for this Promise before advancing
 });
 ```
 
@@ -22,22 +22,13 @@ No install step needed — Bun resolves the package automatically for any script
 
 ### `Engine`
 
-- `Engine.on(event, handler)` — subscribe to an engine event (`init`, `exit`, `frame`, `input`, `asset_response`, `mod_message`)
+- `Engine.on(event, handler)` — subscribe to an engine event (`init`, `exit`, `tick`, `mod_message`)
 - `Engine.log(level, message)` — log through the engine logger (`"info"`, `"warn"`, `"error"`)
+- `Engine.setTickRate(ticks_per_second)` — override the game tick rate at runtime
 
 ### `Window`
 
 - `Window.setTitle(title)` — change the window title
-
-### `Scene`
-
-- `Scene.spawnSprite(entity_id, texture, position, scale?)` — spawn a textured sprite
-- `Scene.moveEntity(entity_id, position)` — move an entity to a new world-space position
-- `Scene.destroyEntity(entity_id)` — remove an entity from the scene
-
-### `Assets`
-
-- `Assets.request(request_id, path)` — request raw asset bytes from the VFS; result arrives as an `asset_response` event
 
 ### `File`
 
@@ -46,6 +37,52 @@ Sandboxed per-mod file I/O. Paths must not contain `..`.
 - `File.write(path, data)` → `Promise<void>`
 - `File.read(path)` → `Promise<string>`
 - `File.delete(path)` → `Promise<void>`
+
+### `Entity`
+
+A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntities`, `Scene.query`, and `Scene.spawnSprite`. For built-in component types the data parameter/return is automatically typed; for custom component types a generic `T` can be supplied.
+
+- `entity.id` — opaque entity ID string
+- `entity.destroy()` — fire-and-forget
+- `entity.setComponent(component_type, data)` — fire-and-forget; typed for built-in components
+- `entity.removeComponent(component_type)` — fire-and-forget
+- `entity.getComponent(component_type)` → `Promise<T | null>` — typed for built-in components
+- `entity.move(position)` → `Promise<void>` — update `core:transform` position, preserve rotation/scale
+
+### `Scene`
+
+Entity and component management. Methods that accept a raw `entity_id` string are provided for cases where only an ID is available; prefer `Entity` methods when possible.
+
+- `Scene.createEntity()` → `Promise<Entity>`
+- `Scene.destroyEntity(entity_id)` — fire-and-forget
+- `Scene.listEntities()` → `Promise<Entity[]>`
+- `Scene.setComponent(entity_id, component_type, data)` — fire-and-forget; typed for built-in components
+- `Scene.removeComponent(entity_id, component_type)` — fire-and-forget
+- `Scene.getComponent(entity_id, component_type)` → `Promise<T | null>` — typed for built-in components
+- `Scene.query(component_types)` → `Promise<QueryResult[]>` — each row has `entity: Entity` and `components`
+- `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>` — convenience
+- `Scene.moveEntity(entity_id, position)` → `Promise<void>` — convenience
+
+Built-in component types: `core:transform`, `core:sprite_renderer`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+
+### `BuiltInComponents.Transform`
+
+Methods (all setters chainable, return `this`):
+
+- `getX/Y/Z()`, `setX/Y/Z(v)` — individual position components
+- `getPosition()` → `[x, y, z]`, `setPosition(x, y, z)` — full position
+- `getScaleX/Y/Z()`, `setScaleX/Y/Z(v)` — individual scale components
+- `getScale()` → `[x, y, z]`, `setScale(x, y, z)`, `setScaleUniform(s)` — full scale
+- `getRotation()` → `[x, y, z, w]`, `setRotation(x, y, z, w)` — raw quaternion
+- `getEulerRadians/Degrees()` → `[rx, ry, rz]` — intrinsic XYZ decomposition
+- `setEulerRadians/Degrees(rx, ry, rz)` — set from intrinsic XYZ Euler angles
+- `rotateX/Y/Z(degrees)` — incremental world-space rotation around axis
+- `distance(other)` → `number` — Euclidean distance between positions
+
+### `BuiltInComponents.SpriteRenderer`
+
+- `getTexture()`, `setTexture(path)` — VFS texture path
+- `getZIndex()`, `setZIndex(z)` — draw order
 
 ### `Mods`
 

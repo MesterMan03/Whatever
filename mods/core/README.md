@@ -8,6 +8,7 @@ It also requires a special `meta.toml` file with the following content:
 [game]
 id   = "game_id"
 name = "Game Name"
+tick_rate = 60
 ```
 
 This file is used to set the game's ID and name, which are used in the window title and save file paths. The `core` mod can be thought of as the "base layer" of the engine, providing essential functionality and assets that other mods can build upon.

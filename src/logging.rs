@@ -60,8 +60,7 @@ impl tracing::field::Visit for FieldCollector {
 }
 
 /// Remove ANSI CSI escape sequences (e.g. `\x1b[31m`) from `s`.
-pub
-fn strip_ansi(s: &str) -> String {
+pub fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {

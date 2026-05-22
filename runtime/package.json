@@ -3,20 +3,21 @@
   "author": "Mester",
   "license": "Apache-2.0",
   "description": "TypeScript scripting API for Whatever Engine mods",
-  "version": "0.1.1-3",
-  "module": "./index.ts",
-  "types": "./index.d.ts",
+  "version": "0.2.0",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "bun": "./index.ts",
-      "types": "./index.d.ts"
-    }
+    ".": "./dist/index.js"
   },
   "scripts": {
-    "build:types": "tsc"
+    "build:bundle": "bun build src/index.ts --outfile dist/index.js --external=node --target=node --footer=\"// With love from the Whatever team <3\n// https://github.com/MesterMan03/Whatever\"",
+    "build:types": "dts-bundle-generator --project tsconfig.dts.json --out-file dist/index.d.ts src/index.ts",
+    "build": "bun run build:bundle && bun run build:types",
+    "prepublishOnly": "bun run build"
   },
   "devDependencies": {
     "@types/node": "^22",
+    "dts-bundle-generator": "^9.5.1",
     "typescript": "^5"
   },
   "publishConfig": {
@@ -26,5 +27,8 @@
     "type": "git",
     "url": "git+https://github.com/MesterMan03/Whatever.git",
     "directory": "runtime"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

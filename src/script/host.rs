@@ -8,12 +8,12 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 pub struct ScriptProcess {
     pub mod_id: String,
     child: Child,
     stdin: ChildStdin,
-    stdout_rx: mpsc::Receiver<String>,
     _sandbox_guard: SandboxGuard,
 }
 
@@ -36,13 +36,18 @@ pub struct ScriptHost {
     processes: HashMap<String, ScriptProcess>,
     /// Maps "<sender_mod_id>-<original_request_id>" → PendingReply.
     pending_replies: HashMap<String, PendingReply>,
+    shared_rx: mpsc::Receiver<(String, String)>,
+    shared_tx: mpsc::SyncSender<(String, String)>,
 }
 
 impl ScriptHost {
     pub fn new() -> Self {
+        let (shared_tx, shared_rx) = mpsc::sync_channel(4096);
         ScriptHost {
             processes: HashMap::new(),
             pending_replies: HashMap::new(),
+            shared_rx,
+            shared_tx,
         }
     }
 
@@ -82,15 +87,15 @@ impl ScriptHost {
         let stdout = child.stdout.take().context("take stdout")?;
         let stderr = child.stderr.take().context("take stderr")?;
 
-        // Stdout reader thread — sends lines into a channel so drain_messages is non-blocking.
-        let (tx, rx) = mpsc::channel::<String>();
+        // Stdout reader thread — posts (mod_id, line) to the shared channel.
+        let tx = self.shared_tx.clone();
         let mod_id_out = mod_id.to_owned();
         thread::spawn(move || {
             use std::io::{BufRead, BufReader};
             for line in BufReader::new(stdout).lines() {
                 match line {
                     Ok(l) => {
-                        if tx.send(l).is_err() {
+                        if tx.send((mod_id_out.clone(), l)).is_err() {
                             break;
                         }
                     }
@@ -123,7 +128,6 @@ impl ScriptHost {
                 mod_id: mod_id.to_owned(),
                 child,
                 stdin,
-                stdout_rx: rx,
                 _sandbox_guard: sandbox_guard,
             },
         );
@@ -144,16 +148,36 @@ impl ScriptHost {
 
     pub fn drain_messages(&mut self, debug: &mut DebugLogger) -> Vec<(String, ScriptMessage)> {
         let mut out = Vec::new();
-        for proc in self.processes.values_mut() {
-            while let Ok(line) = proc.stdout_rx.try_recv() {
-                debug.ipc(&proc.mod_id, "→", &line);
-                match serde_json::from_str::<ScriptMessage>(&line) {
-                    Ok(msg) => out.push((proc.mod_id.clone(), msg)),
-                    Err(e) => tracing::warn!(mod_id = %proc.mod_id, "bad IPC message: {e}: {line}"),
-                }
+        while let Ok((mod_id, line)) = self.shared_rx.try_recv() {
+            debug.ipc(&mod_id, "→", &line);
+            match serde_json::from_str::<ScriptMessage>(&line) {
+                Ok(msg) => out.push((mod_id, msg)),
+                Err(e) => tracing::warn!(mod_id, "bad IPC message: {e}: {line}"),
             }
         }
         out
+    }
+
+    /// Blocks until a message arrives or `timeout` elapses. Used by the tick wait loop.
+    pub fn recv_blocking(
+        &mut self,
+        timeout: Duration,
+        debug: &mut DebugLogger,
+    ) -> Option<(String, ScriptMessage)> {
+        match self.shared_rx.recv_timeout(timeout) {
+            Ok((mod_id, line)) => {
+                debug.ipc(&mod_id, "→", &line);
+                match serde_json::from_str::<ScriptMessage>(&line) {
+                    Ok(msg) => Some((mod_id, msg)),
+                    Err(e) => {
+                        tracing::warn!(mod_id, "bad IPC message: {e}: {line}");
+                        None
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => None,
+        }
     }
 
     pub fn has_process(&self, mod_id: &str) -> bool {
@@ -174,8 +198,7 @@ impl ScriptHost {
         self.pending_replies.remove(namespaced_key)
     }
 
-    /// Sends Shutdown to all scripts, waits briefly for final messages (e.g. exit-handler logs),
-    /// then kills any processes still running. Returns the final drained messages.
+    /// Sends Shutdown to all scripts, waits briefly for final messages, then kills remaining processes.
     pub fn shutdown_all(
         &mut self,
         exit_code: i32,
@@ -185,8 +208,7 @@ impl ScriptHost {
         for proc in self.processes.values_mut() {
             let _ = proc.send(&msg, debug);
         }
-        // Give scripts a brief window to handle the exit event and write final messages.
-        thread::sleep(std::time::Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
         let final_messages = self.drain_messages(debug);
         for proc in self.processes.values_mut() {
             let _ = proc.child.kill();

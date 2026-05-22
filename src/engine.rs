@@ -1,18 +1,23 @@
 use crate::console::command_node_from_spec;
 use crate::console::{ConsoleAction, DevConsole};
 use crate::debug::{DebugConfig, DebugLogger};
-use crate::logging::{LogMirror, SharedLogWriter};
+use crate::ecs::World;
 use crate::input::InputState;
+use crate::logging::{LogMirror, SharedLogWriter};
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
-use crate::renderer::{EguiOutput, Renderer, WgpuContext, grid_pos, load_from_vfs};
+use crate::renderer::{EguiOutput, RenderContext, Renderer, SpriteUpdateTarget, WgpuContext};
 use crate::sandbox::SandboxConfig;
 use crate::script::ipc::{EngineMessage, ScriptMessage};
-use crate::script::{ScriptHost, dispatch, mod_data_root};
-use crate::vfs::{LayeredVfs, VfsHandle, VfsPath};
+use crate::script::{
+    DispatchResult, EngineContext, RenderCommand, ScriptHost, dispatch, mod_data_root,
+};
+use crate::vfs::{LayeredVfs, Vfs, VfsHandle};
+use crate::watchdog::Watchdog;
 use anyhow::Context;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -32,7 +37,14 @@ pub struct Engine {
     last_frame: Instant,
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
+    world: World,
+    tick_number: u64,
+    last_tick: Instant,
+    tick_interval: Duration,
+    tick_subscribers: HashSet<String>,
+    watchdog: Watchdog,
     console: DevConsole,
+    debug_overlay: bool,
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
     should_quit: bool,
@@ -109,6 +121,8 @@ impl Engine {
             }
         }
 
+        let tick_interval = Duration::from_secs_f64(1.0 / game_meta.game.tick_rate);
+
         Ok(Engine {
             debug,
             debug_mirror,
@@ -117,58 +131,23 @@ impl Engine {
             vfs,
             registry,
             script_host,
+            world: World::new(),
+            tick_number: 0,
+            last_tick: Instant::now(),
+            tick_interval,
+            tick_subscribers: HashSet::new(),
+            watchdog: Watchdog::new(Duration::from_millis(500)),
             input: InputState::new(),
             frame_number: 0,
             last_frame: Instant::now(),
             renderer: None,
             window: None,
             console: DevConsole::new(),
+            debug_overlay: false,
             egui_ctx: egui::Context::default(),
             egui_state: None,
             should_quit: false,
         })
-    }
-
-    fn populate_scene(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
-        let mut index = 0usize;
-
-        let mod_ids: Vec<String> = self.registry.mod_ids().map(str::to_owned).collect();
-        for mod_id in &mod_ids {
-            let paths = match self.vfs.list(mod_id, "") {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!("vfs list error for {mod_id}: {e}");
-                    continue;
-                }
-            };
-            for rel_path in paths {
-                if !rel_path.ends_with(".png") {
-                    continue;
-                }
-                let vfs_path = VfsPath {
-                    mod_id: mod_id.clone(),
-                    path: rel_path.clone(),
-                };
-                match load_from_vfs(
-                    &renderer.ctx.device,
-                    &renderer.ctx.queue,
-                    self.vfs.as_ref(),
-                    &vfs_path,
-                ) {
-                    Ok(tex) => {
-                        let pos = grid_pos(index);
-                        renderer.scene.add_sprite(&renderer.ctx.device, tex, pos);
-                        index += 1;
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to load texture {}: {e}", vfs_path.as_string())
-                    }
-                }
-            }
-        }
     }
 
     fn frame(&mut self) {
@@ -203,6 +182,12 @@ impl Engine {
         let messages = self.script_host.drain_messages(&mut self.debug);
         self.dispatch_messages(messages);
 
+        let now = Instant::now();
+        while now.duration_since(self.last_tick) >= self.tick_interval {
+            self.last_tick += self.tick_interval;
+            self.run_tick(dx, dy);
+        }
+
         self.frame_number += 1;
 
         // Run egui for this frame
@@ -218,11 +203,22 @@ impl Engine {
             let vfs = Arc::clone(&self.vfs);
 
             let debug = self.debug.shared_switches();
+            let show_overlay = self.debug_overlay;
+            let overlay_fps = self.console.fps;
+            let overlay_tick_rate = 1.0 / self.tick_interval.as_secs_f64();
+            let overlay_entities = self.world.allocator.alive_entity_ids().count();
             let mut console_action = ConsoleAction::None;
             let full_output = egui_ctx.run(raw_input, |ctx| {
-                console_action =
-                    self.console
-                        .render(ctx, &self.registry, vfs.as_ref(), Arc::clone(&debug));
+                console_action = self.console.render(
+                    ctx,
+                    &self.registry,
+                    vfs.as_ref(),
+                    Arc::clone(&debug),
+                    &self.world,
+                );
+                if show_overlay {
+                    render_debug_overlay(ctx, overlay_fps, overlay_tick_rate, overlay_entities);
+                }
             });
 
             match console_action {
@@ -290,6 +286,15 @@ impl Engine {
         if let Some(window) = self.window.as_ref() {
             let window = Arc::clone(window);
             for (mod_id, msg) in messages {
+                // Intercept tick subscriptions before the general dispatcher
+                if let ScriptMessage::Subscribe { ref events } = msg {
+                    if events.iter().any(|e| e == "Tick") {
+                        self.tick_subscribers.insert(mod_id.clone());
+                        tracing::debug!(mod_id, "subscribed to tick");
+                    }
+                    continue;
+                }
+
                 // Intercept console-specific messages before the general dispatcher
                 if let ScriptMessage::RegisterCommand {
                     ref name,
@@ -334,16 +339,143 @@ impl Engine {
                     continue;
                 }
 
-                dispatch(
-                    &mod_id,
-                    msg,
-                    &window,
-                    &mut self.script_host,
-                    &self.registry,
-                    &self.game_meta.game.id,
-                    &mut self.debug,
-                );
+                let ctx = EngineContext {
+                    window: &window,
+                    script_host: &mut self.script_host,
+                    registry: &self.registry,
+                    game_id: &self.game_meta.game.id,
+                    debug: &mut self.debug,
+                    world: &mut self.world,
+                };
+
+                let result = dispatch(&mod_id, msg, ctx);
+                self.apply_dispatch_result(result);
             }
+        }
+    }
+
+    fn apply_dispatch_result(&mut self, result: DispatchResult) {
+        if let Some(rate) = result.new_tick_rate {
+            self.tick_interval = Duration::from_secs_f64(1.0 / rate);
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            for cmd in &result.render_cmds {
+                apply_render_command(cmd, renderer, &self.world, self.vfs.as_ref());
+            }
+        }
+    }
+
+    fn run_tick(&mut self, mouse_dx: f32, mouse_dy: f32) {
+        self.tick_number += 1;
+        let keys_pressed: Vec<String> = self
+            .input
+            .keys_pressed
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect();
+        let subscribers: Vec<String> = self.tick_subscribers.iter().cloned().collect();
+        if subscribers.is_empty() {
+            return;
+        }
+
+        let tick_msg = EngineMessage::Tick {
+            tick_number: self.tick_number,
+            delta_seconds: self.tick_interval.as_secs_f64(),
+            keys_pressed,
+            mouse_delta: [mouse_dx, mouse_dy],
+        };
+        for id in &subscribers {
+            self.script_host.send(id, &tick_msg, &mut self.debug);
+        }
+
+        self.watchdog.start_tick();
+        let mut done: HashSet<String> = HashSet::new();
+        while done.len() < subscribers.len() {
+            match self
+                .script_host
+                .recv_blocking(Duration::from_millis(100), &mut self.debug)
+            {
+                Some((mod_id, ScriptMessage::TickDone { tick_number: n }))
+                    if n == self.tick_number =>
+                {
+                    done.insert(mod_id);
+                }
+                Some((mod_id, msg)) => {
+                    let Some(window) = self.window.as_ref() else {
+                        break;
+                    };
+                    let window = Arc::clone(window);
+                    let ctx = EngineContext {
+                        window: &window,
+                        script_host: &mut self.script_host,
+                        registry: &self.registry,
+                        game_id: &self.game_meta.game.id,
+                        debug: &mut self.debug,
+                        world: &mut self.world,
+                    };
+                    let result = dispatch(&mod_id, msg, ctx);
+                    self.apply_dispatch_result(result);
+                }
+                None => {}
+            }
+        }
+        self.watchdog.end_tick();
+    }
+}
+
+fn render_debug_overlay(ctx: &egui::Context, fps: f32, tick_rate: f64, entity_count: usize) {
+    egui::Area::new(egui::Id::new("debug_overlay"))
+        .fixed_pos(egui::pos2(8.0, 8.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame {
+                fill: egui::Color32::from_rgba_premultiplied(0, 0, 0, 180),
+                inner_margin: egui::Margin::same(8.0),
+                rounding: egui::Rounding::same(4.0),
+                ..Default::default()
+            }
+            .show(ui, |ui| {
+                let font = egui::FontId::monospace(13.0);
+                ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
+                ui.label(egui::RichText::new(format!("FPS        {fps:.1}")).font(font.clone()));
+                ui.label(
+                    egui::RichText::new(format!("Tick rate  {tick_rate:.0}/s")).font(font.clone()),
+                );
+                ui.label(egui::RichText::new(format!("Entities   {entity_count}")).font(font));
+            });
+        });
+}
+
+fn apply_render_command(
+    cmd: &RenderCommand,
+    renderer: &mut Renderer,
+    world: &World,
+    vfs: &dyn Vfs,
+) {
+    match cmd {
+        RenderCommand::UpsertSprite { entity_idx } => {
+            let Some(transform) = world.transforms.get(entity_idx) else {
+                return;
+            };
+            let Some(sprite) = world.sprite_renderers.get(entity_idx) else {
+                return;
+            };
+            let target = SpriteUpdateTarget {
+                entity_idx: *entity_idx,
+                transform,
+                sprite,
+            };
+            let ctx = RenderContext {
+                device: &renderer.ctx.device,
+                queue: &renderer.ctx.queue,
+                bgl: &renderer.texture_bind_group_layout,
+            };
+            if let Err(e) = renderer.scene.update_sprite(vfs, target, ctx) {
+                tracing::warn!("update_sprite error (entity {}): {e}", entity_idx);
+            }
+        }
+        RenderCommand::RemoveSprite { entity_idx } => {
+            renderer.scene.remove_sprite(*entity_idx);
         }
     }
 }
@@ -410,8 +542,6 @@ impl ApplicationHandler for Engine {
         self.renderer = Some(renderer);
         self.window = Some(Arc::clone(&window));
 
-        self.populate_scene();
-
         let engine_version = env!("CARGO_PKG_VERSION").to_owned();
         let mod_ids: Vec<String> = self.script_host.mod_ids().map(str::to_owned).collect();
         for mod_id in mod_ids {
@@ -447,6 +577,11 @@ impl ApplicationHandler for Engine {
                     }
                     return;
                 }
+            }
+            // F1: toggle debug overlay
+            if code == KeyCode::F1 && event.state == ElementState::Pressed {
+                self.debug_overlay = !self.debug_overlay;
+                return;
             }
             // Escape: clear autocomplete first, close console only when already clear
             if code == KeyCode::Escape

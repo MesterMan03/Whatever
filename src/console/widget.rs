@@ -1,4 +1,4 @@
-use crate::console::commands::{debug_cmd, engine_cmd, markbench, mods_cmd, vfs_cmd};
+use crate::console::commands::{debug_cmd, engine_cmd, markbench, mods_cmd, scene_cmd, vfs_cmd};
 use crate::console::completer;
 use crate::console::parser;
 use crate::console::registry::CommandRegistry;
@@ -45,6 +45,7 @@ impl DevConsole {
         registry.register_engine(engine_cmd::node());
         registry.register_engine(markbench::node());
         registry.register_engine(mods_cmd::node());
+        registry.register_engine(scene_cmd::node());
         registry.register_engine(vfs_cmd::node());
 
         DevConsole {
@@ -90,9 +91,13 @@ impl DevConsole {
 
     pub fn push_log_line(&mut self, level: &str, msg: String) {
         match level {
-            "ERROR" => self.output.push(OutputLine::Error(format!("[ERROR] {msg}"))),
+            "ERROR" => self
+                .output
+                .push(OutputLine::Error(format!("[ERROR] {msg}"))),
             "WARN" => self.output.push(OutputLine::Warn(format!("[WARN] {msg}"))),
-            _ => self.output.push(OutputLine::Debug(format!("[{level}] {msg}"))),
+            _ => self
+                .output
+                .push(OutputLine::Debug(format!("[{level}] {msg}"))),
         }
     }
 
@@ -120,6 +125,7 @@ impl DevConsole {
         mod_registry: &ModRegistry,
         vfs: &dyn Vfs,
         debug: crate::debug::SharedDebugSwitches,
+        world: &crate::ecs::World,
     ) -> ConsoleAction {
         if !self.is_open {
             return ConsoleAction::None;
@@ -146,6 +152,8 @@ impl DevConsole {
                     0.0
                 } else {
                     // 18.0 per item, plus 1.0 spacing per item
+                    // +6.0 is to fix a bug where the autocomplete menu
+                    // would slowly shrink the console height
                     let mut h = completion_rows * 19.0 + 6.0;
 
                     // Account for the "+ X more" label
@@ -375,7 +383,7 @@ impl DevConsole {
 
         if let Some(input) = submitted_input {
             self.history.push(input.clone());
-            action = self.execute(&input, mod_registry, vfs, debug);
+            action = self.execute(&input, mod_registry, vfs, debug, world);
         }
 
         action
@@ -387,6 +395,7 @@ impl DevConsole {
         mod_registry: &ModRegistry,
         vfs: &dyn Vfs,
         debug: crate::debug::SharedDebugSwitches,
+        world: &crate::ecs::World,
     ) -> ConsoleAction {
         self.output.push(OutputLine::Input(format!("> {input}")));
 
@@ -469,6 +478,7 @@ impl DevConsole {
                 let ctx = CommandContext {
                     mod_registry,
                     vfs,
+                    world,
                     fps: self.fps,
                     debug,
                 };

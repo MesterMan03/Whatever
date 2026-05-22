@@ -70,6 +70,12 @@ pub enum EngineMessage {
         keys_pressed: Vec<String>,
         mouse_delta: [f32; 2],
     },
+    Tick {
+        tick_number: u64,
+        delta_seconds: f64,
+        keys_pressed: Vec<String>,
+        mouse_delta: [f32; 2],
+    },
     AssetResponse {
         request_id: String,
         path: String,
@@ -99,6 +105,25 @@ pub enum EngineMessage {
         request_id: String,
         payload: serde_json::Value,
     },
+    EntityCreated {
+        request_id: String,
+        entity_id: String,
+    },
+    EntityListResponse {
+        request_id: String,
+        entity_ids: Vec<String>,
+    },
+    ComponentGetResponse {
+        request_id: String,
+        entity_id: String,
+        component_type: String,
+        data: Option<serde_json::Value>,
+        error: Option<String>,
+    },
+    ComponentQueryResponse {
+        request_id: String,
+        results: Vec<QueryResultDto>,
+    },
     Shutdown {
         exit_code: i32,
     },
@@ -107,6 +132,13 @@ pub enum EngineMessage {
         command_path: Vec<String>,
         args: Vec<serde_json::Value>,
     },
+}
+
+/// One row returned by a `ComponentQuery` response.
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryResultDto {
+    pub entity_id: String,
+    pub components: HashMap<String, serde_json::Value>,
 }
 
 // --- Script → Engine messages ---
@@ -120,19 +152,6 @@ pub enum ScriptMessage {
     AssetRequest {
         request_id: String,
         path: String,
-    },
-    SpawnSprite {
-        entity_id: String,
-        texture: String,
-        position: [f32; 3],
-        scale: [f32; 3],
-    },
-    MoveEntity {
-        entity_id: String,
-        position: [f32; 3],
-    },
-    DestroyEntity {
-        entity_id: String,
     },
     Log {
         level: String,
@@ -182,6 +201,41 @@ pub enum ScriptMessage {
         request_id: String,
         output: Vec<String>,
         error: Option<String>,
+    },
+    EntityCreate {
+        request_id: String,
+    },
+    EntityDestroy {
+        entity_id: String,
+    },
+    EntityListRequest {
+        request_id: String,
+    },
+    /// Fire-and-forget: sets a component on an entity.
+    ComponentSet {
+        entity_id: String,
+        component_type: String,
+        data: serde_json::Value,
+    },
+    /// Fire-and-forget: removes a component from an entity.
+    ComponentRemove {
+        entity_id: String,
+        component_type: String,
+    },
+    ComponentGet {
+        request_id: String,
+        entity_id: String,
+        component_type: String,
+    },
+    ComponentQuery {
+        request_id: String,
+        component_types: Vec<String>,
+    },
+    SetTickRate {
+        ticks_per_second: f64,
+    },
+    TickDone {
+        tick_number: u64,
     },
 }
 

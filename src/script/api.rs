@@ -1,21 +1,47 @@
 use super::host::{PendingReply, ScriptHost};
-use super::ipc::{EngineMessage, ModManifestDto, ScriptMessage};
+use super::ipc::{EngineMessage, ModManifestDto, QueryResultDto, ScriptMessage};
 use crate::debug::DebugLogger;
+use crate::ecs::{COMPONENT_SPRITE_RENDERER, COMPONENT_TRANSFORM, EntityId, World};
 use crate::mods::ModRegistry;
 use base64::Engine as _;
 use std::sync::Arc;
 use winit::window::Window;
 
-pub fn dispatch(
-    mod_id: &str,
-    msg: ScriptMessage,
-    window: &Arc<Window>,
-    script_host: &mut ScriptHost,
-    registry: &ModRegistry,
-    game_id: &str,
-    debug: &mut DebugLogger,
-) {
+// --- Return types ------------------------------------------------------------
+
+#[derive(Default)]
+pub struct DispatchResult {
+    pub render_cmds: Vec<RenderCommand>,
+    pub new_tick_rate: Option<f64>,
+}
+
+pub enum RenderCommand {
+    UpsertSprite { entity_idx: u32 },
+    RemoveSprite { entity_idx: u32 },
+}
+
+// --- Dispatcher --------------------------------------------------------------
+
+pub struct EngineContext<'a> {
+    pub window: &'a Arc<Window>,
+    pub script_host: &'a mut ScriptHost,
+    pub registry: &'a ModRegistry,
+    pub game_id: &'a str,
+    pub debug: &'a mut DebugLogger,
+    pub world: &'a mut World,
+}
+
+pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> DispatchResult {
+    let EngineContext {
+        window,
+        script_host,
+        registry,
+        game_id,
+        debug,
+        world,
+    } = ctx;
     match msg {
+        // --- Logging ---------------------------------------------------------
         ScriptMessage::Log { level, message } => {
             let name = registry
                 .get(mod_id)
@@ -28,36 +54,24 @@ pub fn dispatch(
                 _ => tracing::error!("[{name}] invalid log level '{level}'"),
             }
         }
+
+        // --- Window ----------------------------------------------------------
         ScriptMessage::SetWindowTitle { title } => {
             debug.window(&format!("[{mod_id}] SetWindowTitle: {title}"));
             window.set_title(&title);
         }
+
+        // --- Events ----------------------------------------------------------
         ScriptMessage::Subscribe { events } => {
             tracing::debug!(mod_id, "subscribed to: {:?}", events);
         }
-        ScriptMessage::SpawnSprite {
-            entity_id,
-            texture,
-            position,
-            scale,
-        } => {
-            tracing::debug!(
-                mod_id,
-                "SpawnSprite {entity_id} tex={texture} pos={position:?} scale={scale:?}"
-            );
-        }
-        ScriptMessage::MoveEntity {
-            entity_id,
-            position,
-        } => {
-            tracing::debug!(mod_id, "MoveEntity {entity_id} pos={position:?}");
-        }
-        ScriptMessage::DestroyEntity { entity_id } => {
-            tracing::debug!(mod_id, "DestroyEntity {entity_id}");
-        }
+
+        // --- Assets (stub) ---------------------------------------------------
         ScriptMessage::AssetRequest { request_id, path } => {
             tracing::debug!(mod_id, "AssetRequest {request_id} path={path}");
         }
+
+        // --- File I/O --------------------------------------------------------
         ScriptMessage::FileWrite {
             request_id,
             path,
@@ -72,12 +86,15 @@ pub fn dispatch(
                 std::fs::write(&full_path, &bytes)?;
                 Ok(())
             })();
-            let reply = EngineMessage::FileResponse {
-                request_id,
-                data_base64: None,
-                error: result.err().map(|e| e.to_string()),
-            };
-            script_host.send(mod_id, &reply, debug);
+            script_host.send(
+                mod_id,
+                &EngineMessage::FileResponse {
+                    request_id,
+                    data_base64: None,
+                    error: result.err().map(|e| e.to_string()),
+                },
+                debug,
+            );
         }
         ScriptMessage::FileRead { request_id, path } => {
             let result = (|| -> anyhow::Result<String> {
@@ -85,12 +102,15 @@ pub fn dispatch(
                 let bytes = std::fs::read(&full_path)?;
                 Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
             })();
-            let reply = EngineMessage::FileResponse {
-                request_id,
-                data_base64: result.as_ref().ok().cloned(),
-                error: result.err().map(|e| e.to_string()),
-            };
-            script_host.send(mod_id, &reply, debug);
+            script_host.send(
+                mod_id,
+                &EngineMessage::FileResponse {
+                    request_id,
+                    data_base64: result.as_ref().ok().cloned(),
+                    error: result.err().map(|e| e.to_string()),
+                },
+                debug,
+            );
         }
         ScriptMessage::FileDelete { request_id, path } => {
             let result = (|| -> anyhow::Result<()> {
@@ -98,13 +118,18 @@ pub fn dispatch(
                 std::fs::remove_file(&full_path)?;
                 Ok(())
             })();
-            let reply = EngineMessage::FileResponse {
-                request_id,
-                data_base64: None,
-                error: result.err().map(|e| e.to_string()),
-            };
-            script_host.send(mod_id, &reply, debug);
+            script_host.send(
+                mod_id,
+                &EngineMessage::FileResponse {
+                    request_id,
+                    data_base64: None,
+                    error: result.err().map(|e| e.to_string()),
+                },
+                debug,
+            );
         }
+
+        // --- Mod queries -----------------------------------------------------
         ScriptMessage::ModListRequest { request_id } => {
             let mods = registry
                 .iter()
@@ -134,6 +159,8 @@ pub fn dispatch(
             };
             script_host.send(mod_id, &reply, debug);
         }
+
+        // --- Inter-mod messaging ---------------------------------------------
         ScriptMessage::ModMessageSend {
             target_mod_id,
             request_id,
@@ -141,9 +168,8 @@ pub fn dispatch(
         } => {
             if !script_host.has_process(&target_mod_id) {
                 tracing::warn!(mod_id, "ModMessageSend to unknown mod '{target_mod_id}'");
-                return;
+                return DispatchResult::default();
             }
-            // Build a namespaced key so two mods using the same numeric counter can't collide.
             let namespaced_id = request_id.as_deref().map(|rid| format!("{mod_id}-{rid}"));
             if let (Some(_), Some(rid)) = (&namespaced_id, &request_id) {
                 script_host.add_pending_reply(
@@ -155,14 +181,34 @@ pub fn dispatch(
                     },
                 );
             }
-            // Forward the opaque namespaced key to the target — their lib echoes it back verbatim.
-            let outgoing = EngineMessage::ModMessageReceived {
-                source_mod_id: mod_id.to_owned(),
-                request_id: namespaced_id,
-                payload,
-            };
-            script_host.send(&target_mod_id, &outgoing, debug);
+            script_host.send(
+                &target_mod_id,
+                &EngineMessage::ModMessageReceived {
+                    source_mod_id: mod_id.to_owned(),
+                    request_id: namespaced_id,
+                    payload,
+                },
+                debug,
+            );
         }
+        ScriptMessage::ModMessageReply {
+            request_id,
+            payload,
+        } => match script_host.take_pending_reply(&request_id) {
+            Some(pending) => {
+                script_host.send(
+                    &pending.sender_mod_id,
+                    &EngineMessage::ModMessageReplyDelivered {
+                        request_id: pending.original_request_id,
+                        payload,
+                    },
+                    debug,
+                );
+            }
+            None => tracing::warn!(mod_id, "ModMessageReply for unknown key '{request_id}'"),
+        },
+
+        // --- Console (intercepted upstream; these arms are safety nets) ------
         ScriptMessage::RegisterCommand { name, .. } => {
             tracing::warn!(
                 mod_id,
@@ -175,26 +221,161 @@ pub fn dispatch(
                 "CommandResponse '{request_id}' reached dispatcher unexpectedly"
             );
         }
-        ScriptMessage::ModMessageReply {
-            request_id,
-            payload,
-        } => {
-            // request_id is the full namespaced key ("<sender_mod_id>-<original_id>") echoed by target.
-            match script_host.take_pending_reply(&request_id) {
-                Some(pending) => {
-                    let reply = EngineMessage::ModMessageReplyDelivered {
-                        request_id: pending.original_request_id,
-                        payload,
-                    };
-                    script_host.send(&pending.sender_mod_id, &reply, debug);
-                }
-                None => tracing::warn!(mod_id, "ModMessageReply for unknown key '{request_id}'"),
+
+        // --- Entity management -----------------------------------------------
+        ScriptMessage::EntityCreate { request_id } => {
+            let id = world.create_entity();
+            script_host.send(
+                mod_id,
+                &EngineMessage::EntityCreated {
+                    request_id,
+                    entity_id: id.to_string(),
+                },
+                debug,
+            );
+        }
+        ScriptMessage::EntityDestroy { entity_id } => {
+            let Some(id) = EntityId::parse(&entity_id) else {
+                tracing::warn!(mod_id, "EntityDestroy: invalid entity_id '{entity_id}'");
+                return DispatchResult::default();
+            };
+            let had_sprite = world.is_alive(&id) && world.sprite_renderers.contains_key(&id.index);
+            world.destroy_entity(id);
+            if had_sprite {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::RemoveSprite {
+                        entity_idx: id.index,
+                    }],
+                    ..Default::default()
+                };
             }
         }
+        ScriptMessage::EntityListRequest { request_id } => {
+            let entity_ids = world
+                .allocator
+                .alive_entity_ids()
+                .map(|id| id.to_string())
+                .collect();
+            script_host.send(
+                mod_id,
+                &EngineMessage::EntityListResponse {
+                    request_id,
+                    entity_ids,
+                },
+                debug,
+            );
+        }
+
+        // --- Component management --------------------------------------------
+        ScriptMessage::ComponentSet {
+            entity_id,
+            component_type,
+            data,
+        } => {
+            let Some(id) = EntityId::parse(&entity_id) else {
+                tracing::warn!(mod_id, "ComponentSet: invalid entity_id '{entity_id}'");
+                return DispatchResult::default();
+            };
+            world.set_component(&id, &component_type, data);
+            // Emit UpsertSprite only once both renderer components are present.
+            let is_renderer_comp = component_type == COMPONENT_TRANSFORM
+                || component_type == COMPONENT_SPRITE_RENDERER;
+            if is_renderer_comp
+                && world.transforms.contains_key(&id.index)
+                && world.sprite_renderers.contains_key(&id.index)
+            {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::UpsertSprite {
+                        entity_idx: id.index,
+                    }],
+                    ..Default::default()
+                };
+            }
+        }
+        ScriptMessage::ComponentRemove {
+            entity_id,
+            component_type,
+        } => {
+            let Some(id) = EntityId::parse(&entity_id) else {
+                tracing::warn!(mod_id, "ComponentRemove: invalid entity_id '{entity_id}'");
+                return DispatchResult::default();
+            };
+            let is_renderer_comp = component_type == COMPONENT_TRANSFORM
+                || component_type == COMPONENT_SPRITE_RENDERER;
+            world.remove_component(&id, &component_type);
+            if is_renderer_comp {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::RemoveSprite {
+                        entity_idx: id.index,
+                    }],
+                    ..Default::default()
+                };
+            }
+        }
+        ScriptMessage::ComponentGet {
+            request_id,
+            entity_id,
+            component_type,
+        } => {
+            let reply = match EntityId::parse(&entity_id) {
+                None => EngineMessage::ComponentGetResponse {
+                    request_id,
+                    entity_id,
+                    component_type,
+                    data: None,
+                    error: Some("invalid entity_id".to_owned()),
+                },
+                Some(id) => EngineMessage::ComponentGetResponse {
+                    request_id,
+                    data: world.get_component(&id, &component_type),
+                    entity_id,
+                    component_type,
+                    error: None,
+                },
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+        ScriptMessage::ComponentQuery {
+            request_id,
+            component_types,
+        } => {
+            let type_refs: Vec<&str> = component_types.iter().map(String::as_str).collect();
+            let results = world
+                .query(&type_refs)
+                .into_iter()
+                .map(|(id, components)| QueryResultDto {
+                    entity_id: id.to_string(),
+                    components,
+                })
+                .collect();
+            script_host.send(
+                mod_id,
+                &EngineMessage::ComponentQueryResponse {
+                    request_id,
+                    results,
+                },
+                debug,
+            );
+        }
+
+        // --- Tick rate -------------------------------------------------------
+        ScriptMessage::SetTickRate { ticks_per_second } => {
+            return DispatchResult {
+                new_tick_rate: Some(ticks_per_second),
+                ..Default::default()
+            };
+        }
+
+        // --- Tick sync (intercepted in run_tick; this arm is a safety net) ---
+        ScriptMessage::TickDone { .. } => {
+            tracing::warn!(mod_id, "TickDone reached dispatcher unexpectedly");
+        }
     }
+
+    DispatchResult::default()
 }
 
-/// Returns the root of a mod's persistent data directory, creating no files.
+/// Returns the root of a mod's persistent data directory.
 pub fn mod_data_root(game_id: &str, mod_id: &str) -> anyhow::Result<std::path::PathBuf> {
     let base = dirs::data_local_dir()
         .ok_or_else(|| anyhow::anyhow!("could not determine local data directory"))?;

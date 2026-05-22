@@ -1,5 +1,6 @@
 mod console;
 mod debug;
+mod ecs;
 mod engine;
 mod input;
 mod logging;
@@ -8,6 +9,7 @@ mod renderer;
 mod sandbox;
 mod script;
 mod vfs;
+mod watchdog;
 
 use anyhow::Context;
 use debug::DebugConfig;

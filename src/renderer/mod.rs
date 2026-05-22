@@ -5,8 +5,7 @@ mod texture;
 
 pub use camera::{Camera, CameraController};
 pub use context::WgpuContext;
-pub use scene::{Scene, Vertex, grid_pos};
-pub use texture::load_from_vfs;
+pub use scene::{RenderContext, Scene, SpriteUpdateTarget, Vertex};
 
 use crate::vfs::{Vfs, VfsPath};
 use anyhow::{Context, anyhow};
@@ -24,6 +23,7 @@ pub struct Renderer {
     pub camera: Camera,
     pub camera_controller: CameraController,
     pub scene: Scene,
+    pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -76,13 +76,37 @@ impl Renderer {
             }],
         });
 
-        let scene = Scene::new(&ctx.device);
+        let texture_bgl = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let scene = Scene::new();
 
         let pipeline_layout = ctx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("pipeline_layout"),
-                bind_group_layouts: &[&camera_bgl, &scene.texture_bind_group_layout],
+                bind_group_layouts: &[&camera_bgl, &texture_bgl],
                 push_constant_ranges: &[],
             });
 
@@ -129,6 +153,7 @@ impl Renderer {
             camera,
             camera_controller: CameraController::new(),
             scene,
+            texture_bind_group_layout: texture_bgl,
             pipeline,
             camera_buffer,
             camera_bind_group,
@@ -198,7 +223,7 @@ impl Renderer {
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for quad in &self.scene.quads {
+            for quad in self.scene.entity_sprites.values() {
                 rpass.set_bind_group(1, &quad.bind_group, &[]);
                 rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
                 rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

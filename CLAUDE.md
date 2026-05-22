@@ -47,7 +47,7 @@ cargo run -- --debug=all
 cargo run -- --debug=ipc,modloader
 cargo test
 
-# Regenerate @whatever-engine/api type declarations after editing runtime/index.ts
+# Rebuild @whatever-engine/api bundle + declarations after editing runtime/src/
 bun run build:runtime
 ```
 
@@ -68,10 +68,11 @@ bun run build:runtime
 
 ## Documentation
 
-**When modifying `runtime/index.ts`** (the `@whatever-engine/api` scripting API), always update
+**When modifying any file under `runtime/src/`** (the `@whatever-engine/api` scripting API), always update
 `docs/scripting-api.md` and `runtime/README.md` to reflect the changes (`docs/scripting-api.md` may contain detailed
-type descriptions, while `runtime/README.md` should only have basic function headers). 
+type descriptions, while `runtime/README.md` should only have basic function headers).
 The doc must stay in sync with the actual exported namespaces, types, and IPC messages.
+After editing, run `bun run build:runtime` to rebuild `runtime/dist/`.
 
 **When the project layout changes** (new module added, directory renamed or removed, new
 top-level file), update the "Project Layout" block in `README.md` to match.

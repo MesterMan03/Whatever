@@ -53,6 +53,7 @@ pub type CommandResult = Result<Vec<String>, String>;
 pub struct CommandContext<'a> {
     pub mod_registry: &'a crate::mods::ModRegistry,
     pub vfs: &'a dyn crate::vfs::Vfs,
+    pub world: &'a crate::ecs::World,
     pub fps: f32,
     pub debug: crate::debug::SharedDebugSwitches,
 }

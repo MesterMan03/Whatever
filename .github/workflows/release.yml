@@ -34,7 +34,10 @@ jobs:
         run: |
           mkdir -p stage/Whatever-linux-x86_64
           cp target/release/Whatever stage/Whatever-linux-x86_64/
+          cp package.json stage/Whatever-linux-x86_64/
           cp -r mods stage/Whatever-linux-x86_64/
+          cp -r runtime stage/Whatever-linux-x86_64/
+          rm -rf stage/Whatever-linux-x86_64/runtime/node_modules
           tar -czf Whatever-linux-x86_64.tar.gz -C stage Whatever-linux-x86_64
 
       - uses: actions/upload-artifact@v4
@@ -61,7 +64,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path stage\Whatever-windows-x86_64 -Force
           Copy-Item target\release\Whatever.exe stage\Whatever-windows-x86_64\
+          Copy-Item package.json stage\Whatever-windows-x86_64\
           Copy-Item -Recurse mods stage\Whatever-windows-x86_64\
+          Copy-Item -Recurse runtime stage\Whatever-windows-x86_64\
+          Remove-Item -Recurse -Force stage\Whatever-windows-x86_64\runtime\node_modules
           Compress-Archive -Path stage\Whatever-windows-x86_64 -DestinationPath Whatever-windows-x86_64.zip
 
       - uses: actions/upload-artifact@v4
