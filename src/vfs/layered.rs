@@ -1,15 +1,15 @@
 use super::{Vfs, VfsError, VfsPath};
 use crate::debug::{DebugSwitches, SharedDebugSwitches};
+use crate::logging::SharedLogWriter;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 pub struct LayeredVfs {
     layers: Vec<Box<dyn Vfs>>,
     overrides: HashMap<String, VfsPath>,
     override_dests: HashSet<String>,
-    log_file: Option<Arc<Mutex<BufWriter<File>>>>,
+    log_writer: Option<SharedLogWriter>,
     log_console: Arc<Mutex<Vec<String>>>,
     switches: SharedDebugSwitches,
 }
@@ -20,7 +20,7 @@ impl LayeredVfs {
             layers: Vec::new(),
             overrides: HashMap::new(),
             override_dests: HashSet::new(),
-            log_file: None,
+            log_writer: None,
             log_console: Arc::new(Mutex::new(Vec::new())),
             switches: Arc::new(DebugSwitches::new(false, false, false, false)),
         }
@@ -28,11 +28,11 @@ impl LayeredVfs {
 
     pub fn set_log(
         &mut self,
-        file: Option<Arc<Mutex<BufWriter<File>>>>,
+        writer: SharedLogWriter,
         console: Arc<Mutex<Vec<String>>>,
         switches: SharedDebugSwitches,
     ) {
-        self.log_file = file;
+        self.log_writer = Some(writer);
         self.log_console = console;
         self.switches = switches;
     }
@@ -56,10 +56,10 @@ impl LayeredVfs {
             return;
         }
         let now = chrono::Local::now().format("%H:%M:%S%.3f");
-        if let Some(ref w) = self.log_file
+        if let Some(ref w) = self.log_writer
             && let Ok(mut writer) = w.lock()
         {
-            let _ = writeln!(writer, "[{now}] {msg}");
+            let _ = writeln!(writer, "[{now}] [vfs] {msg}");
             let _ = writer.flush();
         }
         if let Ok(mut v) = self.log_console.lock() {

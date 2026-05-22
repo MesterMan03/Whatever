@@ -16,11 +16,18 @@ pub fn dispatch(
     debug: &mut DebugLogger,
 ) {
     match msg {
-        ScriptMessage::Log { level, message } => match level.as_str() {
-            "error" => tracing::error!(mod_id, "{message}"),
-            "warn" => tracing::warn!(mod_id, "{message}"),
-            _ => tracing::info!(mod_id, "{message}"),
-        },
+        ScriptMessage::Log { level, message } => {
+            let name = registry
+                .get(mod_id)
+                .map(|m| m.meta.name.as_str())
+                .unwrap_or(mod_id);
+            match level.as_str() {
+                "error" => tracing::error!("[{name}] {message}"),
+                "warn" => tracing::warn!("[{name}] {message}"),
+                "info" => tracing::info!("[{name}] {message}"),
+                _ => tracing::error!("[{name}] invalid log level '{level}'"),
+            }
+        }
         ScriptMessage::SetWindowTitle { title } => {
             debug.window(&format!("[{mod_id}] SetWindowTitle: {title}"));
             window.set_title(&title);

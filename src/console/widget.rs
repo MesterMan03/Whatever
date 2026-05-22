@@ -78,6 +78,14 @@ impl DevConsole {
         self.output.push(OutputLine::Debug(msg));
     }
 
+    pub fn push_log_line(&mut self, level: &str, msg: String) {
+        match level {
+            "ERROR" => self.output.push(OutputLine::Error(format!("[ERROR] {msg}"))),
+            "WARN" => self.output.push(OutputLine::Warn(format!("[WARN] {msg}"))),
+            _ => self.output.push(OutputLine::Debug(format!("[{level}] {msg}"))),
+        }
+    }
+
     pub fn handle_command_response(&mut self, output: Vec<String>, error: Option<String>) {
         if let Some(last) = self.output.last()
             && matches!(last, OutputLine::Text(s) if s == "(waiting for mod response…)")
@@ -86,9 +94,11 @@ impl DevConsole {
         }
         self.pending_invoke = None;
         if let Some(err) = error {
+            tracing::warn!("mod command error: {err}");
             self.output.push(OutputLine::Error(err));
         } else {
             for line in output {
+                tracing::info!("{line}");
                 self.output.push(OutputLine::Text(line));
             }
         }
@@ -164,6 +174,13 @@ impl DevConsole {
                                         RichText::new(s)
                                             .font(FontId::monospace(13.0))
                                             .color(Color32::from_rgb(255, 80, 80)),
+                                    );
+                                }
+                                OutputLine::Warn(s) => {
+                                    ui.label(
+                                        RichText::new(s)
+                                            .font(FontId::monospace(13.0))
+                                            .color(Color32::from_rgb(255, 190, 60)),
                                     );
                                 }
                                 OutputLine::Debug(s) => {
@@ -399,6 +416,7 @@ impl DevConsole {
         let root_node = match self.registry.roots.iter().find(|n| n.name == *root_name) {
             Some(n) => n,
             None => {
+                tracing::warn!("console: unknown command '{root_name}'");
                 self.output.push(OutputLine::Error(format!(
                     "unknown command '{root_name}' — type 'help'"
                 )));
@@ -430,15 +448,15 @@ impl DevConsole {
 
         if node.handler.is_none() {
             let subs: Vec<&str> = node.subcommands.iter().map(|s| s.name.as_str()).collect();
-            self.output.push(OutputLine::Error(format!(
-                "incomplete command — subcommands: {}",
-                subs.join(", ")
-            )));
+            let msg = format!("incomplete command — subcommands: {}", subs.join(", "));
+            tracing::warn!("console: {msg}");
+            self.output.push(OutputLine::Error(msg));
             return ConsoleAction::None;
         }
         let parsed = match parser::parse_args(&raw_args, &node.args) {
             Ok(p) => p,
             Err(e) => {
+                tracing::warn!("console: bad arguments: {e}");
                 self.output.push(OutputLine::Error(e));
                 return ConsoleAction::None;
             }
@@ -457,10 +475,14 @@ impl DevConsole {
                 match node.handler.unwrap()(parsed, &ctx) {
                     Ok(lines) => {
                         for line in lines {
+                            tracing::info!("{line}");
                             self.output.push(OutputLine::Text(line));
                         }
                     }
-                    Err(e) => self.output.push(OutputLine::Error(e)),
+                    Err(e) => {
+                        tracing::warn!("console: command failed: {e}");
+                        self.output.push(OutputLine::Error(e));
+                    }
                 }
                 ConsoleAction::None
             }

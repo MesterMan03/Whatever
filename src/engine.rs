@@ -1,6 +1,7 @@
 use crate::console::command_node_from_spec;
 use crate::console::{ConsoleAction, DevConsole};
 use crate::debug::{DebugConfig, DebugLogger};
+use crate::logging::{LogMirror, SharedLogWriter};
 use crate::input::InputState;
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
 use crate::renderer::{EguiOutput, Renderer, WgpuContext, grid_pos, load_from_vfs};
@@ -21,6 +22,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 pub struct Engine {
     debug: DebugLogger,
     debug_mirror: Arc<std::sync::Mutex<Vec<String>>>,
+    log_mirror: LogMirror,
     game_meta: GameMeta,
     vfs: VfsHandle,
     registry: ModRegistry,
@@ -37,13 +39,18 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(debug_config: &DebugConfig, cwd: &Path) -> anyhow::Result<Self> {
-        let mut debug = DebugLogger::new(debug_config, cwd)?;
+    pub fn new(
+        debug_config: &DebugConfig,
+        cwd: &Path,
+        log_mirror: LogMirror,
+        log_writer: SharedLogWriter,
+    ) -> anyhow::Result<Self> {
+        let mut debug = DebugLogger::new(debug_config, log_writer);
 
         let debug_mirror = debug.console_mirror();
         let mut vfs = LayeredVfs::new();
         vfs.set_log(
-            debug.vfs_writer(),
+            debug.log_writer(),
             Arc::clone(&debug_mirror),
             debug.shared_switches(),
         );
@@ -105,6 +112,7 @@ impl Engine {
         Ok(Engine {
             debug,
             debug_mirror,
+            log_mirror,
             game_meta,
             vfs,
             registry,
@@ -167,6 +175,11 @@ impl Engine {
         if let Ok(mut lines) = self.debug_mirror.lock() {
             for line in lines.drain(..) {
                 self.console.push_debug_line(line);
+            }
+        }
+        if let Ok(mut entries) = self.log_mirror.lock() {
+            for (level, msg) in entries.drain(..) {
+                self.console.push_log_line(&level, msg);
             }
         }
 

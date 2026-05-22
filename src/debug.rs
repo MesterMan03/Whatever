@@ -1,6 +1,5 @@
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use crate::logging::{SharedLogWriter, strip_ansi};
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
@@ -47,7 +46,6 @@ impl DebugSwitches {
         self.vfs.store(v, Relaxed)
     }
 
-    /// Toggle and return the new value.
     pub fn toggle_window(&self) -> bool {
         !self.window.fetch_xor(true, Relaxed)
     }
@@ -107,58 +105,22 @@ impl DebugConfig {
 
 pub struct DebugLogger {
     switches: SharedDebugSwitches,
-    debug_dir: PathBuf,
-    window: Option<BufWriter<File>>,
-    modloader: Option<BufWriter<File>>,
-    ipc: Option<BufWriter<File>>,
-    vfs: Option<Arc<Mutex<BufWriter<File>>>>,
+    log_writer: SharedLogWriter,
     console_mirror: Arc<Mutex<Vec<String>>>,
 }
 
 impl DebugLogger {
-    pub fn new(config: &DebugConfig, cwd: &Path) -> anyhow::Result<Self> {
-        let debug_dir = cwd.join("debug");
-        let any = config.window || config.modloader || config.ipc || config.vfs;
-        if any {
-            fs::create_dir_all(&debug_dir)?;
-        }
-        let open = |name: &str| -> anyhow::Result<BufWriter<File>> {
-            Ok(BufWriter::new(File::create(debug_dir.join(name))?))
-        };
-        let window = if config.window {
-            Some(open("window.log")?)
-        } else {
-            None
-        };
-        let modloader = if config.modloader {
-            Some(open("modloader.log")?)
-        } else {
-            None
-        };
-        let ipc = if config.ipc {
-            Some(open("ipc.log")?)
-        } else {
-            None
-        };
-        let vfs = if config.vfs {
-            Some(Arc::new(Mutex::new(open("vfs.log")?)))
-        } else {
-            None
-        };
-        Ok(DebugLogger {
+    pub fn new(config: &DebugConfig, log_writer: SharedLogWriter) -> Self {
+        DebugLogger {
             switches: Arc::new(DebugSwitches::new(
                 config.window,
                 config.modloader,
                 config.ipc,
                 config.vfs,
             )),
-            debug_dir,
-            window,
-            modloader,
-            ipc,
-            vfs,
+            log_writer,
             console_mirror: Arc::new(Mutex::new(Vec::new())),
-        })
+        }
     }
 
     pub fn shared_switches(&self) -> SharedDebugSwitches {
@@ -169,70 +131,41 @@ impl DebugLogger {
         Arc::clone(&self.console_mirror)
     }
 
-    pub fn vfs_writer(&self) -> Option<Arc<Mutex<BufWriter<File>>>> {
-        self.vfs.clone()
+    pub fn log_writer(&self) -> SharedLogWriter {
+        Arc::clone(&self.log_writer)
     }
 
-    pub fn window(&mut self, msg: &str) {
-        if !self.switches.window() {
-            return;
+    pub fn window(&self, msg: &str) {
+        if self.switches.window() {
+            self.write_debug_line("window", msg);
         }
-        if self.window.is_none() {
-            self.window = Self::try_open(&self.debug_dir, "window.log");
-        }
-        Self::write_line(&mut self.window, msg);
-        Self::mirror(&self.console_mirror, "window", msg);
     }
 
-    pub fn modloader(&mut self, msg: &str) {
-        if !self.switches.modloader() {
-            return;
+    pub fn modloader(&self, msg: &str) {
+        if self.switches.modloader() {
+            self.write_debug_line("modloader", msg);
         }
-        if self.modloader.is_none() {
-            self.modloader = Self::try_open(&self.debug_dir, "modloader.log");
-        }
-        Self::write_line(&mut self.modloader, msg);
-        Self::mirror(&self.console_mirror, "modloader", msg);
     }
 
-    pub fn ipc(&mut self, mod_id: &str, direction: &str, msg: &str) {
-        if !self.switches.ipc() {
-            return;
+    pub fn ipc(&self, mod_id: &str, direction: &str, msg: &str) {
+        if self.switches.ipc() {
+            self.write_debug_line("ipc", &format!("[{mod_id}] {direction} {msg}"));
         }
-        let line = format!("[{mod_id}] {direction} {msg}");
-        if self.ipc.is_none() {
-            self.ipc = Self::try_open(&self.debug_dir, "ipc.log");
-        }
-        Self::write_line(&mut self.ipc, &line);
-        Self::mirror(&self.console_mirror, "ipc", &line);
     }
 
-    fn try_open(debug_dir: &Path, name: &str) -> Option<BufWriter<File>> {
-        if let Err(e) = fs::create_dir_all(debug_dir) {
-            tracing::warn!("failed to create debug dir for live-enable: {e}");
-            return None;
+    fn write_debug_line(&self, category: &str, msg: &str) {
+        let now = chrono::Local::now().format("%H:%M:%S%.3f");
+        if let Ok(mut w) = self.log_writer.lock() {
+            let _ = writeln!(w, "[{now}] [{category}] {}", strip_ansi(msg));
+            let _ = w.flush();
         }
-        match File::create(debug_dir.join(name)) {
-            Ok(f) => Some(BufWriter::new(f)),
-            Err(e) => {
-                tracing::warn!("failed to open {name}: {e}");
-                None
-            }
-        }
+        Self::mirror(&self.console_mirror, category, msg);
     }
 
     fn mirror(m: &Arc<Mutex<Vec<String>>>, category: &str, msg: &str) {
         if let Ok(mut v) = m.lock() {
             let now = chrono::Local::now().format("%H:%M:%S%.3f");
             v.push(format!("[{now}] [{category}] {msg}"));
-        }
-    }
-
-    fn write_line(writer: &mut Option<BufWriter<File>>, msg: &str) {
-        if let Some(w) = writer {
-            let now = chrono::Local::now().format("%H:%M:%S%.3f");
-            let _ = writeln!(w, "[{now}] {msg}");
-            let _ = w.flush();
         }
     }
 }

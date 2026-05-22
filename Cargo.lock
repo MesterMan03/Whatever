@@ -14,6 +14,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "flate2",
  "glam",
  "image",
  "landlock",

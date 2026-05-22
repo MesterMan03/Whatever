@@ -43,7 +43,8 @@ runtime/                @whatever-engine/api — TypeScript scripting API packag
 src/
   main.rs               CLI args, Engine::new(), engine.run()
   engine.rs             Engine struct; owns all subsystems; drives main loop
-  debug.rs              Debug flags + file loggers
+  debug.rs              DebugConfig (CLI parsing) + DebugLogger (debug-category writes)
+  logging.rs            Log file init, rotation, tracing subscriber setup
   input.rs              Keyboard/mouse accumulator
   console/              Developer console (egui UI, command registry, tab completion)
     commands/           Built-in engine commands (version, markbench, mods, vfs)
@@ -58,6 +59,7 @@ src/
   mods/                 Mod manifest, discovery, toposort, registry
 docs/
   scripting-api.md      Full scripting API reference
+  SANDBOX.md            Security sandbox design and implementation details
 ```
 
 ## Mod System
@@ -115,14 +117,34 @@ After editing `runtime/index.ts`, regenerate `index.d.ts`:
 bun run build:runtime
 ```
 
+## Logging
+
+Every run writes to `logs/latest.log`. On startup the previous file is gzip-archived as `logs/yyyy-mm-dd_hh-mm-ss.log.gz` (timestamp from its creation date). Both paths are gitignored.
+
+Log line format:
+
+```
+[HH:MM:SS.mmm] [LEVEL]    message     — engine events  (INFO / WARN / ERROR)
+[HH:MM:SS.mmm] [category] message     — debug category (ipc / modloader / window / vfs)
+```
+
+Stdout mirrors the log with ANSI colours (WARN yellow, ERROR red). The in-game developer console (Ctrl+Alt+Enter) also shows INFO and above in real time.
+
+By default only events from this crate are captured. Set `RUST_LOG` to override:
+
+```sh
+RUST_LOG=debug cargo run                        # all levels from this crate
+RUST_LOG=wgpu=warn,Whatever=debug cargo run     # also include wgpu warnings
+```
+
 ## Debug flags
+
+Pass `--debug=<flags>` to enable verbose category logging (comma-separated). Lines are written to `logs/latest.log` alongside normal output and appear in the dev console.
 
 | Flag | What it logs |
 |---|---|
-| `all` | Everything |
+| `all` | All categories below |
 | `ipc` | Every raw NDJSON message between engine and scripts |
 | `modloader` | Mod discovery, dependency resolution, load order |
 | `window` | Window lifecycle events |
-| `vfs` | VFS events (file access, asset overrides) |
-
-Logs write to `debug/<flag>.log` and to the dev console which can be opened with Ctrl + Alt + Enter.
+| `vfs` | VFS reads, overrides, and cache misses |
