@@ -61,9 +61,7 @@ fn try_apply_job(child: &Child) -> anyhow::Result<SandboxGuard> {
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         )?;
 
-        let pid = child
-            .id()
-            .ok_or_else(|| anyhow::anyhow!("child has no PID"))?;
+        let pid = child.id();
         let process = OpenProcess(PROCESS_ALL_ACCESS, false, pid)?;
         let assign_result = AssignProcessToJobObject(job, process);
         let _ = CloseHandle(process); // we only needed the handle for this call
