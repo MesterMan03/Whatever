@@ -49,10 +49,10 @@ src/
   console/              Developer console (egui UI, command registry, tab completion)
     commands/           Built-in engine commands (version, markbench, mods, vfs)
     completer.rs        Tab-completion logic
-    console.rs          DevConsole render + execute
     parser.rs           Command tokenizer and argument parser
     registry.rs         CommandRegistry + script-to-node conversion
     types.rs            Shared types (CommandNode, ArgSpec, …)
+    widget.rs           DevConsole render + execute
   script/               Bun subprocess host + NDJSON IPC
   renderer/             wgpu context, camera, sprites
   vfs/                  Layered virtual filesystem
