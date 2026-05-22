@@ -74,6 +74,16 @@ impl DevConsole {
         }
     }
 
+    /// Escape key: clear completions first; close the console only when already clear.
+    pub fn escape(&mut self) {
+        if !self.completions.is_empty() {
+            self.completions.clear();
+            self.completion_idx = 0;
+        } else {
+            self.toggle();
+        }
+    }
+
     pub fn push_debug_line(&mut self, msg: String) {
         self.output.push(OutputLine::Debug(msg));
     }
@@ -248,13 +258,6 @@ impl DevConsole {
                 let enter = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
                 let up = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowUp));
                 let down = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown));
-                let esc = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
-
-                if esc {
-                    self.completions.clear();
-                    self.completion_idx = 0;
-                }
-
                 // Tab applies the currently highlighted completion
                 if tab && !self.completions.is_empty() {
                     apply_completion = Some(self.completions[self.completion_idx].clone());
@@ -277,8 +280,7 @@ impl DevConsole {
                         };
                         self.history_pos = Some(pos);
                         self.input_buf = self.history[pos].clone();
-                        self.completions =
-                            completer::complete(&self.input_buf, &self.registry.roots);
+                        self.completions.clear();
                         self.completion_idx = 0;
                     }
                 }
@@ -298,8 +300,7 @@ impl DevConsole {
                             Some(n) => {
                                 self.history_pos = Some(n + 1);
                                 self.input_buf = self.history[n + 1].clone();
-                                self.completions =
-                                    completer::complete(&self.input_buf, &self.registry.roots);
+                                self.completions.clear();
                                 self.completion_idx = 0;
                             }
                         }
@@ -357,6 +358,7 @@ impl DevConsole {
         if let Some(c) = apply_completion {
             self.input_buf = if c.contains('<') { c } else { format!("{c} ") };
             self.completions = completer::complete(&self.input_buf, &self.registry.roots);
+            self.completion_idx = 0;
 
             // Move cursor to end of the newly applied text
             let char_count = self.input_buf.chars().count();

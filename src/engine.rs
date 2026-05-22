@@ -448,12 +448,12 @@ impl ApplicationHandler for Engine {
                     return;
                 }
             }
-            // Escape closes the console when it is open
+            // Escape: clear autocomplete first, close console only when already clear
             if code == KeyCode::Escape
                 && event.state == ElementState::Pressed
                 && self.console.is_open
             {
-                self.console.toggle();
+                self.console.escape();
                 return;
             }
         }
