@@ -3,7 +3,7 @@
   "author": "Mester",
   "license": "Apache-2.0",
   "description": "TypeScript scripting API for Whatever Engine mods",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
