@@ -1,4 +1,6 @@
-use crate::console::types::{ArgSpec, ArgType, CommandContext, CommandNode, CommandResult, EngineSettingAction, ParsedArgs};
+use crate::console::types::{
+    ArgSpec, ArgType, CommandContext, CommandNode, CommandResult, EngineSettingAction, ParsedArgs,
+};
 use std::sync::Arc;
 
 pub fn node() -> CommandNode {
@@ -49,7 +51,11 @@ fn run_fps_cap(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
     } else {
         match raw.parse::<f64>() {
             Ok(n) if n > 0.0 => Some(n),
-            _ => return Err(format!("invalid fps value '{raw}' — use a positive number or 'off'")),
+            _ => {
+                return Err(format!(
+                    "invalid fps value '{raw}' — use a positive number or 'off'"
+                ));
+            }
         }
     };
     if let Ok(mut guard) = ctx.pending_action.lock() {

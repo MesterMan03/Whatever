@@ -251,15 +251,13 @@ impl Engine {
                 ConsoleAction::SendIpc { mod_id, message } => {
                     self.script_host.send(&mod_id, &message, &mut self.debug);
                 }
-                ConsoleAction::EngineSettings(action) => {
-                    match action {
-                        EngineSettingAction::SetFpsCap(cap) => self.fps_cap = cap,
-                        EngineSettingAction::SetVsync(enabled) => {
-                            self.vsync = enabled;
-                            self.apply_vsync();
-                        }
+                ConsoleAction::EngineSettings(action) => match action {
+                    EngineSettingAction::SetFpsCap(cap) => self.fps_cap = cap,
+                    EngineSettingAction::SetVsync(enabled) => {
+                        self.vsync = enabled;
+                        self.apply_vsync();
                     }
-                }
+                },
                 ConsoleAction::None => {}
             }
 
@@ -500,11 +498,11 @@ fn render_debug_overlay(
                 ui.label(
                     egui::RichText::new(format!("Tick rate  {tick_rate:.0}/s")).font(font.clone()),
                 );
-                ui.label(egui::RichText::new(format!("Entities   {entity_count}")).font(font.clone()));
-                let cap_str = fps_cap.map_or_else(|| "off".to_owned(), |c| format!("{c:.0}"));
                 ui.label(
-                    egui::RichText::new(format!("FPS cap    {cap_str}")).font(font.clone()),
+                    egui::RichText::new(format!("Entities   {entity_count}")).font(font.clone()),
                 );
+                let cap_str = fps_cap.map_or_else(|| "off".to_owned(), |c| format!("{c:.0}"));
+                ui.label(egui::RichText::new(format!("FPS cap    {cap_str}")).font(font.clone()));
                 ui.label(
                     egui::RichText::new(format!("VSync      {}", if vsync { "on" } else { "off" }))
                         .font(font),
@@ -706,8 +704,7 @@ impl ApplicationHandler for Engine {
                     return;
                 }
                 if let Some(cap) = self.fps_cap {
-                    self.next_frame_target =
-                        self.last_frame + Duration::from_secs_f64(1.0 / cap);
+                    self.next_frame_target = self.last_frame + Duration::from_secs_f64(1.0 / cap);
                     event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
                 } else if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
