@@ -1,11 +1,13 @@
 mod camera;
 mod context;
 mod scene;
+mod text;
 mod texture;
 
 pub use camera::{Camera, CameraController};
 pub use context::WgpuContext;
 pub use scene::{RenderContext, Scene, SpriteUpdateTarget, Vertex};
+pub use text::GlyphonText;
 
 use crate::vfs::{Vfs, VfsPath};
 use anyhow::{Context, anyhow};
@@ -28,6 +30,7 @@ pub struct Renderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     egui_renderer: egui_wgpu::Renderer,
+    pub text: GlyphonText,
 }
 
 impl Renderer {
@@ -117,13 +120,13 @@ impl Renderer {
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_main",
+                    entry_point: Some("vs_main"),
                     buffers: &[Vertex::desc()],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: ctx.config.format,
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -148,6 +151,8 @@ impl Renderer {
         let egui_renderer =
             egui_wgpu::Renderer::new(&ctx.device, ctx.config.format, None, 1, false);
 
+        let text = GlyphonText::new(vfs).context("init text system")?;
+
         Ok(Renderer {
             ctx,
             camera,
@@ -158,6 +163,7 @@ impl Renderer {
             camera_buffer,
             camera_bind_group,
             egui_renderer,
+            text,
         })
     }
 
@@ -198,7 +204,7 @@ impl Renderer {
             Vec::new()
         };
 
-        // Main scene pass
+        // Main scene pass — sprites then text quads share the same pipeline
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_pass"),
@@ -224,6 +230,13 @@ impl Renderer {
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);
 
             for quad in self.scene.entity_sprites.values() {
+                rpass.set_bind_group(1, &quad.bind_group, &[]);
+                rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
+                rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                rpass.draw_indexed(0..6, 0, 0..1);
+            }
+
+            for quad in self.text.quads() {
                 rpass.set_bind_group(1, &quad.bind_group, &[]);
                 rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
                 rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

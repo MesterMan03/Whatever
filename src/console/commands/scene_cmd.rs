@@ -55,9 +55,15 @@ fn run_inspect(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
     }
     if let Some(s) = ctx.world.sprite_renderers.get(&id.index) {
         lines.push(format!(
-            "  core:sprite_renderer  texture={}  z_index={}",
-            s.texture, s.z_index
+            "  core:sprite_renderer  texture={}",
+            s.texture
         ));
+    }
+    if let Some(t) = ctx.world.text_renderers.get(&id.index) {
+        lines.push(format!(
+            "  core:text_renderer  text={}  font={}  size={}  color={:?}",
+            t.text, t.font, t.font_size, t.color
+        ))
     }
     for (comp_type, entities) in &ctx.world.custom {
         if let Some(data) = entities.get(&id.index) {

@@ -1,4 +1,4 @@
-import {Engine, Window, File, Mods, Message, Console} from "@whatever-engine/api";
+import {Engine, Window, File, Mods, Message, Console, Entity, Scene, BuiltInComponents} from "@whatever-engine/api";
 
 const randomText = Math.random().toString(36).substring(2);
 
@@ -96,4 +96,46 @@ Console.register({
     }
   }],
   handler: (_) => "this literally does nothing lmao"
+});
+
+let textEntity: Entity | null = null;
+Console.register({
+  name: "showtext",
+  args: [{
+    name: "text",
+    type: "string",
+    required: true,
+    suggest: async (_) => {
+      const component = textEntity ? await textEntity.getComponent("core:text_renderer") : null;
+      if(component == null) {
+        return [];
+      }
+      return [`"${component.getText()}"`];
+    }
+  }],
+  handler: async (args) => {
+    const text = args["text"] as string;
+    if(textEntity != null) {
+      const component = await textEntity.getComponent("core:text_renderer");
+      if(component != null) {
+        component.setText(text);
+        textEntity.setComponent("core:text_renderer", component);
+        return "updated text";
+      } else {
+        const newComponent = new BuiltInComponents.TextRenderer({ text, font_size: 50, color: [0.5, 0.2, 0.2, 0.8] });
+        textEntity.setComponent("core:text_renderer", newComponent);
+        return "added text component";
+      }
+    }
+    textEntity = await Scene.spawnText(text, [5, 2, 0], {
+      font_size: 50,
+      color: [0.5,0.2,0.2,0.8]
+    });
+    const transform = await textEntity.getComponent("core:transform");
+    if(transform) {
+      transform.rotateZ(-15);
+      textEntity.setComponent(transform);
+    }
+    return "spawned text";
+  }
 });

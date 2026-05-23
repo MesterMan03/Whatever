@@ -2,6 +2,7 @@ use super::texture::{GpuTexture, load_from_vfs};
 use crate::ecs::{SpriteRenderer, Transform};
 use crate::vfs::{Vfs, VfsPath};
 use bytemuck::{Pod, Zeroable};
+use glam::{Quat, Vec3};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
@@ -121,25 +122,36 @@ impl Scene {
 // --- helpers -----------------------------------------------------------------
 
 fn build_vertices(transform: &Transform) -> [Vertex; 4] {
-    let [x, y, z] = transform.position;
+    let origin = Vec3::from(transform.position);
     let [sx, _, sz] = transform.scale;
     let hw = sx * 0.5;
     let hd = sz * 0.5;
+    let [qx, qy, qz, qw] = transform.rotation;
+    let rot = Quat::from_xyzw(qx, qy, qz, qw);
+
+    let corners = [
+        Vec3::new(-hw, 0.0, -hd),
+        Vec3::new(hw, 0.0, -hd),
+        Vec3::new(hw, 0.0, hd),
+        Vec3::new(-hw, 0.0, hd),
+    ]
+    .map(|c| (rot * c + origin).to_array());
+
     [
         Vertex {
-            position: [x - hw, y, z - hd],
+            position: corners[0],
             tex_coords: [0.0, 1.0],
         },
         Vertex {
-            position: [x + hw, y, z - hd],
+            position: corners[1],
             tex_coords: [1.0, 1.0],
         },
         Vertex {
-            position: [x + hw, y, z + hd],
+            position: corners[2],
             tex_coords: [1.0, 0.0],
         },
         Vertex {
-            position: [x - hw, y, z + hd],
+            position: corners[3],
             tex_coords: [0.0, 0.0],
         },
     ]

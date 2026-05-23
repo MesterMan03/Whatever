@@ -1,7 +1,9 @@
 use super::host::{PendingReply, ScriptHost};
 use super::ipc::{EngineMessage, ModManifestDto, QueryResultDto, ScriptMessage};
 use crate::debug::DebugLogger;
-use crate::ecs::{COMPONENT_SPRITE_RENDERER, COMPONENT_TRANSFORM, EntityId, World};
+use crate::ecs::{
+    COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, EntityId, World,
+};
 use crate::mods::ModRegistry;
 use base64::Engine as _;
 use std::sync::Arc;
@@ -21,6 +23,8 @@ pub struct DispatchResult {
 pub enum RenderCommand {
     UpsertSprite { entity_idx: u32 },
     RemoveSprite { entity_idx: u32 },
+    UpsertText { entity_idx: u32 },
+    RemoveText { entity_idx: u32 },
 }
 
 // --- Dispatcher --------------------------------------------------------------
@@ -269,13 +273,20 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 tracing::warn!(mod_id, "EntityDestroy: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
-            let had_sprite = world.is_alive(&id) && world.sprite_renderers.contains_key(&id.index);
+            let idx = id.index;
+            let had_sprite = world.is_alive(&id) && world.sprite_renderers.contains_key(&idx);
+            let had_text = world.is_alive(&id) && world.text_renderers.contains_key(&idx);
             world.destroy_entity(id);
+            let mut render_cmds = Vec::new();
             if had_sprite {
+                render_cmds.push(RenderCommand::RemoveSprite { entity_idx: idx });
+            }
+            if had_text {
+                render_cmds.push(RenderCommand::RemoveText { entity_idx: idx });
+            }
+            if !render_cmds.is_empty() {
                 return DispatchResult {
-                    render_cmds: vec![RenderCommand::RemoveSprite {
-                        entity_idx: id.index,
-                    }],
+                    render_cmds,
                     ..Default::default()
                 };
             }
@@ -307,17 +318,26 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 return DispatchResult::default();
             };
             world.set_component(&id, &component_type, data);
-            // Emit UpsertSprite only once both renderer components are present.
-            let is_renderer_comp = component_type == COMPONENT_TRANSFORM
-                || component_type == COMPONENT_SPRITE_RENDERER;
-            if is_renderer_comp
-                && world.transforms.contains_key(&id.index)
-                && world.sprite_renderers.contains_key(&id.index)
+            let idx = id.index;
+            let has_transform = world.transforms.contains_key(&idx);
+            // Emit UpsertSprite only once both sprite renderer components are present.
+            if (component_type == COMPONENT_TRANSFORM
+                || component_type == COMPONENT_SPRITE_RENDERER)
+                && has_transform
+                && world.sprite_renderers.contains_key(&idx)
             {
                 return DispatchResult {
-                    render_cmds: vec![RenderCommand::UpsertSprite {
-                        entity_idx: id.index,
-                    }],
+                    render_cmds: vec![RenderCommand::UpsertSprite { entity_idx: idx }],
+                    ..Default::default()
+                };
+            }
+            // Emit UpsertText only once both text renderer components are present.
+            if (component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_TEXT_RENDERER)
+                && has_transform
+                && world.text_renderers.contains_key(&idx)
+            {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::UpsertText { entity_idx: idx }],
                     ..Default::default()
                 };
             }
@@ -330,14 +350,18 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 tracing::warn!(mod_id, "ComponentRemove: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
-            let is_renderer_comp = component_type == COMPONENT_TRANSFORM
-                || component_type == COMPONENT_SPRITE_RENDERER;
+            let idx = id.index;
             world.remove_component(&id, &component_type);
-            if is_renderer_comp {
+            if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_SPRITE_RENDERER
+            {
                 return DispatchResult {
-                    render_cmds: vec![RenderCommand::RemoveSprite {
-                        entity_idx: id.index,
-                    }],
+                    render_cmds: vec![RenderCommand::RemoveSprite { entity_idx: idx }],
+                    ..Default::default()
+                };
+            }
+            if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_TEXT_RENDERER {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::RemoveText { entity_idx: idx }],
                     ..Default::default()
                 };
             }

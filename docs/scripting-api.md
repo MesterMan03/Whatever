@@ -186,12 +186,16 @@ The underlying opaque entity ID string.
 
 Destroy this entity and all its components. Fire-and-forget.
 
-### `entity.setComponent(component_type, data)`
+### `entity.setComponent(component_type, data)` / `entity.setComponent(component)`
 
 Set a component on this entity. Fire-and-forget. Creates the component if absent,
 overwrites if present. For built-in component types the compiler enforces the correct shape.
 
+Accepts either a `(component_type, data)` pair or a single `Component` instance — the
+component ID is read from the object's `id` field automatically.
+
 ```ts
+// Plain object form
 entity.setComponent("core:transform", {
   position: [0, 0, 0],
   rotation: [0, 0, 0, 1],
@@ -199,8 +203,18 @@ entity.setComponent("core:transform", {
 });
 entity.setComponent("core:sprite_renderer", {
   texture: "my_mod://textures/player.png",
-  z_index: 0,
 });
+
+// Component instance form — id is inferred from the object
+const t = new BuiltInComponents.Transform({ position: [1, 2, 3] });
+entity.setComponent(t);
+
+// Common pattern: fetch, mutate, push back
+const t = await entity.getComponent("core:transform");
+if (t) {
+  t.addX(1);
+  entity.setComponent(t); // no need to repeat the component type string
+}
 ```
 
 A sprite becomes visible as soon as the entity has **both** `core:transform` and
@@ -305,6 +319,21 @@ for (const { entity, components } of results) {
 ```
 
 `QueryResult` shape: `{ entity: Entity; components: Record<string, JsonValue> }`.
+
+### `Scene.spawnText(text, position, options?)` → `Promise<Entity>`
+
+Convenience: create an entity with `core:transform` and `core:text_renderer` pre-attached. Returns the entity.
+
+```ts
+const label = await Scene.spawnText("Hello, world!", [0, 0, 0]);
+
+// With options:
+const label = await Scene.spawnText("Score: 0", [0, 0, 2], {
+  font: "my_mod://fonts/custom.ttf",   // optional, defaults to core://fonts/default.ttf
+  font_size: 32,                        // optional, defaults to 24
+  color: [1, 0.8, 0, 1],               // optional RGBA, defaults to [1, 1, 1, 1]
+});
+```
 
 ### `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>`
 
@@ -415,16 +444,50 @@ Returned by `getComponent("core:sprite_renderer")`.
 | Field | Type | Description |
 |---|---|---|
 | `texture` | `string` | VFS path `mod_id://path/to/texture` |
-| `z_index` | `number` | Draw order; higher = drawn on top |
 
 | Method | Returns | Description |
 |---|---|---|
 | `getTexture()` | `string` | Current texture path |
 | `setTexture(path)` | `this` | Change the texture |
-| `getZIndex()` | `number` | Current z-index |
-| `setZIndex(z)` | `this` | Change the z-index |
 
 Sprites are rendered on the XZ plane; the Y axis is up. A sprite becomes visible as soon as the entity has **both** `core:transform` and `core:sprite_renderer` set.
+
+#### `BuiltInComponents.TextRenderer`
+
+Returned by `getComponent("core:text_renderer")`. Renders a UTF-8 string at the entity's world-space Transform position, projected to screen coordinates.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `text` | `string` | `""` | The string to render |
+| `font` | `string` | `"core://fonts/default.ttf"` | VFS path to a TTF or OTF font |
+| `font_size` | `number` | `24` | Font size in logical pixels |
+| `color` | `[r, g, b, a]` | `[1, 1, 1, 1]` | RGBA colour, each channel in `[0.0, 1.0]` |
+
+| Method | Returns | Description |
+|---|---|---|
+| `getText()` | `string` | Current text string |
+| `setText(text)` | `this` | Change the displayed text |
+| `getFont()` | `string` | Current font VFS path |
+| `setFont(path)` | `this` | Change the font |
+| `getFontSize()` | `number` | Current font size |
+| `setFontSize(size)` | `this` | Change the font size |
+| `getColor()` | `[r, g, b, a]` | Copy of the colour tuple |
+| `setColor(r, g, b, a)` | `this` | Change the colour |
+
+Text is rendered on top of sprites. The engine ships Noto Sans as `core://fonts/default.ttf`; any mod can supply alternative fonts as TTF/OTF assets and pass the VFS path in the `font` field.
+
+```ts
+// Spawn a white label
+const label = await Scene.spawnText("Hello!", [0, 0, 0], { font_size: 36 });
+
+// Update it each tick
+Engine.on("tick", async ({ tick_number }) => {
+  const t = await label.getComponent("core:text_renderer");
+  if (!t) return;
+  t.setText(`Tick: ${tick_number}`);
+  label.setComponent("core:text_renderer", t);
+});
+```
 
 ---
 

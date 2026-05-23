@@ -48,7 +48,7 @@ A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntitie
 
 - `entity.id` — opaque entity ID string
 - `entity.destroy()` — fire-and-forget
-- `entity.setComponent(component_type, data)` — fire-and-forget; typed for built-in components
+- `entity.setComponent(component_type, data)` / `entity.setComponent(component)` — fire-and-forget; typed for built-in components; single-argument form reads `id` from the component object
 - `entity.removeComponent(component_type)` — fire-and-forget
 - `entity.getComponent(component_type)` → `Promise<T | null>` — typed for built-in components
 - `entity.move(position)` → `Promise<void>` — update `core:transform` position, preserve rotation/scale
@@ -65,9 +65,10 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.getComponent(entity_id, component_type)` → `Promise<T | null>` — typed for built-in components
 - `Scene.query(component_types)` → `Promise<QueryResult[]>` — each row has `entity: Entity` and `components`
 - `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>` — convenience
+- `Scene.spawnText(text, position, options?)` → `Promise<Entity>` — convenience
 - `Scene.moveEntity(entity_id, position)` → `Promise<void>` — convenience
 
-Built-in component types: `core:transform`, `core:sprite_renderer`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+Built-in component types: `core:transform`, `core:sprite_renderer`, `core:text_renderer`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
 
 ### `BuiltInComponents.Transform`
 
@@ -86,6 +87,14 @@ Methods (all setters chainable, return `this`):
 ### `BuiltInComponents.SpriteRenderer`
 
 - `getTexture()`, `setTexture(path)` — VFS texture path
+- `getZIndex()`, `setZIndex(z)` — draw order
+
+### `BuiltInComponents.TextRenderer`
+
+- `getText()`, `setText(text)` — displayed string
+- `getFont()`, `setFont(path)` — VFS path to TTF/OTF font (default: `"core://fonts/default.ttf"`)
+- `getFontSize()`, `setFontSize(size)` — font size in logical pixels (default: `24`)
+- `getColor()`, `setColor(r, g, b, a)` — RGBA colour, each channel `[0.0, 1.0]` (default: white)
 - `getZIndex()`, `setZIndex(z)` — draw order
 
 ### `Mods`

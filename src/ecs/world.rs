@@ -1,5 +1,6 @@
 use super::components::{
-    COMPONENT_SPRITE_RENDERER, COMPONENT_TRANSFORM, SpriteRenderer, Transform,
+    COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, SpriteRenderer,
+    TextRenderer, Transform,
 };
 use super::entity::{EntityAllocator, EntityId};
 use std::collections::HashMap;
@@ -8,6 +9,7 @@ pub struct World {
     pub allocator: EntityAllocator,
     pub transforms: HashMap<u32, Transform>,
     pub sprite_renderers: HashMap<u32, SpriteRenderer>,
+    pub text_renderers: HashMap<u32, TextRenderer>,
     /// `type_id` → (`entity_index` → JSON blob)
     pub custom: HashMap<String, HashMap<u32, serde_json::Value>>,
 }
@@ -18,6 +20,7 @@ impl World {
             allocator: EntityAllocator::new(),
             transforms: HashMap::new(),
             sprite_renderers: HashMap::new(),
+            text_renderers: HashMap::new(),
             custom: HashMap::new(),
         }
     }
@@ -34,6 +37,7 @@ impl World {
         }
         self.transforms.remove(&idx);
         self.sprite_renderers.remove(&idx);
+        self.text_renderers.remove(&idx);
         for type_map in self.custom.values_mut() {
             type_map.remove(&idx);
         }
@@ -71,6 +75,15 @@ impl World {
                     return false;
                 }
             },
+            COMPONENT_TEXT_RENDERER => match serde_json::from_value::<TextRenderer>(data) {
+                Ok(t) => {
+                    self.text_renderers.insert(idx, t);
+                }
+                Err(e) => {
+                    tracing::warn!("invalid core:text_renderer data: {e}");
+                    return false;
+                }
+            },
             _ => {
                 self.custom
                     .entry(type_id.to_owned())
@@ -90,6 +103,7 @@ impl World {
         match type_id {
             COMPONENT_TRANSFORM => self.transforms.remove(&idx).is_some(),
             COMPONENT_SPRITE_RENDERER => self.sprite_renderers.remove(&idx).is_some(),
+            COMPONENT_TEXT_RENDERER => self.text_renderers.remove(&idx).is_some(),
             _ => self
                 .custom
                 .get_mut(type_id)
@@ -113,6 +127,10 @@ impl World {
                 .sprite_renderers
                 .get(&idx)
                 .and_then(|s| serde_json::to_value(s).ok()),
+            COMPONENT_TEXT_RENDERER => self
+                .text_renderers
+                .get(&idx)
+                .and_then(|t| serde_json::to_value(t).ok()),
             _ => self.custom.get(type_id)?.get(&idx).cloned(),
         }
     }

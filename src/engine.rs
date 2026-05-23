@@ -552,6 +552,28 @@ fn apply_render_command(
         RenderCommand::RemoveSprite { entity_idx } => {
             renderer.scene.remove_sprite(*entity_idx);
         }
+        RenderCommand::UpsertText { entity_idx } => {
+            let Some(transform) = world.transforms.get(entity_idx) else {
+                return;
+            };
+            let Some(text_comp) = world.text_renderers.get(entity_idx) else {
+                return;
+            };
+            let ctx = RenderContext {
+                device: &renderer.ctx.device,
+                queue: &renderer.ctx.queue,
+                bgl: &renderer.texture_bind_group_layout,
+            };
+            if let Err(e) = renderer
+                .text
+                .upsert_text(ctx, vfs, *entity_idx, transform, text_comp)
+            {
+                tracing::warn!("upsert_text error (entity {}): {e}", entity_idx);
+            }
+        }
+        RenderCommand::RemoveText { entity_idx } => {
+            renderer.text.remove_text(*entity_idx);
+        }
     }
 }
 
@@ -723,8 +745,8 @@ impl ApplicationHandler for Engine {
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 ..
-            } if !self.console.is_open => {
-                self.set_cursor_captured(!self.input.mouse_captured);
+            } if !self.console.is_open && !self.input.mouse_captured => {
+                self.set_cursor_captured(true);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {

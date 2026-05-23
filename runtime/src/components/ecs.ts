@@ -8,6 +8,7 @@ import {
 export namespace BuiltInComponents {
   export const TRANSFORM_ID = "core:transform";
   export const SPRITE_RENDERER_ID = "core:sprite_renderer";
+  export const TEXT_RENDERER_ID = "core:text_renderer";
 
   /** Transform component. Returned by `getComponent("core:transform")` as a live class instance. */
   export class Transform implements Component {
@@ -179,35 +180,66 @@ export namespace BuiltInComponents {
   export class SpriteRenderer implements Component {
     readonly id = SPRITE_RENDERER_ID;
     texture: string;
-    z_index: number;
 
-    constructor(init: { texture?: string; z_index?: number } = {}) {
+    constructor(init: { texture?: string; } = {}) {
       this.texture = init.texture ?? "";
-      this.z_index = init.z_index ?? 0;
     }
 
     getTexture(): string { return this.texture; }
     setTexture(texture: string): this { this.texture = texture; return this; }
-    getZIndex(): number { return this.z_index; }
-    setZIndex(z: number): this { this.z_index = z; return this; }
+  }
+
+  /** TextRenderer component. Renders a string at the entity's world-space Transform position. */
+  export class TextRenderer implements Component {
+    readonly id = TEXT_RENDERER_ID;
+    text: string;
+    /** VFS path to a TTF/OTF font. Defaults to `"core://fonts/default.ttf"` (Noto Sans). */
+    font: string;
+    font_size: number;
+    /** RGBA colour, each channel in `[0.0, 1.0]`. Defaults to opaque white. */
+    color: [number, number, number, number];
+
+    constructor(init: {
+      text?: string;
+      font?: string;
+      font_size?: number;
+      color?: [number, number, number, number];
+    } = {}) {
+      this.text = init.text ?? "";
+      this.font = init.font ?? "core://fonts/default.ttf";
+      this.font_size = init.font_size ?? 24;
+      this.color = init.color ?? [1, 1, 1, 1];
+    }
+
+    getText(): string { return this.text; }
+    setText(text: string): this { this.text = text; return this; }
+    getFont(): string { return this.font; }
+    setFont(font: string): this { this.font = font; return this; }
+    getFontSize(): number { return this.font_size; }
+    setFontSize(size: number): this { this.font_size = size; return this; }
+    getColor(): [number, number, number, number] { return [...this.color]; }
+    setColor(r: number, g: number, b: number, a: number): this { this.color = [r, g, b, a]; return this; }
   }
 }
 
 interface _ComponentRegistry {
   [BuiltInComponents.TRANSFORM_ID]: BuiltInComponents.Transform;
   [BuiltInComponents.SPRITE_RENDERER_ID]: BuiltInComponents.SpriteRenderer;
+  [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
 }
 
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
 interface _ComponentSetRegistry {
   [BuiltInComponents.TRANSFORM_ID]: { position: [number, number, number]; rotation: [number, number, number, number]; scale: [number, number, number] };
-  [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; z_index: number };
+  [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; };
+  [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font?: string; font_size?: number; color?: [number, number, number, number]; };
 }
 
 // Converts raw component JSON into the appropriate class instance for built-in types.
 const _componentHydrators: Record<string, (data: any) => any> = {
   "core:transform": (data) => new BuiltInComponents.Transform(data),
   "core:sprite_renderer": (data) => new BuiltInComponents.SpriteRenderer(data),
+  "core:text_renderer": (data) => new BuiltInComponents.TextRenderer(data),
 };
 
 function _setComponentImpl<K extends keyof _ComponentSetRegistry>(entity_id: string, component_type: K, data: _ComponentSetRegistry[K]): void;
@@ -243,9 +275,14 @@ export class Entity {
 
   /** Set a component on this entity. Fire-and-forget. */
   setComponent<K extends keyof _ComponentSetRegistry>(component_type: K, data: _ComponentSetRegistry[K]): void;
+  setComponent(component: Component): void;
   setComponent(component_type: string, data: JsonValue): void;
-  setComponent(component_type: string, data: any): void {
-    _setComponentImpl(this.id, component_type, data);
+  setComponent(component_type_or_component: string | Component, data?: any): void {
+    if (typeof component_type_or_component === "object") {
+      _setComponentImpl(this.id, component_type_or_component.id, component_type_or_component as any);
+    } else {
+      _setComponentImpl(this.id, component_type_or_component, data);
+    }
   }
 
   /** Remove a component from this entity. Fire-and-forget. */
@@ -341,7 +378,27 @@ export const Scene = {
   ): Promise<Entity> {
     const entity = await Scene.createEntity();
     entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale });
-    entity.setComponent("core:sprite_renderer", { texture, z_index: 0 });
+    entity.setComponent("core:sprite_renderer", { texture });
+    return entity;
+  },
+
+  /**
+   * Convenience: create an entity and attach `core:transform` + `core:text_renderer`.
+   * The text becomes visible as soon as both components are set.
+   */
+  async spawnText(
+    text: string,
+    position: [number, number, number],
+    options: { font?: string; font_size?: number; color?: [number, number, number, number]; } = {},
+  ): Promise<Entity> {
+    const entity = await Scene.createEntity();
+    entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+    entity.setComponent("core:text_renderer", {
+      text,
+      font: options.font ?? "core://fonts/default.ttf",
+      font_size: options.font_size ?? 24,
+      color: options.color ?? [1, 1, 1, 1]
+    });
     return entity;
   },
 
