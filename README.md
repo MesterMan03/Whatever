@@ -1,3 +1,12 @@
+![GitHub License](https://img.shields.io/github/license/MesterMan03/Whatever)
+[![CI](https://github.com/MesterMan03/Whatever/actions/workflows/ci.yml/badge.svg)](https://github.com/MesterMan03/Whatever/actions/workflows/ci.yml)
+![GitHub Release](https://img.shields.io/github/v/release/MesterMan03/Whatever?include_prereleases)
+![NPM Version](https://img.shields.io/npm/v/%40whatever-engine%2Fapi)
+![Rust](https://img.shields.io/badge/made%20with-Rust-f74c00)
+![TypeScript](https://img.shields.io/badge/made%20with-TypeScript-3178c6)
+![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/MesterMan03/Whatever)
+
+
 # Whatever Engine
 
 A barebones game engine where every game is just a mod. The engine owns the window, GPU renderer, virtual file system, mod loader, and TypeScript/Bun scripting host, nothing else. No game logic lives in engine code.
