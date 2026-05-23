@@ -1,4 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+pub enum EngineSettingAction {
+    SetFpsCap(Option<f64>),
+    SetVsync(bool),
+}
 
 pub enum OutputLine {
     Input(String),
@@ -55,7 +60,10 @@ pub struct CommandContext<'a> {
     pub vfs: &'a dyn crate::vfs::Vfs,
     pub world: &'a crate::ecs::World,
     pub fps: f32,
+    pub fps_cap: Option<f64>,
+    pub vsync: bool,
     pub debug: crate::debug::SharedDebugSwitches,
+    pub pending_action: Arc<Mutex<Option<EngineSettingAction>>>,
 }
 
 pub type CommandHandler = Arc<dyn Fn(ParsedArgs, &CommandContext) -> CommandResult + Send + Sync>;

@@ -1,4 +1,4 @@
-import {Engine, Window, File, Mods, Message} from "@whatever-engine/api";
+import {Engine, Window, File, Mods, Message, Console} from "@whatever-engine/api";
 
 const randomText = Math.random().toString(36).substring(2);
 
@@ -20,4 +20,62 @@ Engine.on("init", async ({ mod_id: selfId }) => {
 
 Engine.on("exit", () => {
   Engine.log("info", "Goodbye, cruel world");
+});
+
+Console.register({
+  name: "window",
+  description: "Change window parameters (size, fullscreen)",
+  subcommands: [{
+    name: "resize",
+    description: "Resize the window (format: WIDTHxHEIGHT)",
+    args: [{
+      name: "size",
+      description: "New size of the window",
+      type: "string",
+      required: true
+    }],
+    handler: (args) => {
+      const size = args["size"] as string;
+      const parts = size.split("x");
+      if(parts.length !== 2) {
+        return "incorrect format";
+      }
+      const widthStr = parts[0];
+      const heightStr = parts[1];
+      if(widthStr == null || heightStr == null) {
+        return "incorrect format";
+      }
+      let width: number, height: number;
+      try {
+        width = parseInt(widthStr, 10);
+        height = parseInt(heightStr, 10);
+      } catch {
+        return "invalid numbers";
+      }
+      Window.setSize(width, height);
+      return `set window size to ${width}x${height}`;
+    }
+  }, {
+    name: "mode",
+    description: "Set window mode",
+    subcommands: [{
+      name: "windowed",
+      handler: (_) => {
+        Window.setMode("windowed");
+        return "ok";
+      }
+    }, {
+      name: "borderless",
+      handler: (_) => {
+        Window.setMode("borderless");
+        return "ok";
+      }
+    }, {
+      name: "fullscreen",
+      handler: (_) => {
+        Window.setMode("fullscreen");
+        return "ok";
+      }
+    }]
+  }]
 });

@@ -25,10 +25,14 @@ No install step needed — Bun resolves the package automatically for any script
 - `Engine.on(event, handler)` — subscribe to an engine event (`init`, `exit`, `tick`, `mod_message`)
 - `Engine.log(level, message)` — log through the engine logger (`"info"`, `"warn"`, `"error"`)
 - `Engine.setTickRate(ticks_per_second)` — override the game tick rate at runtime
+- `Engine.setFpsCap(fps | null)` — set FPS cap; `null` = uncapped
+- `Engine.setVsync(enabled)` — enable or disable vertical sync
 
 ### `Window`
 
 - `Window.setTitle(title)` — change the window title
+- `Window.setSize(width, height)` — request a new inner size in physical pixels (no-op in fullscreen modes)
+- `Window.setMode(mode)` — set display mode: `"windowed"`, `"borderless"`, or `"fullscreen"`
 
 ### `File`
 

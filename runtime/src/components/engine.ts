@@ -25,4 +25,14 @@ export const Engine = {
   setTickRate(ticks_per_second: number): void {
     _send({ type: "SetTickRate", ticks_per_second });
   },
+
+  /** Set the FPS cap. Pass `null` to remove the cap (uncapped). */
+  setFpsCap(fps: number | null): void {
+    _send({ type: "SetFpsCap", fps });
+  },
+
+  /** Enable or disable vertical sync. Takes effect immediately. */
+  setVsync(enabled: boolean): void {
+    _send({ type: "SetVsync", enabled });
+  },
 };

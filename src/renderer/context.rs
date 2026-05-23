@@ -81,4 +81,9 @@ impl WgpuContext {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
     }
+
+    pub fn set_present_mode(&mut self, mode: wgpu::PresentMode) {
+        self.config.present_mode = mode;
+        self.surface.configure(&self.device, &self.config);
+    }
 }

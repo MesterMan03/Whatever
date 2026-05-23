@@ -231,8 +231,21 @@ pub enum ScriptMessage {
         request_id: String,
         component_types: Vec<String>,
     },
+    SetWindowSize {
+        width: u32,
+        height: u32,
+    },
+    SetWindowMode {
+        mode: String,
+    },
     SetTickRate {
         ticks_per_second: f64,
+    },
+    SetFpsCap {
+        fps: Option<f64>,
+    },
+    SetVsync {
+        enabled: bool,
     },
     TickDone {
         tick_number: u64,

@@ -6,5 +6,5 @@ mod types;
 mod widget;
 
 pub use registry::command_node_from_spec;
-pub use types::CommandSource;
+pub use types::{CommandSource, EngineSettingAction};
 pub use widget::{ConsoleAction, DevConsole};

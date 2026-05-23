@@ -142,7 +142,8 @@ RUST_LOG=wgpu=warn,Whatever=debug cargo run     # also include wgpu warnings
 
 ## Debug flags
 
-Pass `--debug=<flags>` to enable verbose category logging (comma-separated). Lines are written to `logs/latest.log` alongside normal output and appear in the dev console.
+Pass `--debug=<flags>` to enable verbose category logging (comma-separated). 
+Lines are written to `logs/latest.log` alongside normal output and appear in the dev console (Ctrl + Alt + Enter).
 
 | Flag | What it logs |
 |---|---|

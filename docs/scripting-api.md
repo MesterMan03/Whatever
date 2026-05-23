@@ -76,6 +76,27 @@ Engine.setTickRate(60); // 60 ticks per second
 
 The default tick rate is set by `tick_rate` in `core/meta.toml` (default: 60).
 
+### `Engine.setFpsCap(fps)`
+
+Set a maximum frames-per-second limit. Pass `null` to remove the cap (uncapped).
+When a cap is set the engine uses `ControlFlow::WaitUntil` for precise frame pacing;
+without a cap the GPU present (vsync) is the only pacing mechanism.
+
+```ts
+Engine.setFpsCap(60);   // cap at 60 FPS
+Engine.setFpsCap(null); // uncapped
+```
+
+### `Engine.setVsync(enabled)`
+
+Enable or disable vertical sync. Takes effect immediately by reconfiguring the wgpu
+surface present mode (`AutoVsync` / `AutoNoVsync`).
+
+```ts
+Engine.setVsync(true);  // on (default)
+Engine.setVsync(false); // off
+```
+
 ---
 
 ## `Window`
@@ -87,6 +108,30 @@ Change the title of the active window.
 ```ts
 Window.setTitle("My Game — Level 1");
 ```
+
+### `Window.setSize(width, height)`
+
+Request a new inner window size in physical pixels. Has no effect when the window is in a fullscreen mode.
+
+```ts
+Window.setSize(1280, 720);
+```
+
+### `Window.setMode(mode)`
+
+Set the window display mode.
+
+```ts
+Window.setMode("windowed");    // normal window
+Window.setMode("borderless");  // borderless fullscreen (windowed fullscreen)
+Window.setMode("fullscreen");  // exclusive fullscreen; falls back to borderless if unavailable
+```
+
+| Value | Description |
+|---|---|
+| `"windowed"` | Normal windowed mode |
+| `"borderless"` | Borderless fullscreen using the current monitor |
+| `"fullscreen"` | Exclusive fullscreen using the monitor's preferred video mode |
 
 ---
 
@@ -556,7 +601,11 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `TickDone` | `tick_number` |
 | `Log` | `level`, `message` |
 | `SetWindowTitle` | `title` |
+| `SetWindowSize` | `width`, `height` |
+| `SetWindowMode` | `mode` (`"windowed"` \| `"borderless"` \| `"fullscreen"`) |
 | `SetTickRate` | `ticks_per_second` |
+| `SetFpsCap` | `fps` (`number \| null`) |
+| `SetVsync` | `enabled` |
 | `FileWrite` | `request_id`, `path`, `data_base64` |
 | `FileRead` | `request_id`, `path` |
 | `FileDelete` | `request_id`, `path` |

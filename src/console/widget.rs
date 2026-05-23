@@ -19,6 +19,8 @@ pub struct DevConsole {
     history_pos: Option<usize>,
     pub registry: CommandRegistry,
     pub fps: f32,
+    pub fps_cap: Option<f64>,
+    pub vsync: bool,
     completions: Vec<String>,
     completion_idx: usize,
     pub pending_invoke: Option<PendingInvoke>,
@@ -36,6 +38,7 @@ pub enum ConsoleAction {
         mod_id: String,
         message: EngineMessage,
     },
+    EngineSettings(crate::console::types::EngineSettingAction),
 }
 
 impl DevConsole {
@@ -59,6 +62,8 @@ impl DevConsole {
             history_pos: None,
             registry,
             fps: 0.0,
+            fps_cap: None,
+            vsync: true,
             completions: Vec::new(),
             completion_idx: 0,
             pending_invoke: None,
@@ -475,12 +480,18 @@ impl DevConsole {
 
         match &node.source {
             CommandSource::Engine => {
+                let pending_action = std::sync::Arc::new(std::sync::Mutex::new(
+                    None::<crate::console::types::EngineSettingAction>,
+                ));
                 let ctx = CommandContext {
                     mod_registry,
                     vfs,
                     world,
                     fps: self.fps,
+                    fps_cap: self.fps_cap,
+                    vsync: self.vsync,
                     debug,
+                    pending_action: std::sync::Arc::clone(&pending_action),
                 };
                 // we've verified handler exists, so unwrap() should be safe
                 // but probably best to refactor asap
@@ -495,6 +506,11 @@ impl DevConsole {
                         tracing::warn!("console: command failed: {e}");
                         self.output.push(OutputLine::Error(e));
                     }
+                }
+                if let Ok(mut guard) = pending_action.lock()
+                    && let Some(action) = guard.take()
+                {
+                    return ConsoleAction::EngineSettings(action);
                 }
                 ConsoleAction::None
             }

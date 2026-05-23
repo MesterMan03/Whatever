@@ -1,5 +1,5 @@
 use crate::console::command_node_from_spec;
-use crate::console::{ConsoleAction, DevConsole};
+use crate::console::{ConsoleAction, DevConsole, EngineSettingAction};
 use crate::debug::{DebugConfig, DebugLogger};
 use crate::ecs::World;
 use crate::input::InputState;
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
@@ -35,6 +35,10 @@ pub struct Engine {
     input: InputState,
     frame_number: u64,
     last_frame: Instant,
+    fps_ema: f32,
+    fps_cap: Option<f64>,
+    vsync: bool,
+    next_frame_target: Instant,
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     world: World,
@@ -140,6 +144,10 @@ impl Engine {
             input: InputState::new(),
             frame_number: 0,
             last_frame: Instant::now(),
+            fps_ema: 0.0,
+            fps_cap: None,
+            vsync: true,
+            next_frame_target: Instant::now(),
             renderer: None,
             window: None,
             console: DevConsole::new(),
@@ -166,7 +174,15 @@ impl Engine {
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
 
-        self.console.fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+        let raw_fps = if dt > 0.0 { 1.0 / dt } else { self.fps_ema };
+        self.fps_ema = if self.fps_ema == 0.0 {
+            raw_fps
+        } else {
+            self.fps_ema * 0.9 + raw_fps * 0.1
+        };
+        self.console.fps = self.fps_ema;
+        self.console.fps_cap = self.fps_cap;
+        self.console.vsync = self.vsync;
 
         let (dx, dy) = self.input.flush_mouse();
 
@@ -207,6 +223,8 @@ impl Engine {
             let overlay_fps = self.console.fps;
             let overlay_tick_rate = 1.0 / self.tick_interval.as_secs_f64();
             let overlay_entities = self.world.allocator.alive_entity_ids().count();
+            let overlay_fps_cap = self.fps_cap;
+            let overlay_vsync = self.vsync;
             let mut console_action = ConsoleAction::None;
             let full_output = egui_ctx.run(raw_input, |ctx| {
                 console_action = self.console.render(
@@ -217,7 +235,14 @@ impl Engine {
                     &self.world,
                 );
                 if show_overlay {
-                    render_debug_overlay(ctx, overlay_fps, overlay_tick_rate, overlay_entities);
+                    render_debug_overlay(
+                        ctx,
+                        overlay_fps,
+                        overlay_tick_rate,
+                        overlay_entities,
+                        overlay_fps_cap,
+                        overlay_vsync,
+                    );
                 }
             });
 
@@ -225,6 +250,15 @@ impl Engine {
                 ConsoleAction::Quit => self.should_quit = true,
                 ConsoleAction::SendIpc { mod_id, message } => {
                     self.script_host.send(&mod_id, &message, &mut self.debug);
+                }
+                ConsoleAction::EngineSettings(action) => {
+                    match action {
+                        EngineSettingAction::SetFpsCap(cap) => self.fps_cap = cap,
+                        EngineSettingAction::SetVsync(enabled) => {
+                            self.vsync = enabled;
+                            self.apply_vsync();
+                        }
+                    }
                 }
                 ConsoleAction::None => {}
             }
@@ -358,10 +392,28 @@ impl Engine {
         if let Some(rate) = result.new_tick_rate {
             self.tick_interval = Duration::from_secs_f64(1.0 / rate);
         }
+        if let Some(cap) = result.new_fps_cap {
+            self.fps_cap = cap;
+        }
+        if let Some(enabled) = result.new_vsync {
+            self.vsync = enabled;
+            self.apply_vsync();
+        }
         if let Some(renderer) = self.renderer.as_mut() {
             for cmd in &result.render_cmds {
                 apply_render_command(cmd, renderer, &self.world, self.vfs.as_ref());
             }
+        }
+    }
+
+    fn apply_vsync(&mut self) {
+        let mode = if self.vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.ctx.set_present_mode(mode);
         }
     }
 
@@ -423,7 +475,14 @@ impl Engine {
     }
 }
 
-fn render_debug_overlay(ctx: &egui::Context, fps: f32, tick_rate: f64, entity_count: usize) {
+fn render_debug_overlay(
+    ctx: &egui::Context,
+    fps: f32,
+    tick_rate: f64,
+    entity_count: usize,
+    fps_cap: Option<f64>,
+    vsync: bool,
+) {
     egui::Area::new(egui::Id::new("debug_overlay"))
         .fixed_pos(egui::pos2(8.0, 8.0))
         .order(egui::Order::Foreground)
@@ -441,7 +500,15 @@ fn render_debug_overlay(ctx: &egui::Context, fps: f32, tick_rate: f64, entity_co
                 ui.label(
                     egui::RichText::new(format!("Tick rate  {tick_rate:.0}/s")).font(font.clone()),
                 );
-                ui.label(egui::RichText::new(format!("Entities   {entity_count}")).font(font));
+                ui.label(egui::RichText::new(format!("Entities   {entity_count}")).font(font.clone()));
+                let cap_str = fps_cap.map_or_else(|| "off".to_owned(), |c| format!("{c:.0}"));
+                ui.label(
+                    egui::RichText::new(format!("FPS cap    {cap_str}")).font(font.clone()),
+                );
+                ui.label(
+                    egui::RichText::new(format!("VSync      {}", if vsync { "on" } else { "off" }))
+                        .font(font),
+                );
             });
         });
 }
@@ -638,7 +705,11 @@ impl ApplicationHandler for Engine {
                     event_loop.exit();
                     return;
                 }
-                if let Some(w) = self.window.as_ref() {
+                if let Some(cap) = self.fps_cap {
+                    self.next_frame_target =
+                        self.last_frame + Duration::from_secs_f64(1.0 / cap);
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
+                } else if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
             }
@@ -673,6 +744,15 @@ impl ApplicationHandler for Engine {
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             self.input.accumulate_mouse(dx as f32, dy as f32);
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.fps_cap.is_some() {
+            if let Some(w) = self.window.as_ref() {
+                w.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
         }
     }
 }

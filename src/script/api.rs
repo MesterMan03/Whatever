@@ -13,6 +13,9 @@ use winit::window::Window;
 pub struct DispatchResult {
     pub render_cmds: Vec<RenderCommand>,
     pub new_tick_rate: Option<f64>,
+    /// `Some(Some(fps))` = set cap; `Some(None)` = remove cap.
+    pub new_fps_cap: Option<Option<f64>>,
+    pub new_vsync: Option<bool>,
 }
 
 pub enum RenderCommand {
@@ -59,6 +62,27 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         ScriptMessage::SetWindowTitle { title } => {
             debug.window(&format!("[{mod_id}] SetWindowTitle: {title}"));
             window.set_title(&title);
+        }
+        ScriptMessage::SetWindowSize { width, height } => {
+            debug.window(&format!("[{mod_id}] SetWindowSize: {width}x{height}"));
+            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+        }
+        ScriptMessage::SetWindowMode { mode } => {
+            debug.window(&format!("[{mod_id}] SetWindowMode: {mode}"));
+            let fullscreen = match mode.as_str() {
+                "windowed" => None,
+                "borderless" => Some(winit::window::Fullscreen::Borderless(None)),
+                "fullscreen" => window
+                    .current_monitor()
+                    .and_then(|m| m.video_modes().next())
+                    .map(winit::window::Fullscreen::Exclusive)
+                    .or(Some(winit::window::Fullscreen::Borderless(None))),
+                _ => {
+                    tracing::warn!(mod_id, "SetWindowMode: unknown mode '{mode}'");
+                    return DispatchResult::default();
+                }
+            };
+            window.set_fullscreen(fullscreen);
         }
 
         // --- Events ----------------------------------------------------------
@@ -362,6 +386,20 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         ScriptMessage::SetTickRate { ticks_per_second } => {
             return DispatchResult {
                 new_tick_rate: Some(ticks_per_second),
+                ..Default::default()
+            };
+        }
+
+        // --- Frame rate / vsync ----------------------------------------------
+        ScriptMessage::SetFpsCap { fps } => {
+            return DispatchResult {
+                new_fps_cap: Some(fps),
+                ..Default::default()
+            };
+        }
+        ScriptMessage::SetVsync { enabled } => {
+            return DispatchResult {
+                new_vsync: Some(enabled),
                 ..Default::default()
             };
         }
