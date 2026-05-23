@@ -1,5 +1,6 @@
 use crate::console::types::{
     ArgSpec, ArgType, CommandContext, CommandNode, CommandResult, EngineSettingAction, ParsedArgs,
+    SuggestFn,
 };
 use std::sync::Arc;
 
@@ -14,6 +15,8 @@ pub fn node() -> CommandNode {
                 arg_type: ArgType::String,
                 required: false,
                 description: "Target FPS or 'off'".into(),
+                has_suggest: false,
+                suggest: Some(Arc::new(suggest_fpscap) as SuggestFn),
             }])
             .with_handler(Arc::new(run_fps_cap)),
         CommandNode::engine("vsync", "Get or set vertical sync ('on' or 'off')")
@@ -22,6 +25,8 @@ pub fn node() -> CommandNode {
                 arg_type: ArgType::String,
                 required: false,
                 description: "'on' or 'off'".into(),
+                has_suggest: false,
+                suggest: Some(Arc::new(suggest_vsync) as SuggestFn),
             }])
             .with_handler(Arc::new(run_vsync)),
     ])
@@ -66,6 +71,14 @@ fn run_fps_cap(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         |c| format!("FPS cap set to {c:.0}"),
     );
     Ok(vec![msg])
+}
+
+fn suggest_fpscap(_current: &str) -> Vec<String> {
+    vec!["off".into(), "30".into(), "60".into(), "120".into(), "144".into(), "240".into()]
+}
+
+fn suggest_vsync(_current: &str) -> Vec<String> {
+    vec!["on".into(), "off".into()]
 }
 
 fn run_vsync(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {

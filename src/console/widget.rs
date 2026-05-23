@@ -7,9 +7,12 @@ use crate::mods::ModRegistry;
 use crate::script::ipc::EngineMessage;
 use crate::vfs::Vfs;
 use egui::{Color32, Context, FontId, Key, Modifiers, RichText, ScrollArea, TextEdit};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const INPUT_ROW_HEIGHT: f32 = 26.0;
 const MAX_COMPLETIONS: usize = 8;
+
+static SUGGEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct DevConsole {
     pub is_open: bool,
@@ -25,6 +28,13 @@ pub struct DevConsole {
     completion_idx: usize,
     pub pending_invoke: Option<PendingInvoke>,
     needs_focus: bool,
+    /// request_id of the most recently sent ArgSuggestRequest; used to discard stale responses.
+    pending_suggest_id: Option<String>,
+    /// Input prefix at the time the suggest request was sent; prepended to each suggestion to form
+    /// a full replacement string when the response arrives.
+    pending_suggest_prefix: String,
+    /// IPC to fire this frame (set when the input changes and a mod arg suggest is needed).
+    pending_suggest_ipc: Option<(String, EngineMessage)>,
 }
 
 pub struct PendingInvoke {
@@ -68,6 +78,9 @@ impl DevConsole {
             completion_idx: 0,
             pending_invoke: None,
             needs_focus: false,
+            pending_suggest_id: None,
+            pending_suggest_prefix: String::new(),
+            pending_suggest_ipc: None,
         }
     }
 
@@ -103,6 +116,25 @@ impl DevConsole {
             _ => self
                 .output
                 .push(OutputLine::Debug(format!("[{level}] {msg}"))),
+        }
+    }
+
+    /// Called from engine.rs when an ArgSuggestResponse IPC arrives from a mod.
+    /// Only applied if `request_id` matches the most recently sent suggest request.
+    pub fn handle_arg_suggest_response(&mut self, request_id: &str, suggestions: Vec<String>) {
+        if self.pending_suggest_id.as_deref() == Some(request_id) {
+            let prefix = &self.pending_suggest_prefix;
+            self.completions = suggestions
+                .into_iter()
+                .map(|s| {
+                    if prefix.is_empty() {
+                        s
+                    } else {
+                        format!("{prefix} {s}")
+                    }
+                })
+                .collect();
+            self.completion_idx = 0;
         }
     }
 
@@ -357,6 +389,27 @@ impl DevConsole {
                             completer::complete(&self.input_buf, &self.registry.roots);
                         self.completion_idx = 0;
                         self.history_pos = None;
+                        self.pending_suggest_ipc = None;
+                        if let Some(ctx) = completer::arg_suggest_context(
+                            &self.input_buf,
+                            &self.registry.roots,
+                        ) {
+                            let id = SUGGEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+                            let request_id = format!("suggest_{id}");
+                            self.pending_suggest_id = Some(request_id.clone());
+                            self.pending_suggest_prefix = ctx.prefix;
+                            self.pending_suggest_ipc = Some((
+                                ctx.mod_id,
+                                EngineMessage::ArgSuggestRequest {
+                                    request_id,
+                                    command_path: ctx.command_path,
+                                    arg_index: ctx.arg_index,
+                                    current: ctx.current,
+                                },
+                            ));
+                        } else {
+                            self.pending_suggest_id = None;
+                        }
                     }
                 });
 
@@ -372,6 +425,26 @@ impl DevConsole {
             self.input_buf = if c.contains('<') { c } else { format!("{c} ") };
             self.completions = completer::complete(&self.input_buf, &self.registry.roots);
             self.completion_idx = 0;
+            self.pending_suggest_ipc = None;
+            if let Some(ctx) =
+                completer::arg_suggest_context(&self.input_buf, &self.registry.roots)
+            {
+                let id = SUGGEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let request_id = format!("suggest_{id}");
+                self.pending_suggest_id = Some(request_id.clone());
+                self.pending_suggest_prefix = ctx.prefix;
+                self.pending_suggest_ipc = Some((
+                    ctx.mod_id,
+                    EngineMessage::ArgSuggestRequest {
+                        request_id,
+                        command_path: ctx.command_path,
+                        arg_index: ctx.arg_index,
+                        current: ctx.current,
+                    },
+                ));
+            } else {
+                self.pending_suggest_id = None;
+            }
 
             // Move cursor to end of the newly applied text
             let char_count = self.input_buf.chars().count();
@@ -389,6 +462,12 @@ impl DevConsole {
         if let Some(input) = submitted_input {
             self.history.push(input.clone());
             action = self.execute(&input, mod_registry, vfs, debug, world);
+        }
+
+        if matches!(action, ConsoleAction::None) {
+            if let Some((mod_id, message)) = self.pending_suggest_ipc.take() {
+                return ConsoleAction::SendIpc { mod_id, message };
+            }
         }
 
         action

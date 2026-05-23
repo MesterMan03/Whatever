@@ -19,6 +19,8 @@ fn get_node() -> CommandNode {
             arg_type: ArgType::String,
             required: true,
             description: "mod identifier".into(),
+            has_suggest: false,
+            suggest: None,
         }])
         .with_handler(Arc::new(run_get))
 }

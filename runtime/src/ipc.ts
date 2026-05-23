@@ -5,11 +5,12 @@ import {
   _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
   _EVENT_SUBSCRIBE,
 } from "./shared.ts";
-import { _handleCommandInvoke } from "./components/console.ts";
+import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
   | { type: "CommandInvoke"; request_id: string; command_path: string[]; args: JsonValue[] }
+  | { type: "ArgSuggestRequest"; request_id: string; command_path: string[]; arg_index: number; current: string }
   | { type: "Init"; mod_id: string; engine_version: string }
   | { type: "Frame"; delta_seconds: number; frame_number: number }
   | { type: "Input"; keys_pressed: string[]; mouse_delta: [number, number] }
@@ -29,6 +30,11 @@ type _EngineMsg =
 function _dispatch(msg: _EngineMsg): void {
   if (msg.type === "CommandInvoke") {
     _handleCommandInvoke(msg);
+    return;
+  }
+
+  if (msg.type === "ArgSuggestRequest") {
+    _handleArgSuggestRequest(msg);
     return;
   }
 

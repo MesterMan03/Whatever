@@ -20,12 +20,16 @@ fn list_node() -> CommandNode {
             arg_type: ArgType::String,
             required: true,
             description: "mod identifier".into(),
+            has_suggest: false,
+            suggest: None,
         },
         ArgSpec {
             name: "prefix".into(),
             arg_type: ArgType::String,
             required: false,
             description: "path prefix to filter by".into(),
+            has_suggest: false,
+            suggest: None,
         },
     ])
     .with_handler(Arc::new(run_list))
@@ -38,6 +42,8 @@ fn read_node() -> CommandNode {
             arg_type: ArgType::String,
             required: true,
             description: "VFS path in mod_id://relative/path form".into(),
+            has_suggest: false,
+            suggest: None,
         }])
         .with_handler(Arc::new(run_read))
 }

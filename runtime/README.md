@@ -73,7 +73,7 @@ Built-in component types: `core:transform`, `core:sprite_renderer`. `getComponen
 
 Methods (all setters chainable, return `this`):
 
-- `getX/Y/Z()`, `setX/Y/Z(v)` — individual position components
+- `getX/Y/Z()`, `setX/Y/Z(v)`, `addX/Y/Z(v)` — individual position components
 - `getPosition()` → `[x, y, z]`, `setPosition(x, y, z)` — full position
 - `getScaleX/Y/Z()`, `setScaleX/Y/Z(v)` — individual scale components
 - `getScale()` → `[x, y, z]`, `setScale(x, y, z)`, `setScaleUniform(s)` — full scale

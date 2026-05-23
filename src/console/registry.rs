@@ -37,6 +37,8 @@ pub fn command_node_from_spec(
                 },
                 required: a.required,
                 description: a.description.clone(),
+                has_suggest: a.has_suggest,
+                suggest: None,
             })
             .collect(),
         handler,

@@ -371,6 +371,16 @@ impl Engine {
                     continue;
                 }
 
+                if let ScriptMessage::ArgSuggestResponse {
+                    ref request_id,
+                    ref suggestions,
+                } = msg
+                {
+                    self.console
+                        .handle_arg_suggest_response(request_id, suggestions.clone());
+                    continue;
+                }
+
                 let ctx = EngineContext {
                     window: &window,
                     script_host: &mut self.script_host,

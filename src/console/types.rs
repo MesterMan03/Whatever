@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+pub type SuggestFn = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
 pub enum EngineSettingAction {
     SetFpsCap(Option<f64>),
     SetVsync(bool),
@@ -21,12 +23,16 @@ pub enum ArgType {
     Bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArgSpec {
     pub name: String,
     pub arg_type: ArgType,
     pub required: bool,
     pub description: String,
+    /// Whether the scripting side registered a suggest fn for this arg (mod commands only).
+    pub has_suggest: bool,
+    /// Synchronous suggest fn for engine commands (never set for mod commands).
+    pub suggest: Option<SuggestFn>,
 }
 
 #[derive(Debug, Clone)]

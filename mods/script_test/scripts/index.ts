@@ -79,3 +79,21 @@ Console.register({
     }]
   }]
 });
+
+Console.register({
+  name: "stupidsuggest",
+  description: "Yes",
+  args: [{
+    name: "stupid",
+    type: "string",
+    required: true,
+    suggest: (current) => {
+      const hasher = new Bun.SHA256()
+      hasher.update(current);
+      const hash = hasher.digest("hex");
+      // split hash into 8 character chunks
+      return hash.split(/(.{1,8})/g).filter(x => x).slice(0, 10);
+    }
+  }],
+  handler: (_) => "this literally does nothing lmao"
+});

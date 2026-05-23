@@ -348,6 +348,7 @@ Returned by `getComponent("core:transform")`. Raw fields are still present for b
 |---|---|---|
 | `getX()` / `getY()` / `getZ()` | `number` | Individual position components |
 | `setX(x)` / `setY(y)` / `setZ(z)` | `this` | Set one position component |
+| `addX(x) / addY(y) / addZ(z)` | `this` | Add to one position component |
 | `getPosition()` | `[number, number, number]` | Copy of the position tuple |
 | `setPosition(x, y, z)` | `this` | Set all three position components |
 
@@ -553,6 +554,7 @@ Console.register({
 | `type` | `"string" \| "int" \| "float" \| "bool"` | Parsed type |
 | `required` | `boolean?` | Defaults to `false` |
 | `description` | `string?` | Shown in `help <command>` |
+| `suggest` | `(current: string) => string[] \| Promise<string[]>` | Optional. Called by the engine to provide autocomplete suggestions as the user types this argument. Receives the current raw text (empty string if nothing typed yet). Return a list of candidate strings; the engine sends the request via IPC and updates the completion dropdown when the promise resolves. |
 
 The handler receives a `Record<string, string | number | boolean>` where keys are
 the `name` fields from the `ArgSpec` list. Missing optional args are absent from
@@ -591,6 +593,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `ComponentGetResponse` | `request_id`, `entity_id`, `component_type`, `data`, `error` |
 | `ComponentQueryResponse` | `request_id`, `results` |
 | `CommandInvoke` | `request_id`, `command_path`, `args` |
+| `ArgSuggestRequest` | `request_id`, `command_path`, `arg_index`, `current` |
 | `Shutdown` | `exit_code` |
 
 ### Script → Engine
@@ -622,3 +625,4 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `ComponentQuery` | `request_id`, `component_types` |
 | `RegisterCommand` | `name`, `description`, `subcommands`, `args`, `has_handler` |
 | `CommandResponse` | `request_id`, `output`, `error` |
+| `ArgSuggestResponse` | `request_id`, `suggestions` |

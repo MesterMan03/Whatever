@@ -132,6 +132,12 @@ pub enum EngineMessage {
         command_path: Vec<String>,
         args: Vec<serde_json::Value>,
     },
+    ArgSuggestRequest {
+        request_id: String,
+        command_path: Vec<String>,
+        arg_index: usize,
+        current: String,
+    },
 }
 
 /// One row returned by a `ComponentQuery` response.
@@ -202,6 +208,10 @@ pub enum ScriptMessage {
         output: Vec<String>,
         error: Option<String>,
     },
+    ArgSuggestResponse {
+        request_id: String,
+        suggestions: Vec<String>,
+    },
     EntityCreate {
         request_id: String,
     },
@@ -271,4 +281,6 @@ pub struct ArgSpecDto {
     pub required: bool,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub has_suggest: bool,
 }

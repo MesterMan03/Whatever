@@ -14,6 +14,8 @@ pub fn node() -> CommandNode {
                 arg_type: ArgType::String,
                 required: true,
                 description: "Entity ID in index:generation format".into(),
+                has_suggest: false,
+                suggest: None,
             }])
             .with_handler(Arc::new(run_inspect)),
     ])

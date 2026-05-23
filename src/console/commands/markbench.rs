@@ -20,12 +20,16 @@ pub fn node() -> CommandNode {
             arg_type: ArgType::Int,
             required: false,
             description: "number of threads (default: all available)".into(),
+            has_suggest: false,
+            suggest: None,
         },
         ArgSpec {
             name: "max_iter".into(),
             arg_type: ArgType::Int,
             required: false,
             description: format!("max iterations per pixel (default: {DEFAULT_MAX_ITER})"),
+            has_suggest: false,
+            suggest: None,
         },
     ])
     .with_handler(Arc::new(run))

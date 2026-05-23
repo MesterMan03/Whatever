@@ -1,4 +1,4 @@
-import { _send } from "../shared.ts";
+import {_send} from "../shared.ts";
 
 /** Public arg type for Console.register(). */
 export type ArgType = "string" | "int" | "float" | "bool";
@@ -9,6 +9,10 @@ export type ArgSpec = {
   type: ArgType;
   required?: boolean;
   description?: string;
+  /** Called to provide autocomplete suggestions for this argument.
+   *  Receives the current raw text the user has typed (empty string if nothing yet).
+   *  Return a list of candidate strings. */
+  suggest?: (current: string) => string[] | Promise<string[]>;
 };
 
 /** A command or subcommand specification. */
@@ -25,6 +29,7 @@ type _ArgSpec = {
   type: "string" | "int" | "float" | "bool";
   required: boolean;
   description: string;
+  has_suggest: boolean;
 };
 
 type _CommandNodeSpec = {
@@ -38,15 +43,23 @@ type _CommandNodeSpec = {
 // Command state — handlers keyed by dot-joined path (e.g. "mycmd" or "mycmd.sub").
 const _cmdHandlers = new Map<string, NonNullable<CommandSpec["handler"]>>();
 const _cmdArgSpecs = new Map<string, _ArgSpec[]>();
+// Suggesters keyed by "<dot.joined.path>:<arg_index>".
+const _argSuggesters = new Map<string, NonNullable<ArgSpec["suggest"]>>();
 
 function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpec {
   const path = pathPrefix ? `${pathPrefix}.${spec.name}` : spec.name;
-  const mappedArgs: _ArgSpec[] = (spec.args ?? []).map((a) => ({
-    name: a.name,
-    type: a.type,
-    required: a.required ?? false,
-    description: a.description ?? "",
-  }));
+  const mappedArgs: _ArgSpec[] = (spec.args ?? []).map((a, i) => {
+    if (a.suggest) {
+      _argSuggesters.set(`${path}:${i}`, a.suggest);
+    }
+    return {
+      name: a.name,
+      type: a.type,
+      required: a.required ?? false,
+      description: a.description ?? "",
+      has_suggest: !!a.suggest,
+    };
+  });
   if (spec.handler) {
     _cmdHandlers.set(path, spec.handler);
     _cmdArgSpecs.set(path, mappedArgs);
@@ -85,6 +98,28 @@ export async function _handleCommandInvoke(msg: { request_id: string; command_pa
     const message = error instanceof Error ? error.message + "\n" + error.stack : String(error);
     _send({ type: "CommandResponse", request_id: msg.request_id, output: [], error: message });
   }
+}
+
+/** Called by ipc.ts when an ArgSuggestRequest message arrives. */
+export async function _handleArgSuggestRequest(msg: {
+  request_id: string;
+  command_path: string[];
+  arg_index: number;
+  current: string;
+}): Promise<void> {
+  const key = `${msg.command_path.join(".")}:${msg.arg_index}`;
+  const suggester = _argSuggesters.get(key);
+
+  let suggestions: string[] = [];
+  if (suggester) {
+    try {
+      suggestions = await suggester(msg.current);
+    } catch {
+      suggestions = [];
+    }
+  }
+
+  _send({ type: "ArgSuggestResponse", request_id: msg.request_id, suggestions });
 }
 
 /** Register a command that users can invoke from the developer console. */

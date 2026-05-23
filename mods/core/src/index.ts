@@ -44,7 +44,10 @@ Console.register({
         name: "texture",
         description: "The texture of the sprite",
         required: true,
-        type: "string"
+        type: "string",
+        suggest: (_ => {
+            return ["asset_mod://humoros.png"];
+        })
     }],
     handler: async (args) => {
         const texture = args["texture"] as string;

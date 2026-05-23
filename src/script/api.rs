@@ -245,6 +245,12 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 "CommandResponse '{request_id}' reached dispatcher unexpectedly"
             );
         }
+        ScriptMessage::ArgSuggestResponse { request_id, .. } => {
+            tracing::warn!(
+                mod_id,
+                "ArgSuggestResponse '{request_id}' reached dispatcher unexpectedly"
+            );
+        }
 
         // --- Entity management -----------------------------------------------
         ScriptMessage::EntityCreate { request_id } => {
