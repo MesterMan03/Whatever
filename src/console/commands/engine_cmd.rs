@@ -74,7 +74,14 @@ fn run_fps_cap(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
 }
 
 fn suggest_fpscap(_current: &str) -> Vec<String> {
-    vec!["off".into(), "30".into(), "60".into(), "120".into(), "144".into(), "240".into()]
+    vec![
+        "off".into(),
+        "30".into(),
+        "60".into(),
+        "120".into(),
+        "144".into(),
+        "240".into(),
+    ]
 }
 
 fn suggest_vsync(_current: &str) -> Vec<String> {

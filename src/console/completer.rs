@@ -44,8 +44,10 @@ pub fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
         &tokens[..tokens.len() - 1]
     };
 
-    let prefix_already =
-        tokens[..tokens.len().saturating_sub(if trailing_space { 0 } else { 1 })].join(" ");
+    let prefix_already = tokens[..tokens
+        .len()
+        .saturating_sub(if trailing_space { 0 } else { 1 })]
+        .join(" ");
 
     let all_consumed = cmd_path_len == complete_tokens.len();
 
@@ -152,7 +154,10 @@ pub fn arg_suggest_context(input: &str, roots: &[CommandNode]) -> Option<Suggest
     let command_path = tokens[..cmd_path_len].to_vec();
 
     // Prefix = everything up to (but not including) the partial token being completed.
-    let prefix = tokens[..tokens.len().saturating_sub(if trailing_space { 0 } else { 1 })].join(" ");
+    let prefix = tokens[..tokens
+        .len()
+        .saturating_sub(if trailing_space { 0 } else { 1 })]
+        .join(" ");
 
     Some(SuggestContext {
         mod_id,
@@ -171,7 +176,7 @@ fn walk_tree<'a>(
     roots: &'a [CommandNode],
 ) -> (Option<&'a CommandNode>, usize) {
     let complete_tokens = if trailing_space {
-        &tokens[..]
+        tokens
     } else {
         &tokens[..tokens.len().saturating_sub(1)]
     };

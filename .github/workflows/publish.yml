@@ -4,6 +4,10 @@ on:
   release:
     types:
       - published
+  repository_dispatch:
+    types:
+      - publish-npm
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -12,23 +16,29 @@ jobs:
     environment: npm-publish
 
     permissions:
+      contents: write
+      issues: write
+      pull-requests: write
       id-token: write
-      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'  # this line is mandatory
+          fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          registry-url: "https://registry.npmjs.org"
+          token: "${{ github.server_url == 'https://github.com' && github.token || '' }}"
 
-      - name: Install dependencies
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies and build runtime
         run: bun install --cwd runtime
 
-      # Publish using OIDC (no tokens passed in env)
       - name: Publish to npm
-        run: cd runtime && npm publish --provenance --access public
+        run: cd runtime && npm publish --access public

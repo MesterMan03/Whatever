@@ -390,10 +390,9 @@ impl DevConsole {
                         self.completion_idx = 0;
                         self.history_pos = None;
                         self.pending_suggest_ipc = None;
-                        if let Some(ctx) = completer::arg_suggest_context(
-                            &self.input_buf,
-                            &self.registry.roots,
-                        ) {
+                        if let Some(ctx) =
+                            completer::arg_suggest_context(&self.input_buf, &self.registry.roots)
+                        {
                             let id = SUGGEST_COUNTER.fetch_add(1, Ordering::Relaxed);
                             let request_id = format!("suggest_{id}");
                             self.pending_suggest_id = Some(request_id.clone());
@@ -426,8 +425,7 @@ impl DevConsole {
             self.completions = completer::complete(&self.input_buf, &self.registry.roots);
             self.completion_idx = 0;
             self.pending_suggest_ipc = None;
-            if let Some(ctx) =
-                completer::arg_suggest_context(&self.input_buf, &self.registry.roots)
+            if let Some(ctx) = completer::arg_suggest_context(&self.input_buf, &self.registry.roots)
             {
                 let id = SUGGEST_COUNTER.fetch_add(1, Ordering::Relaxed);
                 let request_id = format!("suggest_{id}");
@@ -464,10 +462,10 @@ impl DevConsole {
             action = self.execute(&input, mod_registry, vfs, debug, world);
         }
 
-        if matches!(action, ConsoleAction::None) {
-            if let Some((mod_id, message)) = self.pending_suggest_ipc.take() {
-                return ConsoleAction::SendIpc { mod_id, message };
-            }
+        if matches!(action, ConsoleAction::None)
+            && let Some((mod_id, message)) = self.pending_suggest_ipc.take()
+        {
+            return ConsoleAction::SendIpc { mod_id, message };
         }
 
         action
