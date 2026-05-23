@@ -67,7 +67,7 @@ jobs:
           Copy-Item package.json stage\Whatever-windows-x86_64\
           Copy-Item -Recurse mods stage\Whatever-windows-x86_64\
           Copy-Item -Recurse runtime stage\Whatever-windows-x86_64\
-          Remove-Item -Recurse -Force stage\Whatever-windows-x86_64\runtime\node_modules
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue stage\Whatever-windows-x86_64\runtime\node_modules
           Compress-Archive -Path stage\Whatever-windows-x86_64 -DestinationPath Whatever-windows-x86_64.zip
 
       - uses: actions/upload-artifact@v4
