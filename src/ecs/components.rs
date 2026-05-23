@@ -25,7 +25,7 @@ impl Default for Transform {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpriteRenderer {
     /// VFS path to the texture, e.g. `"my_mod://textures/player.png"`.
-    pub texture: String
+    pub texture: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +38,7 @@ pub struct TextRenderer {
     pub font_size: f32,
     /// RGBA colour, each channel in `[0.0, 1.0]`. Defaults to opaque white.
     #[serde(default = "default_color")]
-    pub color: [f32; 4]
+    pub color: [f32; 4],
 }
 
 fn default_font_path() -> String {

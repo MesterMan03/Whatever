@@ -54,10 +54,7 @@ fn run_inspect(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         ));
     }
     if let Some(s) = ctx.world.sprite_renderers.get(&id.index) {
-        lines.push(format!(
-            "  core:sprite_renderer  texture={}",
-            s.texture
-        ));
+        lines.push(format!("  core:sprite_renderer  texture={}", s.texture));
     }
     if let Some(t) = ctx.world.text_renderers.get(&id.index) {
         lines.push(format!(
