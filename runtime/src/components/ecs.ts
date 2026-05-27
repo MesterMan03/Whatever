@@ -3,6 +3,7 @@ import {
   _send, nextReqId,
   _entityCallbacks, _entityListCallbacks,
   _componentGetCallbacks, _componentQueryCallbacks,
+  _entityParentCallbacks, _entityChildrenCallbacks,
 } from "../shared.ts";
 
 export namespace BuiltInComponents {
@@ -309,6 +310,43 @@ export class Entity {
       scale: existing?.scale ?? [1, 1, 1],
     });
   }
+
+  /**
+   * Attach this entity to a parent. Pass `null` to detach from the current
+   * parent. Fire-and-forget.
+   *
+   * Transform components are interpreted as *local* — i.e. relative to the
+   * parent's world-space transform. If the entity has no parent its local
+   * transform equals its world-space transform.
+   */
+  setParent(parent: Entity | string | null): void {
+    const parent_id = parent === null ? null : (typeof parent === "string" ? parent : parent.id);
+    _send({ type: "EntitySetParent", entity_id: this.id, parent_id });
+  }
+
+  /** Return the parent `Entity`, or `null` if this entity has no parent. */
+  getParent(): Promise<Entity | null> {
+    return new Promise((resolve, reject) => {
+      const request_id = nextReqId();
+      _entityParentCallbacks.set(request_id, {
+        resolve: (id) => resolve(id !== null ? new Entity(id) : null),
+        reject,
+      });
+      _send({ type: "EntityGetParent", request_id, entity_id: this.id });
+    });
+  }
+
+  /** Return all direct children of this entity. */
+  getChildren(): Promise<Entity[]> {
+    return new Promise((resolve, reject) => {
+      const request_id = nextReqId();
+      _entityChildrenCallbacks.set(request_id, {
+        resolve: (ids) => resolve(ids.map((id) => new Entity(id))),
+        reject,
+      });
+      _send({ type: "EntityGetChildren", request_id, entity_id: this.id });
+    });
+  }
 }
 
 /** Entity and component management. */
@@ -412,6 +450,32 @@ export const Scene = {
       position,
       rotation: existing?.rotation ?? [0, 0, 0, 1],
       scale: existing?.scale ?? [1, 1, 1],
+    });
+  },
+
+  /**
+   * Attach `entity_id` to `parent_id`. Pass `null` as `parent_id` to detach.
+   * Fire-and-forget.
+   */
+  setParent(entity_id: string, parent_id: string | null): void {
+    _send({ type: "EntitySetParent", entity_id, parent_id });
+  },
+
+  /** Return the parent entity ID, or `null` if the entity has no parent. */
+  getParent(entity_id: string): Promise<string | null> {
+    return new Promise((resolve, reject) => {
+      const request_id = nextReqId();
+      _entityParentCallbacks.set(request_id, { resolve, reject });
+      _send({ type: "EntityGetParent", request_id, entity_id });
+    });
+  },
+
+  /** Return the IDs of all direct children of the given entity. */
+  getChildren(entity_id: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const request_id = nextReqId();
+      _entityChildrenCallbacks.set(request_id, { resolve, reject });
+      _send({ type: "EntityGetChildren", request_id, entity_id });
     });
   },
 };

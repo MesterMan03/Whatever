@@ -11,6 +11,8 @@ export const _entityCallbacks = new Map<string, { resolve: (v: string) => void; 
 export const _entityListCallbacks = new Map<string, { resolve: (v: string[]) => void; reject: (e: Error) => void }>();
 export const _componentGetCallbacks = new Map<string, { resolve: (v: JsonValue | null) => void; reject: (e: Error) => void }>();
 export const _componentQueryCallbacks = new Map<string, { resolve: (v: Array<{ entity_id: string; components: Record<string, JsonValue> }>) => void; reject: (e: Error) => void }>();
+export const _entityParentCallbacks = new Map<string, { resolve: (v: string | null) => void; reject: (e: Error) => void }>();
+export const _entityChildrenCallbacks = new Map<string, { resolve: (v: string[]) => void; reject: (e: Error) => void }>();
 
 const _counter = { n: 0 };
 /** Returns the next unique request ID string. */

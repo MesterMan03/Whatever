@@ -113,6 +113,17 @@ pub enum EngineMessage {
         request_id: String,
         entity_ids: Vec<String>,
     },
+    EntityParentResponse {
+        request_id: String,
+        entity_id: String,
+        /// `None` means the entity has no parent.
+        parent_id: Option<String>,
+    },
+    EntityChildrenResponse {
+        request_id: String,
+        entity_id: String,
+        child_ids: Vec<String>,
+    },
     ComponentGetResponse {
         request_id: String,
         entity_id: String,
@@ -220,6 +231,19 @@ pub enum ScriptMessage {
     },
     EntityListRequest {
         request_id: String,
+    },
+    /// Attach or detach a parent. `parent_id = None` detaches the entity from its current parent.
+    EntitySetParent {
+        entity_id: String,
+        parent_id: Option<String>,
+    },
+    EntityGetParent {
+        request_id: String,
+        entity_id: String,
+    },
+    EntityGetChildren {
+        request_id: String,
+        entity_id: String,
     },
     /// Fire-and-forget: sets a component on an entity.
     ComponentSet {

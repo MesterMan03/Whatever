@@ -82,6 +82,11 @@ impl EntityAllocator {
             .unwrap_or(false)
     }
 
+    /// Total number of slots (alive + dead) — used as a safe iteration bound.
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
     pub fn alive_entity_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.slots
             .iter()

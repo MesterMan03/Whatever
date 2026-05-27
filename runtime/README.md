@@ -52,6 +52,9 @@ A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntitie
 - `entity.removeComponent(component_type)` — fire-and-forget
 - `entity.getComponent(component_type)` → `Promise<T | null>` — typed for built-in components
 - `entity.move(position)` → `Promise<void>` — update `core:transform` position, preserve rotation/scale
+- `entity.setParent(parent | null)` — attach to a parent entity or detach; fire-and-forget; transform becomes local-space relative to parent
+- `entity.getParent()` → `Promise<Entity | null>` — return the parent entity
+- `entity.getChildren()` → `Promise<Entity[]>` — return all direct children
 
 ### `Scene`
 
@@ -67,6 +70,9 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>` — convenience
 - `Scene.spawnText(text, position, options?)` → `Promise<Entity>` — convenience
 - `Scene.moveEntity(entity_id, position)` → `Promise<void>` — convenience
+- `Scene.setParent(entity_id, parent_id | null)` — fire-and-forget
+- `Scene.getParent(entity_id)` → `Promise<string | null>`
+- `Scene.getChildren(entity_id)` → `Promise<string[]>`
 
 Built-in component types: `core:transform`, `core:sprite_renderer`, `core:text_renderer`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
 

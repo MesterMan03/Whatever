@@ -529,7 +529,9 @@ fn apply_render_command(
 ) {
     match cmd {
         RenderCommand::UpsertSprite { entity_idx } => {
-            let Some(transform) = world.transforms.get(entity_idx) else {
+            let entity_id = world.allocator.alive_entity_ids().find(|e| e.index == *entity_idx);
+            let Some(entity_id) = entity_id else { return };
+            let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
             };
             let Some(sprite) = world.sprite_renderers.get(entity_idx) else {
@@ -537,7 +539,7 @@ fn apply_render_command(
             };
             let target = SpriteUpdateTarget {
                 entity_idx: *entity_idx,
-                transform,
+                transform: &world_transform,
                 sprite,
             };
             let ctx = RenderContext {
@@ -553,7 +555,9 @@ fn apply_render_command(
             renderer.scene.remove_sprite(*entity_idx);
         }
         RenderCommand::UpsertText { entity_idx } => {
-            let Some(transform) = world.transforms.get(entity_idx) else {
+            let entity_id = world.allocator.alive_entity_ids().find(|e| e.index == *entity_idx);
+            let Some(entity_id) = entity_id else { return };
+            let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
             };
             let Some(text_comp) = world.text_renderers.get(entity_idx) else {
@@ -566,7 +570,7 @@ fn apply_render_command(
             };
             if let Err(e) = renderer
                 .text
-                .upsert_text(ctx, vfs, *entity_idx, transform, text_comp)
+                .upsert_text(ctx, vfs, *entity_idx, &world_transform, text_comp)
             {
                 tracing::warn!("upsert_text error (entity {}): {e}", entity_idx);
             }

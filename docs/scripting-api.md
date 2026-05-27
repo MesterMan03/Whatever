@@ -249,6 +249,37 @@ if the component is not yet set.
 await entity.move([x, y, z]);
 ```
 
+### `entity.setParent(parent)`
+
+Attach this entity to a parent. `parent` can be an `Entity`, a raw entity ID
+string, or `null` to detach. Fire-and-forget.
+
+Once parented, `core:transform` values are **local** — relative to the parent's
+world-space transform. Without a parent the local transform equals the world
+transform.
+
+```ts
+entity.setParent(parentEntity);    // attach
+entity.setParent("5:0");           // attach by raw ID
+entity.setParent(null);            // detach
+```
+### `entity.getParent()` → `Promise<Entity | null>`
+
+Return the parent `Entity`, or `null` if this entity has no parent.
+
+```ts
+const parent = await entity.getParent();
+if (parent) Engine.log("info", `parent: ${parent.id}`);
+```
+
+### `entity.getChildren()` → `Promise<Entity[]>`
+
+Return all direct children of this entity.
+
+```ts
+const kids = await entity.getChildren();
+```
+
 ---
 
 ## `Scene`
@@ -357,6 +388,24 @@ preserving its rotation and scale.
 await Scene.moveEntity(id, [x, y, z]);
 ```
 
+### `Scene.setParent(entity_id, parent_id)`
+
+Attach an entity to a parent by raw IDs. Pass `null` as `parent_id` to detach.
+Fire-and-forget. Prefer `entity.setParent()` when you have an `Entity` object.
+
+```ts
+Scene.setParent(childId, parentId);
+Scene.setParent(childId, null); // detach
+```
+
+### `Scene.getParent(entity_id)` → `Promise<string | null>`
+
+Return the parent entity ID as a string, or `null` if the entity has no parent.
+
+### `Scene.getChildren(entity_id)` → `Promise<string[]>`
+
+Return the IDs of all direct children of the given entity.
+
 ### Built-in component shapes and classes
 
 `getComponent` for built-in component types returns a live **class instance** (not a plain object), so methods are available immediately.
@@ -367,9 +416,9 @@ Returned by `getComponent("core:transform")`. Raw fields are still present for b
 
 | Field | Type | Description |
 |---|---|---|
-| `position` | `[x, y, z]` | World-space position |
-| `rotation` | `[x, y, z, w]` | Unit quaternion (xyzw), identity = `[0, 0, 0, 1]` |
-| `scale` | `[x, y, z]` | Per-axis scale, uniform = `[1, 1, 1]` |
+| `position` | `[x, y, z]` | Local-space position (world-space when the entity has no parent) |
+| `rotation` | `[x, y, z, w]` | Local-space unit quaternion (xyzw), identity = `[0, 0, 0, 1]` |
+| `scale` | `[x, y, z]` | Local-space per-axis scale, uniform = `[1, 1, 1]` |
 
 **Position helpers**
 
@@ -653,6 +702,8 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `ModMessageReplyDelivered` | `request_id`, `payload` |
 | `EntityCreated` | `request_id`, `entity_id` |
 | `EntityListResponse` | `request_id`, `entity_ids` |
+| `EntityParentResponse` | `request_id`, `entity_id`, `parent_id` (string or null) |
+| `EntityChildrenResponse` | `request_id`, `entity_id`, `child_ids` |
 | `ComponentGetResponse` | `request_id`, `entity_id`, `component_type`, `data`, `error` |
 | `ComponentQueryResponse` | `request_id`, `results` |
 | `CommandInvoke` | `request_id`, `command_path`, `args` |
@@ -682,6 +733,9 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `EntityCreate` | `request_id` |
 | `EntityDestroy` | `entity_id` |
 | `EntityListRequest` | `request_id` |
+| `EntitySetParent` | `entity_id`, `parent_id` (string or null) |
+| `EntityGetParent` | `request_id`, `entity_id` |
+| `EntityGetChildren` | `request_id`, `entity_id` |
 | `ComponentSet` | `entity_id`, `component_type`, `data` |
 | `ComponentRemove` | `entity_id`, `component_type` |
 | `ComponentGet` | `request_id`, `entity_id`, `component_type` |

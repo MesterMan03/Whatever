@@ -306,6 +306,91 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 debug,
             );
         }
+        ScriptMessage::EntitySetParent {
+            entity_id,
+            parent_id,
+        } => {
+            let Some(child) = EntityId::parse(&entity_id) else {
+                tracing::warn!(mod_id, "EntitySetParent: invalid entity_id '{entity_id}'");
+                return DispatchResult::default();
+            };
+            let parent = match &parent_id {
+                None => None,
+                Some(pid) => match EntityId::parse(pid) {
+                    Some(p) => Some(p),
+                    None => {
+                        tracing::warn!(mod_id, "EntitySetParent: invalid parent_id '{pid}'");
+                        return DispatchResult::default();
+                    }
+                },
+            };
+            world.set_parent(child, parent);
+            // Re-render affected entities if they have renderable components.
+            let mut render_cmds = Vec::new();
+            let affected = std::iter::once(child.index).chain(
+                world
+                    .get_children(&child)
+                    .iter()
+                    .map(|e| e.index)
+                    .collect::<Vec<_>>(),
+            );
+            for idx in affected {
+                if world.transforms.contains_key(&idx) {
+                    if world.sprite_renderers.contains_key(&idx) {
+                        render_cmds.push(RenderCommand::UpsertSprite { entity_idx: idx });
+                    }
+                    if world.text_renderers.contains_key(&idx) {
+                        render_cmds.push(RenderCommand::UpsertText { entity_idx: idx });
+                    }
+                }
+            }
+            if !render_cmds.is_empty() {
+                return DispatchResult {
+                    render_cmds,
+                    ..Default::default()
+                };
+            }
+        }
+        ScriptMessage::EntityGetParent {
+            request_id,
+            entity_id,
+        } => {
+            let parent_id = EntityId::parse(&entity_id)
+                .and_then(|id| world.get_parent(&id))
+                .map(|p| p.to_string());
+            script_host.send(
+                mod_id,
+                &EngineMessage::EntityParentResponse {
+                    request_id,
+                    entity_id,
+                    parent_id,
+                },
+                debug,
+            );
+        }
+        ScriptMessage::EntityGetChildren {
+            request_id,
+            entity_id,
+        } => {
+            let child_ids = EntityId::parse(&entity_id)
+                .map(|id| {
+                    world
+                        .get_children(&id)
+                        .into_iter()
+                        .map(|c| c.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            script_host.send(
+                mod_id,
+                &EngineMessage::EntityChildrenResponse {
+                    request_id,
+                    entity_id,
+                    child_ids,
+                },
+                debug,
+            );
+        }
 
         // --- Component management --------------------------------------------
         ScriptMessage::ComponentSet {

@@ -3,6 +3,7 @@ import type { JsonValue, ModManifest, EventName, EventPayloads } from "./types.t
 import {
   _handlers, _fileCallbacks, _modListCallbacks, _modGetCallbacks, _msgCallbacks,
   _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
+  _entityParentCallbacks, _entityChildrenCallbacks,
   _EVENT_SUBSCRIBE,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
@@ -25,6 +26,8 @@ type _EngineMsg =
   | { type: "EntityListResponse"; request_id: string; entity_ids: string[] }
   | { type: "ComponentGetResponse"; request_id: string; entity_id: string; component_type: string; data: JsonValue | null; error: string | null }
   | { type: "ComponentQueryResponse"; request_id: string; results: Array<{ entity_id: string; components: Record<string, JsonValue> }> }
+  | { type: "EntityParentResponse"; request_id: string; entity_id: string; parent_id: string | null }
+  | { type: "EntityChildrenResponse"; request_id: string; entity_id: string; child_ids: string[] }
   | { type: "Shutdown"; exit_code: number };
 
 function _dispatch(msg: _EngineMsg): void {
@@ -134,6 +137,24 @@ function _dispatch(msg: _EngineMsg): void {
     if (cb) {
       _componentQueryCallbacks.delete(msg.request_id);
       cb.resolve(msg.results);
+    }
+    return;
+  }
+
+  if (msg.type === "EntityParentResponse") {
+    const cb = _entityParentCallbacks.get(msg.request_id);
+    if (cb) {
+      _entityParentCallbacks.delete(msg.request_id);
+      cb.resolve(msg.parent_id);
+    }
+    return;
+  }
+
+  if (msg.type === "EntityChildrenResponse") {
+    const cb = _entityChildrenCallbacks.get(msg.request_id);
+    if (cb) {
+      _entityChildrenCallbacks.delete(msg.request_id);
+      cb.resolve(msg.child_ids);
     }
     return;
   }
