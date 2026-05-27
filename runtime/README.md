@@ -87,7 +87,6 @@ Methods (all setters chainable, return `this`):
 ### `BuiltInComponents.SpriteRenderer`
 
 - `getTexture()`, `setTexture(path)` — VFS texture path
-- `getZIndex()`, `setZIndex(z)` — draw order
 
 ### `BuiltInComponents.TextRenderer`
 
@@ -95,7 +94,6 @@ Methods (all setters chainable, return `this`):
 - `getFont()`, `setFont(path)` — VFS path to TTF/OTF font (default: `"core://fonts/default.ttf"`)
 - `getFontSize()`, `setFontSize(size)` — font size in logical pixels (default: `24`)
 - `getColor()`, `setColor(r, g, b, a)` — RGBA colour, each channel `[0.0, 1.0]` (default: white)
-- `getZIndex()`, `setZIndex(z)` — draw order
 
 ### `Mods`
 
