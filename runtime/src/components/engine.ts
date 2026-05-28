@@ -35,4 +35,27 @@ export const Engine = {
   setVsync(enabled: boolean): void {
     _send({ type: "SetVsync", enabled });
   },
+
+  /**
+   * Set the main camera entity.  The entity must have both `core:camera` and
+   * `core:transform` components attached; the engine reads them each frame to
+   * compute the view-projection matrix.
+   *
+   * Pass an empty string (`""`) or call `Engine.clearCamera()` to remove the
+   * active camera — the renderer will clear to black and display a warning.
+   *
+   * Multiple cameras can exist in the scene; only the one designated here is
+   * used for rendering.
+   */
+  setMainCamera(entity_id: string): void {
+    _send({ type: "SetMainCamera", entity_id });
+  },
+
+  /**
+   * Remove the active camera.  The screen clears to black and shows a "no
+   * active camera" warning until `Engine.setMainCamera` is called again.
+   */
+  clearCamera(): void {
+    _send({ type: "SetMainCamera", entity_id: "" });
+  },
 };

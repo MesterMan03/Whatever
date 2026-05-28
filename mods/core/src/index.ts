@@ -1,4 +1,5 @@
-import {Console, Engine, Entity, Message, Scene} from "@whatever-engine/api";
+import { Console, Engine, Entity, Message, Scene } from "@whatever-engine/api";
+import "./camera.ts";
 
 Message.registerMessageHandler((_) => {
     return "Hi there! :D";
@@ -55,7 +56,7 @@ Console.register({
         for (const sprite of previousSprites) {
             const transform = await sprite.getComponent("core:transform");
             if (transform != null) {
-                transform.addX(1.5).rotateY(15);
+                transform.addX(1.5).rotateY(15).rotateZ(2);
                 sprite.setComponent("core:transform", transform);
             }
         }

@@ -97,6 +97,32 @@ Engine.setVsync(true);  // on (default)
 Engine.setVsync(false); // off
 ```
 
+### `Engine.setMainCamera(entity_id)`
+
+Designate an entity as the scene's active camera.  The entity must have both
+`core:camera` and `core:transform` components attached; the engine reads them
+every frame to produce the view-projection matrix.
+
+```ts
+const cam = await Scene.createEntity();
+cam.setComponent(new BuiltInComponents.Transform({ position: [0, 5, 10] }));
+cam.setComponent(new BuiltInComponents.Camera({ fovy_degrees: 60 }));
+Engine.setMainCamera(cam.id);
+```
+
+Multiple camera entities can coexist in the scene; only the designated one is
+rendered.  If no camera is set, or if the entity dies, the screen clears to
+black and a warning overlay is displayed.
+
+### `Engine.clearCamera()`
+
+Remove the active camera.  The screen clears to black and shows a "no active
+camera" warning until `Engine.setMainCamera` is called again.
+
+```ts
+Engine.clearCamera();
+```
+
 ---
 
 ## `Window`
@@ -538,6 +564,48 @@ Engine.on("tick", async ({ tick_number }) => {
 });
 ```
 
+#### `BuiltInComponents.Camera`
+
+Returned by `getComponent("core:camera")`.  Makes the entity usable as a scene
+camera.  Combine with `core:transform` to control position and orientation, then
+activate the camera with `Engine.setMainCamera(entity.id)`.
+
+The camera looks in the **−Z** direction of its local frame.  Rotating the
+entity via `core:transform` orbits/tilts the camera accordingly.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `fovy_degrees` | `number` | `45` | Vertical field-of-view in degrees |
+| `znear` | `number` | `0.1` | Near clip plane distance |
+| `zfar` | `number` | `1000` | Far clip plane distance |
+
+| Method | Returns | Description |
+|---|---|---|
+| `getFov()` | `number` | Current vertical FOV in degrees |
+| `setFov(degrees)` | `this` | Change the vertical FOV |
+| `getZNear()` | `number` | Current near clip distance |
+| `setZNear(v)` | `this` | Change the near clip distance |
+| `getZFar()` | `number` | Current far clip distance |
+| `setZFar(v)` | `this` | Change the far clip distance |
+
+```ts
+// Minimal camera setup
+Engine.on("init", async () => {
+  const cam = await Scene.createEntity();
+  cam.setComponent(new BuiltInComponents.Transform({ position: [0, 5, 10] }));
+  cam.setComponent(new BuiltInComponents.Camera({ fovy_degrees: 60 }));
+  Engine.setMainCamera(cam.id);
+});
+
+// Move camera each tick
+Engine.on("tick", async ({ delta_seconds }) => {
+  const t = await cam.getComponent("core:transform");
+  if (!t) return;
+  t.addZ(-5 * delta_seconds); // fly forward along -Z
+  cam.setComponent(t);
+});
+```
+
 ---
 
 ## `Mods`
@@ -723,6 +791,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `SetTickRate` | `ticks_per_second` |
 | `SetFpsCap` | `fps` (`number \| null`) |
 | `SetVsync` | `enabled` |
+| `SetMainCamera` | `entity_id` (empty string = clear) |
 | `FileWrite` | `request_id`, `path`, `data_base64` |
 | `FileRead` | `request_id`, `path` |
 | `FileDelete` | `request_id`, `path` |

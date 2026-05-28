@@ -18,6 +18,8 @@ pub struct DispatchResult {
     /// `Some(Some(fps))` = set cap; `Some(None)` = remove cap.
     pub new_fps_cap: Option<Option<f64>>,
     pub new_vsync: Option<bool>,
+    /// `Some(Some(id))` = set main camera; `Some(None)` = clear (no camera).
+    pub set_main_camera: Option<Option<EntityId>>,
 }
 
 pub enum RenderCommand {
@@ -515,6 +517,25 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         ScriptMessage::SetVsync { enabled } => {
             return DispatchResult {
                 new_vsync: Some(enabled),
+                ..Default::default()
+            };
+        }
+
+        // --- Camera ----------------------------------------------------------
+        ScriptMessage::SetMainCamera { entity_id } => {
+            let camera_entity = if entity_id.is_empty() {
+                None
+            } else {
+                match EntityId::parse(&entity_id) {
+                    Some(id) => Some(id),
+                    None => {
+                        tracing::warn!(mod_id, "SetMainCamera: invalid entity_id '{entity_id}'");
+                        return DispatchResult::default();
+                    }
+                }
+            };
+            return DispatchResult {
+                set_main_camera: Some(camera_entity),
                 ..Default::default()
             };
         }

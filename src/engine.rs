@@ -1,15 +1,17 @@
 use crate::console::command_node_from_spec;
 use crate::console::{ConsoleAction, DevConsole, EngineSettingAction};
 use crate::debug::{DebugConfig, DebugLogger};
-use crate::ecs::World;
+use crate::ecs::{EntityId, World};
 use crate::input::InputState;
 use crate::logging::{LogMirror, SharedLogWriter};
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
-use crate::renderer::{EguiOutput, RenderContext, Renderer, SpriteUpdateTarget, WgpuContext};
+use crate::renderer::{
+    EguiOutput, RenderContext, Renderer, SpriteUpdateTarget, WgpuContext, view_proj_from_entity,
+};
 use crate::sandbox::SandboxConfig;
 use crate::script::ipc::{EngineMessage, ScriptMessage};
 use crate::script::{
-    DispatchResult, EngineContext, RenderCommand, ScriptHost, dispatch, mod_data_root,
+    DispatchResult, EngineContext, RecvOutcome, RenderCommand, ScriptHost, dispatch, mod_data_root,
 };
 use crate::vfs::{LayeredVfs, Vfs, VfsHandle};
 use crate::watchdog::Watchdog;
@@ -42,6 +44,9 @@ pub struct Engine {
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     world: World,
+    /// The entity whose `core:camera` + `core:transform` is used as the active
+    /// camera.  `None` means no camera is set; the renderer clears to black.
+    main_camera: Option<EntityId>,
     tick_number: u64,
     last_tick: Instant,
     tick_interval: Duration,
@@ -136,6 +141,7 @@ impl Engine {
             registry,
             script_host,
             world: World::new(),
+            main_camera: None,
             tick_number: 0,
             last_tick: Instant::now(),
             tick_interval,
@@ -186,15 +192,6 @@ impl Engine {
 
         let (dx, dy) = self.input.flush_mouse();
 
-        if let Some(renderer) = self.renderer.as_mut() {
-            if self.input.mouse_captured {
-                renderer
-                    .camera_controller
-                    .process_mouse(&mut renderer.camera, dx, dy);
-            }
-            renderer.camera_controller.update(&mut renderer.camera, dt);
-        }
-
         let messages = self.script_host.drain_messages(&mut self.debug);
         self.dispatch_messages(messages);
 
@@ -205,6 +202,10 @@ impl Engine {
         }
 
         self.frame_number += 1;
+
+        // Compute camera view-projection for this frame.
+        let camera_vp = self.compute_camera_vp();
+        let no_camera = camera_vp.is_none();
 
         // Run egui for this frame
         let egui_raw_input =
@@ -244,6 +245,9 @@ impl Engine {
                         overlay_vsync,
                     );
                 }
+                if no_camera {
+                    render_no_camera_warning(ctx);
+                }
             });
 
             match console_action {
@@ -263,6 +267,12 @@ impl Engine {
 
             if let (Some(state), Some(window)) = (self.egui_state.as_mut(), self.window.as_ref()) {
                 state.handle_platform_output(window, full_output.platform_output);
+                // egui-winit calls set_cursor_visible(true) whenever egui
+                // outputs a non-None cursor icon, which it does every frame.
+                // Re-hide the cursor if we still own it.
+                if self.input.mouse_captured {
+                    window.set_cursor_visible(false);
+                }
             }
 
             let paint_jobs = egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
@@ -293,19 +303,37 @@ impl Engine {
         };
 
         if let Some(renderer) = self.renderer.as_mut()
-            && let Err(e) = renderer.render(egui_out.as_ref())
+            && let Err(e) = renderer.render(camera_vp, egui_out.as_ref())
         {
             tracing::error!("render error: {e}");
         }
+    }
+
+    /// Derive a view-projection matrix from the current main camera entity.
+    /// Returns `None` if no camera is set, the entity is no longer alive, or it
+    /// is missing either `core:transform` or `core:camera`.
+    fn compute_camera_vp(&self) -> Option<glam::Mat4> {
+        let camera_id = self.main_camera.as_ref()?;
+        if !self.world.is_alive(camera_id) {
+            return None;
+        }
+        let idx = camera_id.index;
+        let transform = self.world.world_transform(camera_id)?;
+        let cam = self.world.camera_components.get(&idx)?;
+        let aspect = self.renderer.as_ref()?.aspect;
+        Some(view_proj_from_entity(&transform, cam, aspect))
     }
 
     fn set_cursor_captured(&mut self, captured: bool) {
         self.input.mouse_captured = captured;
         if let Some(window) = self.window.as_ref() {
             if captured {
+                // Prefer Locked (cursor position frozen, ideal for camera look).
+                // Fall back to Confined (cursor stays inside the window) on
+                // platforms that don't support Locked.
                 let _ = window
-                    .set_cursor_grab(CursorGrabMode::Confined)
-                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
+                    .set_cursor_grab(CursorGrabMode::Locked)
+                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
                 window.set_cursor_visible(false);
             } else {
                 let _ = window.set_cursor_grab(CursorGrabMode::None);
@@ -407,6 +435,9 @@ impl Engine {
             self.vsync = enabled;
             self.apply_vsync();
         }
+        if let Some(cam) = result.set_main_camera {
+            self.main_camera = cam;
+        }
         if let Some(renderer) = self.renderer.as_mut() {
             for cmd in &result.render_cmds {
                 apply_render_command(cmd, renderer, &self.world, self.vfs.as_ref());
@@ -427,12 +458,21 @@ impl Engine {
 
     fn run_tick(&mut self, mouse_dx: f32, mouse_dy: f32) {
         self.tick_number += 1;
-        let keys_pressed: Vec<String> = self
-            .input
-            .keys_pressed
-            .iter()
-            .map(|k| format!("{k:?}"))
-            .collect();
+
+        // When the dev console is open, suppress raw input so typing in the
+        // console doesn't also trigger in-game actions.
+        let (eff_dx, eff_dy, keys_pressed) = if self.console.is_open {
+            (0.0_f32, 0.0_f32, Vec::new())
+        } else {
+            let keys = self
+                .input
+                .keys_pressed
+                .iter()
+                .map(|k| format!("{k:?}"))
+                .collect();
+            (mouse_dx, mouse_dy, keys)
+        };
+
         let subscribers: Vec<String> = self.tick_subscribers.iter().cloned().collect();
         if subscribers.is_empty() {
             return;
@@ -442,25 +482,98 @@ impl Engine {
             tick_number: self.tick_number,
             delta_seconds: self.tick_interval.as_secs_f64(),
             keys_pressed,
-            mouse_delta: [mouse_dx, mouse_dy],
+            mouse_delta: [eff_dx, eff_dy],
         };
+
+        // Send tick to each subscriber.  If the send fails (broken pipe /
+        // dead process) count that subscriber as immediately done so the wait
+        // loop below doesn't block forever.
+        let mut done: HashSet<String> = HashSet::new();
         for id in &subscribers {
-            self.script_host.send(id, &tick_msg, &mut self.debug);
+            if !self.script_host.send(id, &tick_msg, &mut self.debug) {
+                done.insert(id.clone());
+            }
         }
 
         self.watchdog.start_tick();
-        let mut done: HashSet<String> = HashSet::new();
         while done.len() < subscribers.len() {
             match self
                 .script_host
                 .recv_blocking(Duration::from_millis(100), &mut self.debug)
             {
-                Some((mod_id, ScriptMessage::TickDone { tick_number: n }))
+                RecvOutcome::Message(mod_id, ScriptMessage::TickDone { tick_number: n })
                     if n == self.tick_number =>
                 {
                     done.insert(mod_id);
                 }
-                Some((mod_id, msg)) => {
+                RecvOutcome::Message(mod_id, msg) => {
+                    // Mirror the same early-interception logic used in
+                    // dispatch_messages().  Async command handlers (and other
+                    // console messages) can resolve while the engine is
+                    // blocked waiting for TickDone; without these guards they
+                    // would fall through to dispatch() and trigger spurious
+                    // "reached dispatcher unexpectedly" warnings.
+
+                    if let ScriptMessage::Subscribe { ref events } = msg {
+                        if events.iter().any(|e| e == "Tick") {
+                            self.tick_subscribers.insert(mod_id.clone());
+                            tracing::debug!(mod_id, "subscribed to tick (mid-tick)");
+                        }
+                        continue;
+                    }
+
+                    if let ScriptMessage::RegisterCommand {
+                        ref name,
+                        ref description,
+                        ref subcommands,
+                        ref args,
+                        has_handler,
+                    } = msg
+                    {
+                        let mut node = command_node_from_spec(
+                            &crate::script::ipc::CommandNodeSpec {
+                                name: name.clone(),
+                                description: description.clone(),
+                                subcommands: subcommands.clone(),
+                                args: args.clone(),
+                                has_handler,
+                            },
+                            &mod_id,
+                        );
+                        node.source = crate::console::CommandSource::Mod(mod_id.clone());
+                        self.console.registry.register_mod(&mod_id, node);
+                        continue;
+                    }
+
+                    if let ScriptMessage::CommandResponse {
+                        ref request_id,
+                        ref output,
+                        ref error,
+                    } = msg
+                    {
+                        let matches = self
+                            .console
+                            .pending_invoke
+                            .as_ref()
+                            .map(|p| &p.request_id == request_id)
+                            .unwrap_or(false);
+                        if matches {
+                            self.console
+                                .handle_command_response(output.clone(), error.clone());
+                        }
+                        continue;
+                    }
+
+                    if let ScriptMessage::ArgSuggestResponse {
+                        ref request_id,
+                        ref suggestions,
+                    } = msg
+                    {
+                        self.console
+                            .handle_arg_suggest_response(request_id, suggestions.clone());
+                        continue;
+                    }
+
                     let Some(window) = self.window.as_ref() else {
                         break;
                     };
@@ -476,11 +589,44 @@ impl Engine {
                     let result = dispatch(&mod_id, msg, ctx);
                     self.apply_dispatch_result(result);
                 }
-                None => {}
+                // All stdout reader threads have exited — every process is
+                // dead.  No TickDone will ever arrive; bail out.
+                RecvOutcome::Disconnected => break,
+                RecvOutcome::Timeout => {}
             }
         }
         self.watchdog.end_tick();
     }
+}
+
+fn render_no_camera_warning(ctx: &egui::Context) {
+    egui::Area::new(egui::Id::new("no_camera_warning"))
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            egui::Frame {
+                fill: egui::Color32::from_rgba_premultiplied(20, 20, 20, 220),
+                inner_margin: egui::Margin::same(20.0),
+                rounding: egui::Rounding::same(8.0),
+                ..Default::default()
+            }
+            .show(ui, |ui| {
+                ui.visuals_mut().override_text_color = Some(egui::Color32::YELLOW);
+                ui.label(
+                    egui::RichText::new("⚠  No active camera")
+                        .font(egui::FontId::proportional(22.0))
+                        .strong(),
+                );
+                ui.add_space(4.0);
+                ui.visuals_mut().override_text_color = Some(egui::Color32::from_gray(180));
+                ui.label(
+                    egui::RichText::new(
+                        "Attach core:camera + core:transform to an entity\nand call Engine.setMainCamera(entity.id) to see the scene.",
+                    )
+                    .font(egui::FontId::proportional(14.0)),
+                );
+            });
+        });
 }
 
 fn render_debug_overlay(
@@ -670,10 +816,6 @@ impl ApplicationHandler for Engine {
                     self.console.toggle();
                     if self.console.is_open {
                         self.set_cursor_captured(false);
-                        // Release all held keys so camera doesn't get stuck
-                        if let Some(r) = self.renderer.as_mut() {
-                            r.camera_controller.release_all();
-                        }
                         self.input.keys_pressed.clear();
                     }
                     return;
@@ -720,6 +862,8 @@ impl ApplicationHandler for Engine {
             WindowEvent::CloseRequested => {
                 self.debug.window("window close requested");
                 let final_messages = self.script_host.shutdown_all(0, &mut self.debug);
+                // Clear subscribers so any stray frame() after exit() returns immediately.
+                self.tick_subscribers.clear();
                 self.dispatch_messages(final_messages);
                 event_loop.exit();
             }
@@ -735,6 +879,7 @@ impl ApplicationHandler for Engine {
                 if self.should_quit {
                     self.debug.window("quit command issued");
                     let final_messages = self.script_host.shutdown_all(0, &mut self.debug);
+                    self.tick_subscribers.clear();
                     self.dispatch_messages(final_messages);
                     event_loop.exit();
                     return;
@@ -756,17 +901,12 @@ impl ApplicationHandler for Engine {
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if event.state == ElementState::Pressed {
                         self.input.press(code);
-                        if let Some(r) = self.renderer.as_mut() {
-                            r.camera_controller.process_key(code, true);
-                        }
-                        if code == KeyCode::Escape {
+                        // Escape releases the mouse cursor when captured.
+                        if code == KeyCode::Escape && self.input.mouse_captured {
                             self.set_cursor_captured(false);
                         }
                     } else {
                         self.input.release(code);
-                        if let Some(r) = self.renderer.as_mut() {
-                            r.camera_controller.process_key(code, false);
-                        }
                     }
                 }
             }

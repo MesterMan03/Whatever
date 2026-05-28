@@ -27,6 +27,8 @@ No install step needed — Bun resolves the package automatically for any script
 - `Engine.setTickRate(ticks_per_second)` — override the game tick rate at runtime
 - `Engine.setFpsCap(fps | null)` — set FPS cap; `null` = uncapped
 - `Engine.setVsync(enabled)` — enable or disable vertical sync
+- `Engine.setMainCamera(entity_id)` — designate an entity as the active camera (needs `core:camera` + `core:transform`)
+- `Engine.clearCamera()` — remove the active camera (screen goes black with a warning)
 
 ### `Window`
 
@@ -74,7 +76,7 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.getParent(entity_id)` → `Promise<string | null>`
 - `Scene.getChildren(entity_id)` → `Promise<string[]>`
 
-Built-in component types: `core:transform`, `core:sprite_renderer`, `core:text_renderer`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+Built-in component types: `core:transform`, `core:sprite_renderer`, `core:text_renderer`, `core:camera`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
 
 ### `BuiltInComponents.Transform`
 
@@ -100,6 +102,14 @@ Methods (all setters chainable, return `this`):
 - `getFont()`, `setFont(path)` — VFS path to TTF/OTF font (default: `"core://fonts/default.ttf"`)
 - `getFontSize()`, `setFontSize(size)` — font size in logical pixels (default: `24`)
 - `getColor()`, `setColor(r, g, b, a)` — RGBA colour, each channel `[0.0, 1.0]` (default: white)
+
+### `BuiltInComponents.Camera`
+
+Makes an entity usable as a scene camera. Requires `core:transform` on the same entity. Activate with `Engine.setMainCamera(entity.id)`.
+
+- `getFov()`, `setFov(degrees)` — vertical FOV in degrees (default: `45`)
+- `getZNear()`, `setZNear(v)` — near clip plane (default: `0.1`)
+- `getZFar()`, `setZFar(v)` — far clip plane (default: `1000`)
 
 ### `Mods`
 

@@ -1,6 +1,6 @@
 use super::components::{
-    COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, SpriteRenderer,
-    TextRenderer, Transform,
+    COMPONENT_CAMERA, COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM,
+    CameraComponent, SpriteRenderer, TextRenderer, Transform,
 };
 use super::entity::{EntityAllocator, EntityId};
 use glam::{Quat, Vec3};
@@ -11,6 +11,7 @@ pub struct World {
     pub transforms: HashMap<u32, Transform>,
     pub sprite_renderers: HashMap<u32, SpriteRenderer>,
     pub text_renderers: HashMap<u32, TextRenderer>,
+    pub camera_components: HashMap<u32, CameraComponent>,
     /// `type_id` → (`entity_index` → JSON blob)
     pub custom: HashMap<String, HashMap<u32, serde_json::Value>>,
     /// child index → parent `EntityId`
@@ -26,6 +27,7 @@ impl World {
             transforms: HashMap::new(),
             sprite_renderers: HashMap::new(),
             text_renderers: HashMap::new(),
+            camera_components: HashMap::new(),
             custom: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
@@ -215,6 +217,7 @@ impl World {
             self.transforms.remove(&idx);
             self.sprite_renderers.remove(&idx);
             self.text_renderers.remove(&idx);
+            self.camera_components.remove(&idx);
             for type_map in self.custom.values_mut() {
                 type_map.remove(&idx);
             }
@@ -264,6 +267,15 @@ impl World {
                     return false;
                 }
             },
+            COMPONENT_CAMERA => match serde_json::from_value::<CameraComponent>(data) {
+                Ok(c) => {
+                    self.camera_components.insert(idx, c);
+                }
+                Err(e) => {
+                    tracing::warn!("invalid core:camera data: {e}");
+                    return false;
+                }
+            },
             _ => {
                 self.custom
                     .entry(type_id.to_owned())
@@ -284,6 +296,7 @@ impl World {
             COMPONENT_TRANSFORM => self.transforms.remove(&idx).is_some(),
             COMPONENT_SPRITE_RENDERER => self.sprite_renderers.remove(&idx).is_some(),
             COMPONENT_TEXT_RENDERER => self.text_renderers.remove(&idx).is_some(),
+            COMPONENT_CAMERA => self.camera_components.remove(&idx).is_some(),
             _ => self
                 .custom
                 .get_mut(type_id)
@@ -311,6 +324,10 @@ impl World {
                 .text_renderers
                 .get(&idx)
                 .and_then(|t| serde_json::to_value(t).ok()),
+            COMPONENT_CAMERA => self
+                .camera_components
+                .get(&idx)
+                .and_then(|c| serde_json::to_value(c).ok()),
             _ => self.custom.get(type_id)?.get(&idx).cloned(),
         }
     }

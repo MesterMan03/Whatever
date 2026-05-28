@@ -10,6 +10,7 @@ export namespace BuiltInComponents {
   export const TRANSFORM_ID = "core:transform";
   export const SPRITE_RENDERER_ID = "core:sprite_renderer";
   export const TEXT_RENDERER_ID = "core:text_renderer";
+  export const CAMERA_ID = "core:camera";
 
   /** Transform component. Returned by `getComponent("core:transform")` as a live class instance. */
   export class Transform implements Component {
@@ -190,6 +191,37 @@ export namespace BuiltInComponents {
     setTexture(texture: string): this { this.texture = texture; return this; }
   }
 
+  /**
+   * Camera component.  Attach to any entity together with `core:transform` to
+   * make it usable as a scene camera.  Call `Engine.setMainCamera(entity.id)`
+   * to activate it.
+   *
+   * The camera looks in the **-Z** direction of its local frame.
+   * Position and orientation are derived from the entity's `core:transform`.
+   */
+  export class Camera implements Component {
+    readonly id = CAMERA_ID;
+    /** Vertical field-of-view in **degrees**. Default: `45`. */
+    fovy_degrees: number;
+    /** Near clip plane distance. Default: `0.1`. */
+    znear: number;
+    /** Far clip plane distance. Default: `1000`. */
+    zfar: number;
+
+    constructor(init: { fovy_degrees?: number; znear?: number; zfar?: number } = {}) {
+      this.fovy_degrees = init.fovy_degrees ?? 45;
+      this.znear = init.znear ?? 0.1;
+      this.zfar = init.zfar ?? 1000;
+    }
+
+    getFov(): number { return this.fovy_degrees; }
+    setFov(degrees: number): this { this.fovy_degrees = degrees; return this; }
+    getZNear(): number { return this.znear; }
+    setZNear(v: number): this { this.znear = v; return this; }
+    getZFar(): number { return this.zfar; }
+    setZFar(v: number): this { this.zfar = v; return this; }
+  }
+
   /** TextRenderer component. Renders a string at the entity's world-space Transform position. */
   export class TextRenderer implements Component {
     readonly id = TEXT_RENDERER_ID;
@@ -227,6 +259,7 @@ interface _ComponentRegistry {
   [BuiltInComponents.TRANSFORM_ID]: BuiltInComponents.Transform;
   [BuiltInComponents.SPRITE_RENDERER_ID]: BuiltInComponents.SpriteRenderer;
   [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
+  [BuiltInComponents.CAMERA_ID]: BuiltInComponents.Camera;
 }
 
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
@@ -234,6 +267,7 @@ interface _ComponentSetRegistry {
   [BuiltInComponents.TRANSFORM_ID]: { position: [number, number, number]; rotation: [number, number, number, number]; scale: [number, number, number] };
   [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; };
   [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font?: string; font_size?: number; color?: [number, number, number, number]; };
+  [BuiltInComponents.CAMERA_ID]: { fovy_degrees?: number; znear?: number; zfar?: number };
 }
 
 // Converts raw component JSON into the appropriate class instance for built-in types.
@@ -241,6 +275,7 @@ const _componentHydrators: Record<string, (data: any) => any> = {
   "core:transform": (data) => new BuiltInComponents.Transform(data),
   "core:sprite_renderer": (data) => new BuiltInComponents.SpriteRenderer(data),
   "core:text_renderer": (data) => new BuiltInComponents.TextRenderer(data),
+  "core:camera": (data) => new BuiltInComponents.Camera(data),
 };
 
 function _setComponentImpl<K extends keyof _ComponentSetRegistry>(entity_id: string, component_type: K, data: _ComponentSetRegistry[K]): void;

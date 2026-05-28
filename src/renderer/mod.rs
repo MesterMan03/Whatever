@@ -4,7 +4,7 @@ mod scene;
 mod text;
 mod texture;
 
-pub use camera::{Camera, CameraController};
+pub use camera::view_proj_from_entity;
 pub use context::WgpuContext;
 pub use scene::{RenderContext, Scene, SpriteUpdateTarget, Vertex};
 pub use text::GlyphonText;
@@ -22,8 +22,8 @@ pub struct EguiOutput {
 
 pub struct Renderer {
     pub ctx: WgpuContext,
-    pub camera: Camera,
-    pub camera_controller: CameraController,
+    /// Current surface aspect ratio (width / height).  Updated on resize.
+    pub aspect: f32,
     pub scene: Scene,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
@@ -49,7 +49,7 @@ impl Renderer {
 
         let camera_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera_buffer"),
-            size: std::mem::size_of::<[f32; 16]>() as u64,
+            size: size_of::<[f32; 16]>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -145,8 +145,7 @@ impl Renderer {
                 cache: None,
             });
 
-        let aspect = ctx.config.width as f32 / ctx.config.height as f32;
-        let camera = Camera::new(aspect);
+        let aspect = ctx.config.width as f32 / ctx.config.height.max(1) as f32;
 
         let egui_renderer =
             egui_wgpu::Renderer::new(&ctx.device, ctx.config.format, None, 1, false);
@@ -155,8 +154,7 @@ impl Renderer {
 
         Ok(Renderer {
             ctx,
-            camera,
-            camera_controller: CameraController::new(),
+            aspect,
             scene,
             texture_bind_group_layout: texture_bgl,
             pipeline,
@@ -167,8 +165,20 @@ impl Renderer {
         })
     }
 
-    pub fn render(&mut self, egui_output: Option<&EguiOutput>) -> anyhow::Result<()> {
-        let vp: Mat4 = self.camera.view_proj();
+    /// Render one frame.
+    ///
+    /// `camera_vp` — the combined view-projection matrix for this frame.
+    ///   * `Some(mat)` — normal render with the provided camera.
+    ///   * `None`      — no active camera; clears to black.  The caller is
+    ///     expected to add a "no camera" notice via the egui overlay.
+    pub fn render(
+        &mut self,
+        camera_vp: Option<Mat4>,
+        egui_output: Option<&EguiOutput>,
+    ) -> anyhow::Result<()> {
+        // Upload whichever matrix we got (identity if no camera — the scene is
+        // invisible anyway since we clear to black and nothing meaningful is drawn).
+        let vp = camera_vp.unwrap_or(Mat4::IDENTITY);
         let vp_arr: [f32; 16] = vp.to_cols_array();
         self.ctx
             .queue
@@ -204,6 +214,13 @@ impl Renderer {
             Vec::new()
         };
 
+        // Clear colour: black when there is no camera, dark-blue otherwise.
+        let clear_color = if camera_vp.is_some() {
+            wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }
+        } else {
+            wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+        };
+
         // Main scene pass — sprites then text quads share the same pipeline
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -212,12 +229,7 @@ impl Renderer {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.15,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -285,6 +297,6 @@ impl Renderer {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         self.ctx.resize(width, height);
-        self.camera.aspect = width as f32 / height as f32;
+        self.aspect = width as f32 / height.max(1) as f32;
     }
 }

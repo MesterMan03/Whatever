@@ -26,6 +26,17 @@ impl ScriptProcess {
     }
 }
 
+/// Outcome of a blocking receive on the shared script channel.
+pub enum RecvOutcome {
+    /// A valid message was decoded from the channel.
+    Message(String, ScriptMessage),
+    /// The receive timed out; try again later.
+    Timeout,
+    /// All stdout reader threads have exited — no more messages will ever
+    /// arrive (all script processes have terminated).
+    Disconnected,
+}
+
 pub struct PendingReply {
     pub sender_mod_id: String,
     /// The original numeric request_id from the sender's counter, sent back in ModMessageReplyDelivered.
@@ -138,11 +149,18 @@ impl ScriptHost {
         self.processes.keys().map(String::as_str)
     }
 
-    pub fn send(&mut self, mod_id: &str, msg: &EngineMessage, debug: &mut DebugLogger) {
-        if let Some(proc) = self.processes.get_mut(mod_id)
-            && let Err(e) = proc.send(msg, debug)
-        {
-            tracing::warn!(mod_id, "send error: {e}");
+    /// Send a message to a script process.  Returns `true` if the write
+    /// succeeded, `false` if the process is dead or the pipe is broken.
+    pub fn send(&mut self, mod_id: &str, msg: &EngineMessage, debug: &mut DebugLogger) -> bool {
+        match self.processes.get_mut(mod_id) {
+            None => false,
+            Some(proc) => match proc.send(msg, debug) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(mod_id, "send error: {e}");
+                    false
+                }
+            },
         }
     }
 
@@ -158,25 +176,27 @@ impl ScriptHost {
         out
     }
 
-    /// Blocks until a message arrives or `timeout` elapses. Used by the tick wait loop.
+    /// Blocks until a message arrives or `timeout` elapses.
+    /// Used by the tick wait loop — callers must handle `Disconnected` by
+    /// abandoning the loop (no further messages will ever arrive).
     pub fn recv_blocking(
         &mut self,
         timeout: Duration,
         debug: &mut DebugLogger,
-    ) -> Option<(String, ScriptMessage)> {
+    ) -> RecvOutcome {
         match self.shared_rx.recv_timeout(timeout) {
             Ok((mod_id, line)) => {
                 debug.ipc(&mod_id, "→", &line);
                 match serde_json::from_str::<ScriptMessage>(&line) {
-                    Ok(msg) => Some((mod_id, msg)),
+                    Ok(msg) => RecvOutcome::Message(mod_id, msg),
                     Err(e) => {
                         tracing::warn!(mod_id, "bad IPC message: {e}: {line}");
-                        None
+                        RecvOutcome::Timeout
                     }
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => None,
-            Err(mpsc::RecvTimeoutError::Disconnected) => None,
+            Err(mpsc::RecvTimeoutError::Timeout) => RecvOutcome::Timeout,
+            Err(mpsc::RecvTimeoutError::Disconnected) => RecvOutcome::Disconnected,
         }
     }
 
@@ -198,7 +218,9 @@ impl ScriptHost {
         self.pending_replies.remove(namespaced_key)
     }
 
-    /// Sends Shutdown to all scripts, waits briefly for final messages, then kills remaining processes.
+    /// Sends Shutdown to all scripts, waits briefly for final messages, then
+    /// kills remaining processes and removes them from the process table so
+    /// any subsequent `send` call is a guaranteed no-op.
     pub fn shutdown_all(
         &mut self,
         exit_code: i32,
@@ -213,6 +235,9 @@ impl ScriptHost {
         for proc in self.processes.values_mut() {
             let _ = proc.child.kill();
         }
+        // Remove all processes so subsequent send() calls are no-ops even if
+        // the engine somehow tries to tick after shutdown.
+        self.processes.clear();
         final_messages
     }
 }

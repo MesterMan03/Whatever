@@ -281,6 +281,12 @@ pub enum ScriptMessage {
     SetVsync {
         enabled: bool,
     },
+    /// Set the main camera entity.  The entity must have a `core:camera`
+    /// component and a `core:transform` component to be used as a camera.
+    /// Pass an empty string to clear the camera (black screen).
+    SetMainCamera {
+        entity_id: String,
+    },
     TickDone {
         tick_number: u64,
     },
