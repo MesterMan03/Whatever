@@ -1,8 +1,8 @@
 use super::components::{
-    COMPONENT_AMBIENT_LIGHT, COMPONENT_CAMERA, COMPONENT_DIRECTIONAL_LIGHT,
+    AmbientLight, COMPONENT_AMBIENT_LIGHT, COMPONENT_CAMERA, COMPONENT_DIRECTIONAL_LIGHT,
     COMPONENT_MESH_RENDERER, COMPONENT_POINT_LIGHT, COMPONENT_SPRITE_RENDERER,
-    COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, AmbientLight, CameraComponent, DirectionalLight,
-    MeshRenderer, PointLight, SpriteRenderer, TextRenderer, Transform,
+    COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, CameraComponent, DirectionalLight, MeshRenderer,
+    PointLight, SpriteRenderer, TextRenderer, Transform,
 };
 use super::entity::{EntityAllocator, EntityId};
 use glam::{Quat, Vec3};
@@ -217,10 +217,7 @@ impl World {
             // Build a synthetic EntityId to free the allocator slot.
             // We need the correct generation, which the allocator tracks internally.
             // Walk alive_entity_ids to find it (subtree is usually tiny).
-            let eid = self
-                .allocator
-                .alive_entity_ids()
-                .find(|e| e.index == idx);
+            let eid = self.allocator.alive_entity_ids().find(|e| e.index == idx);
             if let Some(eid) = eid {
                 self.allocator.free(eid);
             }
@@ -308,17 +305,15 @@ impl World {
                     return false;
                 }
             },
-            COMPONENT_DIRECTIONAL_LIGHT => {
-                match serde_json::from_value::<DirectionalLight>(data) {
-                    Ok(l) => {
-                        self.directional_lights.insert(idx, l);
-                    }
-                    Err(e) => {
-                        tracing::warn!("invalid core:directional_light data: {e}");
-                        return false;
-                    }
+            COMPONENT_DIRECTIONAL_LIGHT => match serde_json::from_value::<DirectionalLight>(data) {
+                Ok(l) => {
+                    self.directional_lights.insert(idx, l);
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("invalid core:directional_light data: {e}");
+                    return false;
+                }
+            },
             COMPONENT_POINT_LIGHT => match serde_json::from_value::<PointLight>(data) {
                 Ok(l) => {
                     self.point_lights.insert(idx, l);

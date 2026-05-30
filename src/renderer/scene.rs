@@ -178,8 +178,7 @@ impl Scene {
         if mesh_changed || !self.mesh_cpu_cache.contains_key(&mesh_renderer.mesh) {
             let cpu = load_mesh_from_vfs(vfs, &mesh_renderer.mesh)
                 .map_err(|e| anyhow::anyhow!("load mesh '{}': {e}", mesh_renderer.mesh))?;
-            self.mesh_cpu_cache
-                .insert(mesh_renderer.mesh.clone(), cpu);
+            self.mesh_cpu_cache.insert(mesh_renderer.mesh.clone(), cpu);
         }
 
         let cpu = self
@@ -284,10 +283,26 @@ fn build_vertices(transform: &Transform) -> [Vertex; 4] {
     .map(|c| (rot * c + origin).to_array());
 
     [
-        Vertex { position: corners[0], tex_coords: [0.0, 1.0], normal: baked_normal },
-        Vertex { position: corners[1], tex_coords: [1.0, 1.0], normal: baked_normal },
-        Vertex { position: corners[2], tex_coords: [1.0, 0.0], normal: baked_normal },
-        Vertex { position: corners[3], tex_coords: [0.0, 0.0], normal: baked_normal },
+        Vertex {
+            position: corners[0],
+            tex_coords: [0.0, 1.0],
+            normal: baked_normal,
+        },
+        Vertex {
+            position: corners[1],
+            tex_coords: [1.0, 1.0],
+            normal: baked_normal,
+        },
+        Vertex {
+            position: corners[2],
+            tex_coords: [1.0, 0.0],
+            normal: baked_normal,
+        },
+        Vertex {
+            position: corners[3],
+            tex_coords: [0.0, 0.0],
+            normal: baked_normal,
+        },
     ]
 }
 

@@ -7,11 +7,7 @@ use glam::{Mat4, Quat, Vec3};
 /// The camera looks in the **-Z** direction of its local frame (right-hand
 /// convention, same as wgpu / glam defaults).  `up` is the local +Y axis
 /// rotated into world space.
-pub fn view_proj_from_entity(
-    transform: &Transform,
-    cam: &CameraComponent,
-    aspect: f32,
-) -> Mat4 {
+pub fn view_proj_from_entity(transform: &Transform, cam: &CameraComponent, aspect: f32) -> Mat4 {
     let position = Vec3::from(transform.position);
     let [qx, qy, qz, qw] = transform.rotation;
     let rotation = Quat::from_xyzw(qx, qy, qz, qw);

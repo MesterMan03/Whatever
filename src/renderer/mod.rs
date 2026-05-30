@@ -24,7 +24,11 @@ fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Te
     device
         .create_texture(&wgpu::TextureDescriptor {
             label: Some("depth_texture"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -125,21 +129,21 @@ impl Renderer {
                 ],
             });
 
-        let lighting_bgl =
-            ctx.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("lighting_bgl"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
+        let lighting_bgl = ctx
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("lighting_bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let lighting_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("lighting_buffer"),
@@ -159,8 +163,7 @@ impl Renderer {
 
         let scene = Scene::new();
         let aspect = ctx.config.width as f32 / ctx.config.height.max(1) as f32;
-        let depth_view =
-            create_depth_view(&ctx.device, ctx.config.width, ctx.config.height);
+        let depth_view = create_depth_view(&ctx.device, ctx.config.width, ctx.config.height);
         let egui_renderer =
             egui_wgpu::Renderer::new(&ctx.device, ctx.config.format, None, 1, false);
         let text = GlyphonText::new();
@@ -245,48 +248,48 @@ impl Renderer {
                     push_constant_ranges: &[],
                 });
 
-        let pipeline =
-            self.ctx
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(shader_path),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[Vertex::desc()],
-                        compilation_options: Default::default(),
+        let pipeline = self
+            .ctx
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(shader_path),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::desc()],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.ctx.config.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: if back_cull {
+                        Some(wgpu::Face::Back)
+                    } else {
+                        None
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: self.ctx.config.format,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: if back_cull {
-                            Some(wgpu::Face::Back)
-                        } else {
-                            None
-                        },
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
-                    cache: None,
-                });
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         Ok(pipeline)
     }
@@ -309,7 +312,9 @@ impl Renderer {
         let mut cam_data = [0u8; 80];
         cam_data[..64].copy_from_slice(cast_slice(&vp.to_cols_array()));
         cam_data[64..76].copy_from_slice(cast_slice(&pos.to_array()));
-        self.ctx.queue.write_buffer(&self.camera_buffer, 0, &cam_data);
+        self.ctx
+            .queue
+            .write_buffer(&self.camera_buffer, 0, &cam_data);
 
         let output = match self.ctx.surface.get_current_texture() {
             Ok(t) => t,
@@ -342,9 +347,19 @@ impl Renderer {
         };
 
         let clear_color = if camera_vp.is_some() {
-            wgpu::Color { r: 0.1, g: 0.1, b: 0.15, a: 1.0 }
+            wgpu::Color {
+                r: 0.1,
+                g: 0.1,
+                b: 0.15,
+                a: 1.0,
+            }
         } else {
-            wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+            wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }
         };
 
         // Pre-warm any pipelines that are not yet compiled.  This must happen
@@ -426,10 +441,7 @@ impl Renderer {
                 if let Some(quad) = self.scene.entity_sprites.get(idx) {
                     rpass.set_bind_group(1, &quad.bind_group, &[]);
                     rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(
-                        quad.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint16,
-                    );
+                    rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                     rpass.draw_indexed(0..6, 0, 0..1);
                 }
             }

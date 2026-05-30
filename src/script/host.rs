@@ -179,11 +179,7 @@ impl ScriptHost {
     /// Blocks until a message arrives or `timeout` elapses.
     /// Used by the tick wait loop — callers must handle `Disconnected` by
     /// abandoning the loop (no further messages will ever arrive).
-    pub fn recv_blocking(
-        &mut self,
-        timeout: Duration,
-        debug: &mut DebugLogger,
-    ) -> RecvOutcome {
+    pub fn recv_blocking(&mut self, timeout: Duration, debug: &mut DebugLogger) -> RecvOutcome {
         match self.shared_rx.recv_timeout(timeout) {
             Ok((mod_id, line)) => {
                 debug.ipc(&mod_id, "→", &line);

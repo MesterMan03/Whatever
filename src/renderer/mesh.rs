@@ -24,9 +24,9 @@ pub fn load_mesh_from_vfs(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> 
         "json" => load_json(vfs, path),
         "obj" => load_obj(vfs, path),
         "glb" | "gltf" => load_gltf(vfs, path),
-        other => anyhow::bail!(
-            "unsupported mesh format '.{other}'; supported: .json, .obj, .glb, .gltf"
-        ),
+        other => {
+            anyhow::bail!("unsupported mesh format '.{other}'; supported: .json, .obj, .glb, .gltf")
+        }
     }
 }
 
@@ -93,16 +93,32 @@ fn load_obj(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
         let mesh = &model.mesh;
         let vert_count = mesh.positions.len() / 3;
         for i in 0..vert_count {
-            let u = if mesh.texcoords.is_empty() { 0.0 } else { mesh.texcoords[i * 2] };
+            let u = if mesh.texcoords.is_empty() {
+                0.0
+            } else {
+                mesh.texcoords[i * 2]
+            };
             // OBJ UV origin is bottom-left; flip V to match our top-left convention.
             let v = if mesh.texcoords.is_empty() {
                 0.0
             } else {
                 1.0 - mesh.texcoords[i * 2 + 1]
             };
-            let nx = if mesh.normals.is_empty() { 0.0 } else { mesh.normals[i * 3] };
-            let ny = if mesh.normals.is_empty() { 0.0 } else { mesh.normals[i * 3 + 1] };
-            let nz = if mesh.normals.is_empty() { 1.0 } else { mesh.normals[i * 3 + 2] };
+            let nx = if mesh.normals.is_empty() {
+                0.0
+            } else {
+                mesh.normals[i * 3]
+            };
+            let ny = if mesh.normals.is_empty() {
+                0.0
+            } else {
+                mesh.normals[i * 3 + 1]
+            };
+            let nz = if mesh.normals.is_empty() {
+                1.0
+            } else {
+                mesh.normals[i * 3 + 2]
+            };
             vertices.push(Vertex {
                 position: [
                     mesh.positions[i * 3],
@@ -133,8 +149,8 @@ fn load_obj(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
 
 fn load_gltf(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
     let bytes = read_vfs(vfs, path)?;
-    let (doc, buffers, _images) = gltf::import_slice(&bytes)
-        .with_context(|| format!("parsing glTF/GLB '{path}'"))?;
+    let (doc, buffers, _images) =
+        gltf::import_slice(&bytes).with_context(|| format!("parsing glTF/GLB '{path}'"))?;
 
     // Take the first mesh and the first TRIANGLES primitive.
     let mesh = doc

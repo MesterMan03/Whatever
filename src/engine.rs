@@ -1,9 +1,7 @@
 use crate::console::command_node_from_spec;
 use crate::console::{ConsoleAction, DevConsole, EngineSettingAction};
 use crate::debug::{DebugConfig, DebugLogger};
-use crate::ecs::{
-    EntityId, World,
-};
+use crate::ecs::{EntityId, World};
 use crate::input::InputState;
 use crate::logging::{LogMirror, SharedLogWriter};
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
@@ -691,7 +689,10 @@ fn apply_render_command(
 ) {
     match cmd {
         RenderCommand::UpsertSprite { entity_idx } => {
-            let entity_id = world.allocator.alive_entity_ids().find(|e| e.index == *entity_idx);
+            let entity_id = world
+                .allocator
+                .alive_entity_ids()
+                .find(|e| e.index == *entity_idx);
             let Some(entity_id) = entity_id else { return };
             let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
@@ -719,7 +720,10 @@ fn apply_render_command(
             renderer.scene.remove_sprite(*entity_idx);
         }
         RenderCommand::UpsertText { entity_idx } => {
-            let entity_id = world.allocator.alive_entity_ids().find(|e| e.index == *entity_idx);
+            let entity_id = world
+                .allocator
+                .alive_entity_ids()
+                .find(|e| e.index == *entity_idx);
             let Some(entity_id) = entity_id else { return };
             let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
@@ -732,9 +736,10 @@ fn apply_render_command(
                 queue: &renderer.ctx.queue,
                 bgl: &renderer.texture_bind_group_layout,
             };
-            if let Err(e) = renderer
-                .text
-                .upsert_text(ctx, vfs, *entity_idx, &world_transform, text_comp)
+            if let Err(e) =
+                renderer
+                    .text
+                    .upsert_text(ctx, vfs, *entity_idx, &world_transform, text_comp)
             {
                 tracing::warn!("upsert_text error (entity {}): {e}", entity_idx);
             }
@@ -743,10 +748,17 @@ fn apply_render_command(
             renderer.text.remove_text(*entity_idx);
         }
         RenderCommand::UpsertMesh { entity_idx } => {
-            let entity_id = world.allocator.alive_entity_ids().find(|e| e.index == *entity_idx);
+            let entity_id = world
+                .allocator
+                .alive_entity_ids()
+                .find(|e| e.index == *entity_idx);
             let Some(entity_id) = entity_id else { return };
-            let Some(world_transform) = world.world_transform(&entity_id) else { return };
-            let Some(mesh_comp) = world.mesh_renderers.get(entity_idx) else { return };
+            let Some(world_transform) = world.world_transform(&entity_id) else {
+                return;
+            };
+            let Some(mesh_comp) = world.mesh_renderers.get(entity_idx) else {
+                return;
+            };
             let target = MeshUpdateTarget {
                 entity_idx: *entity_idx,
                 transform: &world_transform,

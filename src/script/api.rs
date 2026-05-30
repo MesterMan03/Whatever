@@ -472,9 +472,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                     ..Default::default()
                 };
             }
-            if component_type == COMPONENT_TRANSFORM
-                || component_type == COMPONENT_MESH_RENDERER
-            {
+            if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_MESH_RENDERER {
                 return DispatchResult {
                     render_cmds: vec![RenderCommand::RemoveMesh { entity_idx: idx }],
                     ..Default::default()

@@ -196,10 +196,26 @@ fn build_text_vertices(transform: &Transform, world_w: f32, world_h: f32) -> [Ve
 
     let baked_normal = (rot * glam::Vec3::Z).to_array();
     [
-        Vertex { position: corners[0], tex_coords: [0.0, 0.0], normal: baked_normal },
-        Vertex { position: corners[1], tex_coords: [1.0, 0.0], normal: baked_normal },
-        Vertex { position: corners[2], tex_coords: [1.0, 1.0], normal: baked_normal },
-        Vertex { position: corners[3], tex_coords: [0.0, 1.0], normal: baked_normal },
+        Vertex {
+            position: corners[0],
+            tex_coords: [0.0, 0.0],
+            normal: baked_normal,
+        },
+        Vertex {
+            position: corners[1],
+            tex_coords: [1.0, 0.0],
+            normal: baked_normal,
+        },
+        Vertex {
+            position: corners[2],
+            tex_coords: [1.0, 1.0],
+            normal: baked_normal,
+        },
+        Vertex {
+            position: corners[3],
+            tex_coords: [0.0, 1.0],
+            normal: baked_normal,
+        },
     ]
 }
 
