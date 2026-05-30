@@ -32,31 +32,16 @@ pub struct GlyphonText {
 }
 
 impl GlyphonText {
-    pub fn new(vfs: &dyn Vfs) -> anyhow::Result<Self> {
-        let mut font_system =
-            FontSystem::new_with_locale_and_db("en-US".into(), fontdb::Database::new());
-
-        let default_vfs = VfsPath::parse("core://fonts/default.ttf")
-            .ok_or_else(|| anyhow::anyhow!("invalid default font path"))?;
-        let font_bytes = vfs.read(&default_vfs).context("read default font")?;
-        font_system.db_mut().load_font_data(font_bytes);
-
-        let default_family = font_system
-            .db()
-            .faces()
-            .next()
-            .and_then(|f| f.families.first().map(|(n, _)| n.clone()))
-            .unwrap_or_else(|| "Noto Sans".to_owned());
-
-        let mut font_cache = HashMap::new();
-        font_cache.insert("core://fonts/default.ttf".to_owned(), default_family);
-
-        Ok(GlyphonText {
-            font_system,
+    pub fn new() -> Self {
+        GlyphonText {
+            font_system: FontSystem::new_with_locale_and_db(
+                "en-US".into(),
+                fontdb::Database::new(),
+            ),
             swash_cache: SwashCache::new(),
-            font_cache,
+            font_cache: HashMap::new(),
             entity_texts: HashMap::new(),
-        })
+        }
     }
 
     fn load_font_if_needed(&mut self, vfs: &dyn Vfs, font_path: &str) -> anyhow::Result<String> {
@@ -97,13 +82,14 @@ impl GlyphonText {
         let RenderContext { device, queue, bgl } = ctx;
         let color_bits = color_bits(comp.color);
 
-        // If only the transform changed, skip re-rasterisation and just update vertices.
+        // If only the transform (or shader) changed, skip re-rasterisation.
         if let Some(entry) = self.entity_texts.get_mut(&entity_idx)
             && entry.cached_text == comp.text
             && entry.cached_font == comp.font
             && entry.cached_font_size == comp.font_size
             && entry.cached_color == color_bits
         {
+            entry.quad.shader_path = comp.shader.clone();
             let verts = build_text_vertices(transform, entry.world_w, entry.world_h);
             queue.write_buffer(&entry.quad.vertex_buffer, 0, bytemuck::cast_slice(&verts));
             return Ok(());
@@ -163,7 +149,7 @@ impl GlyphonText {
                     index_buffer,
                     bind_group,
                     texture_path: String::new(), // not VFS-backed
-                    shader_path: "core://shaders/sprite.wgsl".to_owned(),
+                    shader_path: comp.shader.clone(),
                 },
                 world_w,
                 world_h,

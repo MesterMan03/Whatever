@@ -820,7 +820,7 @@ impl ApplicationHandler for Engine {
             None, // max_texture_side
         ));
 
-        let renderer = rt.block_on(Renderer::new(ctx, self.vfs.as_ref()));
+        let renderer = rt.block_on(Renderer::new(ctx));
         let renderer = match renderer {
             Ok(r) => r,
             Err(e) => {

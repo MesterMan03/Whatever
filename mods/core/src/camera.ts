@@ -17,7 +17,7 @@ let character: Entity;
 let cameraEntity: Entity;
 
 Engine.on("init", async () => {
-    character = await Scene.spawnSprite("asset_mod://humoros.png", [0, 0, 0], [1, 1, 1]);
+    character = await Scene.spawnSprite("asset_mod://humoros.png", "core://shaders/sprite.wgsl", [0, 0, 0], [1, 1, 1]);
     cameraEntity = await Scene.createEntity();
     await cameraEntity.move([0, 0, 0]);
     cameraEntity.setComponent(new Camera());

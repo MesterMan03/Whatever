@@ -67,7 +67,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(ctx: WgpuContext, vfs: &dyn Vfs) -> anyhow::Result<Self> {
+    pub async fn new(ctx: WgpuContext) -> anyhow::Result<Self> {
         // 80 bytes: mat4x4 (64) + vec3 position (12) + f32 pad (4).
         let camera_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera_buffer"),
@@ -163,7 +163,7 @@ impl Renderer {
             create_depth_view(&ctx.device, ctx.config.width, ctx.config.height);
         let egui_renderer =
             egui_wgpu::Renderer::new(&ctx.device, ctx.config.format, None, 1, false);
-        let text = GlyphonText::new(vfs).context("init text system")?;
+        let text = GlyphonText::new();
 
         Ok(Renderer {
             aspect,
@@ -349,14 +349,13 @@ impl Renderer {
 
         // Pre-warm any pipelines that are not yet compiled.  This must happen
         // outside the render pass (pipelines cannot be built mid-pass).
-        const TEXT_SHADER: &str = "core://shaders/sprite.wgsl";
         // Collect (path, back_cull) pairs for every drawable that needs a pipeline.
         let mut pipeline_keys: Vec<(String, bool)> = self
             .scene
             .entity_sprites
             .values()
             .map(|q| (q.shader_path.clone(), false))
-            .chain(std::iter::once((TEXT_SHADER.to_owned(), false)))
+            .chain(self.text.quads().map(|q| (q.shader_path.clone(), false)))
             .chain(
                 self.scene
                     .entity_meshes
@@ -472,20 +471,35 @@ impl Renderer {
                 }
             }
 
-            // --- Text quads (always use the sprite shader, no back-cull) ------
-            if let Some(pipeline) =
-                self.pipeline_cache.get(&(TEXT_SHADER.to_owned(), false))
-            {
-                rpass.set_pipeline(pipeline);
-                for quad in self.text.quads() {
-                    rpass.set_bind_group(1, &quad.bind_group, &[]);
-                    rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(
-                        quad.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint16,
-                    );
-                    rpass.draw_indexed(0..6, 0, 0..1);
+            // --- Text quads grouped by shader (no back-cull) ------------------
+            let mut text_by_shader: Vec<(&str, &scene::TexturedQuad)> = self
+                .text
+                .quads()
+                .map(|q| (q.shader_path.as_str(), q))
+                .collect();
+            text_by_shader.sort_unstable_by_key(|(s, _)| *s);
+
+            let mut current_text_shader: Option<&str> = None;
+            for (shader, quad) in &text_by_shader {
+                if current_text_shader != Some(shader) {
+                    match self.pipeline_cache.get(&(shader.to_string(), false)) {
+                        Some(pipeline) => {
+                            rpass.set_pipeline(pipeline);
+                            current_text_shader = Some(shader);
+                        }
+                        None => {
+                            current_text_shader = None;
+                            continue;
+                        }
+                    }
                 }
+                if current_text_shader.is_none() {
+                    continue;
+                }
+                rpass.set_bind_group(1, &quad.bind_group, &[]);
+                rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
+                rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                rpass.draw_indexed(0..6, 0, 0..1);
             }
         }
 

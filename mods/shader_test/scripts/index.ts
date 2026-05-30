@@ -13,10 +13,10 @@
  *   spawnmesh triangle.json     uv_debug          2 0 -3
  *   spawnmesh cube.obj          checkerboard     -2 0 -3
  *   spawnmesh triangle.glb      tint_orange       0 0 -6
- *   spawnmesh quad.json         sprite            0 0 -3  ← default sprite shader
+ *   spawnmesh quad.json         sprite            0 0 -3  ← alias for core://shaders/sprite.wgsl
  *
  * Shader names are resolved as "shader_test://shaders/<name>.wgsl".
- * The special name "sprite" resolves to "core://shaders/sprite.wgsl".
+ * "sprite" and "mesh_lit" are aliases for the core mod's built-in shaders.
  *
  * A second command `clearspawned` destroys all entities spawned by this mod.
  */

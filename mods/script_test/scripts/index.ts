@@ -122,12 +122,14 @@ Console.register({
         textEntity.setComponent("core:text_renderer", component);
         return "updated text";
       } else {
-        const newComponent = new BuiltInComponents.TextRenderer({ text, font_size: 50, color: [0.5, 0.2, 0.2, 0.8] });
+        const newComponent = new BuiltInComponents.TextRenderer({ text, shader: "core://shaders/sprite.wgsl", font: "core://fonts/default.ttf", font_size: 50, color: [0.5, 0.2, 0.2, 0.8] });
         textEntity.setComponent("core:text_renderer", newComponent);
         return "added text component";
       }
     }
     textEntity = await Scene.spawnText(text, [5, 2, 0], {
+      shader: "core://shaders/sprite.wgsl",
+      font: "core://fonts/default.ttf",
       font_size: 50,
       color: [0.5,0.2,0.2,0.8]
     });

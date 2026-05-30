@@ -187,12 +187,12 @@ export namespace BuiltInComponents {
   export class SpriteRenderer implements Component {
     readonly id = SPRITE_RENDERER_ID;
     texture: string;
-    /** VFS path to a WGSL shader. Defaults to `"core://shaders/sprite.wgsl"`. */
+    /** VFS path to a WGSL shader that satisfies the engine shader contract. */
     shader: string;
 
-    constructor(init: { texture?: string; shader?: string } = {}) {
+    constructor(init: { texture?: string; shader: string }) {
       this.texture = init.texture ?? "";
-      this.shader = init.shader ?? "core://shaders/sprite.wgsl";
+      this.shader = init.shader;
     }
 
     getTexture(): string { return this.texture; }
@@ -218,9 +218,9 @@ export namespace BuiltInComponents {
     /** Optional VFS path to a texture.  Omit to use the 1×1 white fallback. */
     texture: string | null;
 
-    constructor(init: { mesh?: string; shader?: string; texture?: string | null } = {}) {
+    constructor(init: { mesh?: string; shader: string; texture?: string | null }) {
       this.mesh = init.mesh ?? "";
-      this.shader = init.shader ?? "core://shaders/mesh_lit.wgsl";
+      this.shader = init.shader;
       this.texture = init.texture ?? null;
     }
 
@@ -267,20 +267,24 @@ export namespace BuiltInComponents {
   export class TextRenderer implements Component {
     readonly id = TEXT_RENDERER_ID;
     text: string;
-    /** VFS path to a TTF/OTF font. Defaults to `"core://fonts/default.ttf"` (Noto Sans). */
+    /** VFS path to a TTF/OTF font. */
     font: string;
+    /** VFS path to a WGSL shader that satisfies the engine shader contract. */
+    shader: string;
     font_size: number;
     /** RGBA colour, each channel in `[0.0, 1.0]`. Defaults to opaque white. */
     color: [number, number, number, number];
 
     constructor(init: {
       text?: string;
-      font?: string;
+      font: string;
+      shader: string;
       font_size?: number;
       color?: [number, number, number, number];
-    } = {}) {
+    }) {
       this.text = init.text ?? "";
-      this.font = init.font ?? "core://fonts/default.ttf";
+      this.font = init.font;
+      this.shader = init.shader;
       this.font_size = init.font_size ?? 24;
       this.color = init.color ?? [1, 1, 1, 1];
     }
@@ -380,8 +384,8 @@ interface _ComponentRegistry {
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
 interface _ComponentSetRegistry {
   [BuiltInComponents.TRANSFORM_ID]: { position: [number, number, number]; rotation: [number, number, number, number]; scale: [number, number, number] };
-  [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; shader?: string };
-  [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font?: string; font_size?: number; color?: [number, number, number, number]; };
+  [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; shader: string };
+  [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font: string; shader: string; font_size?: number; color?: [number, number, number, number]; };
   [BuiltInComponents.CAMERA_ID]: { fovy_degrees?: number; znear?: number; zfar?: number };
   [BuiltInComponents.MESH_RENDERER_ID]: { mesh: string; shader: string; texture?: string | null };
   [BuiltInComponents.AMBIENT_LIGHT_ID]: { color?: [number, number, number]; intensity?: number };
@@ -569,12 +573,13 @@ export const Scene = {
    */
   async spawnSprite(
     texture: string,
+    shader: string,
     position: [number, number, number],
     scale: [number, number, number] = [1, 1, 1],
   ): Promise<Entity> {
     const entity = await Scene.createEntity();
     entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale });
-    entity.setComponent("core:sprite_renderer", { texture });
+    entity.setComponent("core:sprite_renderer", { texture, shader });
     return entity;
   },
 
@@ -585,13 +590,14 @@ export const Scene = {
   async spawnText(
     text: string,
     position: [number, number, number],
-    options: { font?: string; font_size?: number; color?: [number, number, number, number]; } = {},
+    options: { shader: string; font: string; font_size?: number; color?: [number, number, number, number]; },
   ): Promise<Entity> {
     const entity = await Scene.createEntity();
     entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
     entity.setComponent("core:text_renderer", {
       text,
-      font: options.font ?? "core://fonts/default.ttf",
+      shader: options.shader,
+      font: options.font,
       font_size: options.font_size ?? 24,
       color: options.color ?? [1, 1, 1, 1]
     });

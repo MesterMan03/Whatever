@@ -28,13 +28,7 @@ pub struct SpriteRenderer {
     /// VFS path to the texture, e.g. `"my_mod://textures/player.png"`.
     pub texture: String,
     /// VFS path to a WGSL shader that satisfies the engine shader contract.
-    /// Defaults to `"core://shaders/sprite.wgsl"`.
-    #[serde(default = "default_sprite_shader")]
     pub shader: String,
-}
-
-fn default_sprite_shader() -> String {
-    "core://shaders/sprite.wgsl".to_owned()
 }
 
 pub const COMPONENT_MESH_RENDERER: &str = "core:mesh_renderer";
@@ -51,16 +45,10 @@ pub struct MeshRenderer {
     /// VFS path to the mesh file.
     pub mesh: String,
     /// VFS path to a WGSL shader that satisfies the engine shader contract.
-    /// Defaults to `"core://shaders/mesh_lit.wgsl"` (Blinn-Phong lit shader).
-    #[serde(default = "default_mesh_shader")]
     pub shader: String,
     /// Optional VFS path to a texture.  When absent the engine binds a 1×1 white fallback.
     #[serde(default)]
     pub texture: Option<String>,
-}
-
-fn default_mesh_shader() -> String {
-    "core://shaders/mesh_lit.wgsl".to_owned()
 }
 
 pub const COMPONENT_AMBIENT_LIGHT: &str = "core:ambient_light";
@@ -127,9 +115,10 @@ fn default_point_light_range() -> f32 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextRenderer {
     pub text: String,
-    /// VFS path to a TTF/OTF font. Defaults to `"core://fonts/default.ttf"`.
-    #[serde(default = "default_font_path")]
+    /// VFS path to a TTF/OTF font.
     pub font: String,
+    /// VFS path to a WGSL shader that satisfies the engine shader contract.
+    pub shader: String,
     #[serde(default = "default_font_size")]
     pub font_size: f32,
     /// RGBA colour, each channel in `[0.0, 1.0]`. Defaults to opaque white.
@@ -173,9 +162,6 @@ fn default_zfar() -> f32 {
     1000.0
 }
 
-fn default_font_path() -> String {
-    "core://fonts/default.ttf".to_owned()
-}
 fn default_font_size() -> f32 {
     24.0
 }
