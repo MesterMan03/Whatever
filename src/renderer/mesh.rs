@@ -16,8 +16,8 @@ pub struct CpuMesh {
 /// - `.json`        — `{"vertices":[[x,y,z,u,v],...], "indices":[...]}`
 /// - `.obj`         — Wavefront OBJ; materials are silently ignored
 /// - `.glb`/`.gltf` — glTF 2.0 (first mesh / first `TRIANGLES` primitive);
-///                    only GLB and self-contained (base64-embedded) GLTF are supported;
-///                    materials and animations are ignored
+///   only GLB and self-contained (base64-embedded) GLTF are supported;
+///   materials and animations are ignored
 pub fn load_mesh_from_vfs(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
     let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
     match ext.as_str() {

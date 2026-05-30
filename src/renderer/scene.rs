@@ -168,9 +168,9 @@ impl Scene {
         let mesh_changed = self
             .entity_meshes
             .get(&entity_idx)
-            .map_or(true, |d| d.mesh_path != mesh_renderer.mesh);
+            .is_none_or(|d| d.mesh_path != mesh_renderer.mesh);
 
-        let texture_changed = self.entity_meshes.get(&entity_idx).map_or(true, |d| {
+        let texture_changed = self.entity_meshes.get(&entity_idx).is_none_or(|d| {
             d.texture_path.as_deref() != mesh_renderer.texture.as_deref()
         });
 
@@ -198,8 +198,8 @@ impl Scene {
             .collect();
 
         // Fast path: only transform changed — reuse buffers and bind group.
-        if !mesh_changed && !texture_changed {
-            if let Some(drawable) = self.entity_meshes.get_mut(&entity_idx) {
+        if !mesh_changed && !texture_changed
+            && let Some(drawable) = self.entity_meshes.get_mut(&entity_idx) {
                 queue.write_buffer(
                     &drawable.vertex_buffer,
                     0,
@@ -208,7 +208,6 @@ impl Scene {
                 drawable.shader_path = mesh_renderer.shader.clone();
                 return Ok(());
             }
-        }
 
         // Full (re)build.
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
