@@ -8,4 +8,4 @@ description = "Verification mod for custom shaders and mesh rendering"
 root = "assets"
 
 [script]
-entry = "scripts/index.js"
+entry = "scripts/index.ts"

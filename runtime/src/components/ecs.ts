@@ -179,6 +179,9 @@ export namespace BuiltInComponents {
   }
 
   export const MESH_RENDERER_ID = "core:mesh_renderer";
+  export const AMBIENT_LIGHT_ID = "core:ambient_light";
+  export const DIRECTIONAL_LIGHT_ID = "core:directional_light";
+  export const POINT_LIGHT_ID = "core:point_light";
 
   /** SpriteRenderer component. Returned by `getComponent("core:sprite_renderer")` as a live class instance. */
   export class SpriteRenderer implements Component {
@@ -217,7 +220,7 @@ export namespace BuiltInComponents {
 
     constructor(init: { mesh?: string; shader?: string; texture?: string | null } = {}) {
       this.mesh = init.mesh ?? "";
-      this.shader = init.shader ?? "core://shaders/sprite.wgsl";
+      this.shader = init.shader ?? "core://shaders/mesh_lit.wgsl";
       this.texture = init.texture ?? null;
     }
 
@@ -291,6 +294,76 @@ export namespace BuiltInComponents {
     getColor(): [number, number, number, number] { return [...this.color]; }
     setColor(r: number, g: number, b: number, a: number): this { this.color = [r, g, b, a]; return this; }
   }
+
+  /** AmbientLight component. Multiple ambient lights are additive. */
+  export class AmbientLight implements Component {
+    readonly id = AMBIENT_LIGHT_ID;
+    /** RGB colour, each channel in `[0.0, 1.0]`. Defaults to white. */
+    color: [number, number, number];
+    /** Multiplier for the colour. Defaults to `0.1`. */
+    intensity: number;
+
+    constructor(init: { color?: [number, number, number]; intensity?: number } = {}) {
+      this.color = init.color ?? [1, 1, 1];
+      this.intensity = init.intensity ?? 0.1;
+    }
+
+    getColor(): [number, number, number] { return [...this.color]; }
+    setColor(r: number, g: number, b: number): this { this.color = [r, g, b]; return this; }
+    getIntensity(): number { return this.intensity; }
+    setIntensity(v: number): this { this.intensity = v; return this; }
+  }
+
+  /** DirectionalLight component. Simulates an infinitely distant light source (e.g. the sun). */
+  export class DirectionalLight implements Component {
+    readonly id = DIRECTIONAL_LIGHT_ID;
+    /** Normalised direction the light travels *towards* (world space). */
+    direction: [number, number, number];
+    /** RGB colour, each channel in `[0.0, 1.0]`. Defaults to white. */
+    color: [number, number, number];
+    /** Multiplier for the colour. Defaults to `1.0`. */
+    intensity: number;
+
+    constructor(init: { direction?: [number, number, number]; color?: [number, number, number]; intensity?: number } = {}) {
+      this.direction = init.direction ?? [0, -1, 0];
+      this.color = init.color ?? [1, 1, 1];
+      this.intensity = init.intensity ?? 1.0;
+    }
+
+    getDirection(): [number, number, number] { return [...this.direction]; }
+    setDirection(x: number, y: number, z: number): this { this.direction = [x, y, z]; return this; }
+    getColor(): [number, number, number] { return [...this.color]; }
+    setColor(r: number, g: number, b: number): this { this.color = [r, g, b]; return this; }
+    getIntensity(): number { return this.intensity; }
+    setIntensity(v: number): this { this.intensity = v; return this; }
+  }
+
+  /**
+   * PointLight component. Emits light in all directions from the entity's `core:transform` position.
+   * Attenuation is quadratic, falling off to zero at `range` units.
+   */
+  export class PointLight implements Component {
+    readonly id = POINT_LIGHT_ID;
+    /** RGB colour, each channel in `[0.0, 1.0]`. Defaults to white. */
+    color: [number, number, number];
+    /** Multiplier for the colour. Defaults to `1.0`. */
+    intensity: number;
+    /** Distance (in world units) at which the light reaches zero. Defaults to `10`. */
+    range: number;
+
+    constructor(init: { color?: [number, number, number]; intensity?: number; range?: number } = {}) {
+      this.color = init.color ?? [1, 1, 1];
+      this.intensity = init.intensity ?? 1.0;
+      this.range = init.range ?? 10;
+    }
+
+    getColor(): [number, number, number] { return [...this.color]; }
+    setColor(r: number, g: number, b: number): this { this.color = [r, g, b]; return this; }
+    getIntensity(): number { return this.intensity; }
+    setIntensity(v: number): this { this.intensity = v; return this; }
+    getRange(): number { return this.range; }
+    setRange(v: number): this { this.range = v; return this; }
+  }
 }
 
 interface _ComponentRegistry {
@@ -299,6 +372,9 @@ interface _ComponentRegistry {
   [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
   [BuiltInComponents.CAMERA_ID]: BuiltInComponents.Camera;
   [BuiltInComponents.MESH_RENDERER_ID]: BuiltInComponents.MeshRenderer;
+  [BuiltInComponents.AMBIENT_LIGHT_ID]: BuiltInComponents.AmbientLight;
+  [BuiltInComponents.DIRECTIONAL_LIGHT_ID]: BuiltInComponents.DirectionalLight;
+  [BuiltInComponents.POINT_LIGHT_ID]: BuiltInComponents.PointLight;
 }
 
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
@@ -308,6 +384,9 @@ interface _ComponentSetRegistry {
   [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font?: string; font_size?: number; color?: [number, number, number, number]; };
   [BuiltInComponents.CAMERA_ID]: { fovy_degrees?: number; znear?: number; zfar?: number };
   [BuiltInComponents.MESH_RENDERER_ID]: { mesh: string; shader: string; texture?: string | null };
+  [BuiltInComponents.AMBIENT_LIGHT_ID]: { color?: [number, number, number]; intensity?: number };
+  [BuiltInComponents.DIRECTIONAL_LIGHT_ID]: { direction?: [number, number, number]; color?: [number, number, number]; intensity?: number };
+  [BuiltInComponents.POINT_LIGHT_ID]: { color?: [number, number, number]; intensity?: number; range?: number };
 }
 
 // Converts raw component JSON into the appropriate class instance for built-in types.
@@ -317,6 +396,9 @@ const _componentHydrators: Record<string, (data: any) => any> = {
   "core:text_renderer": (data) => new BuiltInComponents.TextRenderer(data),
   "core:camera": (data) => new BuiltInComponents.Camera(data),
   "core:mesh_renderer": (data) => new BuiltInComponents.MeshRenderer(data),
+  "core:ambient_light": (data) => new BuiltInComponents.AmbientLight(data),
+  "core:directional_light": (data) => new BuiltInComponents.DirectionalLight(data),
+  "core:point_light": (data) => new BuiltInComponents.PointLight(data),
 };
 
 function _setComponentImpl<K extends keyof _ComponentSetRegistry>(entity_id: string, component_type: K, data: _ComponentSetRegistry[K]): void;
@@ -577,5 +659,48 @@ export const Scene = {
       _entityChildrenCallbacks.set(request_id, { resolve, reject });
       _send({ type: "EntityGetChildren", request_id, entity_id });
     });
+  },
+
+  /**
+   * Convenience: create an entity and attach `core:ambient_light`.
+   * Multiple ambient lights are additive.
+   */
+  async addAmbientLight(
+    color: [number, number, number] = [1, 1, 1],
+    intensity: number = 0.1,
+  ): Promise<Entity> {
+    const entity = await Scene.createEntity();
+    entity.setComponent("core:ambient_light", { color, intensity });
+    return entity;
+  },
+
+  /**
+   * Convenience: create an entity and attach `core:directional_light`.
+   * @param direction Normalised direction the light travels towards (world space).
+   */
+  async addDirectionalLight(
+    direction: [number, number, number],
+    color: [number, number, number] = [1, 1, 1],
+    intensity: number = 1.0,
+  ): Promise<Entity> {
+    const entity = await Scene.createEntity();
+    entity.setComponent("core:directional_light", { direction, color, intensity });
+    return entity;
+  },
+
+  /**
+   * Convenience: create an entity with `core:transform` + `core:point_light`.
+   * The light is emitted from `position` in all directions.
+   */
+  async addPointLight(
+    position: [number, number, number],
+    color: [number, number, number] = [1, 1, 1],
+    intensity: number = 1.0,
+    range: number = 10,
+  ): Promise<Entity> {
+    const entity = await Scene.createEntity();
+    entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
+    entity.setComponent("core:point_light", { color, intensity, range });
+    return entity;
   },
 };

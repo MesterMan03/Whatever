@@ -30,6 +30,16 @@ Engine.on("init", () => {
   Engine.log("info", "[shader_test] mod loaded — use `spawnmesh` to test shaders");
 });
 
+function getShaderPath(shaderName: string): string {
+  if(shaderName === "sprite") {
+    return "core://shaders/sprite.wgsl";
+  }
+  if(shaderName === "mesh_lit") {
+    return "core://shaders/mesh_lit.wgsl";
+  }
+  return `shader_test://shaders/${shaderName}.wgsl`;
+}
+
 // ---------------------------------------------------------------------------
 // spawnmesh command
 // ---------------------------------------------------------------------------
@@ -64,6 +74,7 @@ Console.register({
           "checkerboard",
           "normal_map_debug",
           "sprite",
+          "mesh_lit"
         ];
         return shaders.filter((s) => s.startsWith(current));
       }
@@ -97,10 +108,7 @@ Console.register({
     const meshPath =
       `shader_test://meshes/${meshName}`;
 
-    const shaderPath =
-      shaderName === "sprite"
-        ? "core://shaders/sprite.wgsl"
-        : `shader_test://shaders/${shaderName}.wgsl`;
+    const shaderPath = getShaderPath(shaderName);
 
     const entity = await Scene.spawnMesh(
       meshPath,
@@ -141,10 +149,7 @@ Console.register({
   handler: async (args) => {
     const texturePath = args["texture"] as string;
     const shaderName  = args["shader"]  as string;
-    const shaderPath =
-      shaderName === "sprite"
-        ? "core://shaders/sprite.wgsl"
-        : `shader_test://shaders/${shaderName}.wgsl`;
+    const shaderPath = getShaderPath(shaderName);
 
     const entity = await Scene.createEntity();
     entity.setComponent("core:transform", {
@@ -162,6 +167,86 @@ Console.register({
       `[entity ${entity.id}]`
     );
   },
+});
+
+// ---------------------------------------------------------------------------
+// spawnlight command
+// ---------------------------------------------------------------------------
+
+Console.register({
+  name: "spawnlight",
+  description: "Spawn a light source for testing.",
+  subcommands: [
+    {
+      name: "ambient",
+      description: "Spawn a uniform ambient fill light.",
+      args: [
+        { name: "r", type: "float", required: true,  description: "Red channel (0–1)" },
+        { name: "g", type: "float", required: true,  description: "Green channel (0–1)" },
+        { name: "b", type: "float", required: true,  description: "Blue channel (0–1)" },
+        { name: "intensity", type: "float", required: false, description: "Intensity multiplier (default 0.1)" },
+      ],
+      handler: async (args) => {
+        const color: [number, number, number] = [args["r"] as number, args["g"] as number, args["b"] as number];
+        const intensity = (args["intensity"] as number | undefined) ?? 0.1;
+        const entity = await Scene.addAmbientLight(color, intensity);
+        spawned.push(entity);
+        return `Spawned ambient light color=(${color}) intensity=${intensity} [entity ${entity.id}]`;
+      },
+    },
+    {
+      name: "dir",
+      description: "Spawn a directional light (infinitely distant, like the sun).",
+      args: [
+        { name: "dx", type: "float", required: true,  description: "Direction X" },
+        { name: "dy", type: "float", required: true,  description: "Direction Y" },
+        { name: "dz", type: "float", required: true,  description: "Direction Z" },
+        { name: "r",  type: "float", required: false, description: "Red channel (0–1, default 1)" },
+        { name: "g",  type: "float", required: false, description: "Green channel (0–1, default 1)" },
+        { name: "b",  type: "float", required: false, description: "Blue channel (0–1, default 1)" },
+        { name: "intensity", type: "float", required: false, description: "Intensity multiplier (default 1)" },
+      ],
+      handler: async (args) => {
+        const direction: [number, number, number] = [args["dx"] as number, args["dy"] as number, args["dz"] as number];
+        const color: [number, number, number] = [
+          (args["r"] as number | undefined) ?? 1,
+          (args["g"] as number | undefined) ?? 1,
+          (args["b"] as number | undefined) ?? 1,
+        ];
+        const intensity = (args["intensity"] as number | undefined) ?? 1.0;
+        const entity = await Scene.addDirectionalLight(direction, color, intensity);
+        spawned.push(entity);
+        return `Spawned directional light dir=(${direction}) color=(${color}) intensity=${intensity} [entity ${entity.id}]`;
+      },
+    },
+    {
+      name: "point",
+      description: "Spawn a point light at a world position.",
+      args: [
+        { name: "x", type: "float", required: true,  description: "World X position" },
+        { name: "y", type: "float", required: true,  description: "World Y position" },
+        { name: "z", type: "float", required: true,  description: "World Z position" },
+        { name: "r", type: "float", required: false, description: "Red channel (0–1, default 1)" },
+        { name: "g", type: "float", required: false, description: "Green channel (0–1, default 1)" },
+        { name: "b", type: "float", required: false, description: "Blue channel (0–1, default 1)" },
+        { name: "intensity", type: "float", required: false, description: "Intensity multiplier (default 1)" },
+        { name: "range",     type: "float", required: false, description: "Attenuation radius in world units (default 10)" },
+      ],
+      handler: async (args) => {
+        const position: [number, number, number] = [args["x"] as number, args["y"] as number, args["z"] as number];
+        const color: [number, number, number] = [
+          (args["r"] as number | undefined) ?? 1,
+          (args["g"] as number | undefined) ?? 1,
+          (args["b"] as number | undefined) ?? 1,
+        ];
+        const intensity = (args["intensity"] as number | undefined) ?? 1.0;
+        const range     = (args["range"]     as number | undefined) ?? 10;
+        const entity = await Scene.addPointLight(position, color, intensity, range);
+        spawned.push(entity);
+        return `Spawned point light at (${position}) color=(${color}) intensity=${intensity} range=${range} [entity ${entity.id}]`;
+      },
+    },
+  ],
 });
 
 // ---------------------------------------------------------------------------

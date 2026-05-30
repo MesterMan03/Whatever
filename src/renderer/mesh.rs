@@ -34,7 +34,9 @@ pub fn load_mesh_from_vfs(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> 
 
 #[derive(Deserialize)]
 struct MeshJson {
-    vertices: Vec<[f32; 5]>, // [x, y, z, u, v]
+    /// Each element is either `[x, y, z, u, v]` (5 floats, normal defaults to
+    /// `[0, 0, 1]`) or `[x, y, z, u, v, nx, ny, nz]` (8 floats with explicit normal).
+    vertices: Vec<Vec<f32>>,
     indices: Vec<u16>,
 }
 
@@ -45,11 +47,22 @@ fn load_json(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
     let vertices = json
         .vertices
         .iter()
-        .map(|v| Vertex {
-            position: [v[0], v[1], v[2]],
-            tex_coords: [v[3], v[4]],
+        .enumerate()
+        .map(|(i, v)| {
+            anyhow::ensure!(
+                v.len() >= 5,
+                "mesh JSON '{path}': vertex {i} has fewer than 5 elements"
+            );
+            let nx = v.get(5).copied().unwrap_or(0.0);
+            let ny = v.get(6).copied().unwrap_or(0.0);
+            let nz = v.get(7).copied().unwrap_or(1.0);
+            Ok(Vertex {
+                position: [v[0], v[1], v[2]],
+                tex_coords: [v[3], v[4]],
+                normal: [nx, ny, nz],
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(CpuMesh {
         vertices,
         indices: json.indices,
@@ -80,17 +93,16 @@ fn load_obj(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
         let mesh = &model.mesh;
         let vert_count = mesh.positions.len() / 3;
         for i in 0..vert_count {
-            let u = if mesh.texcoords.is_empty() {
-                0.0
-            } else {
-                mesh.texcoords[i * 2]
-            };
+            let u = if mesh.texcoords.is_empty() { 0.0 } else { mesh.texcoords[i * 2] };
             // OBJ UV origin is bottom-left; flip V to match our top-left convention.
             let v = if mesh.texcoords.is_empty() {
                 0.0
             } else {
                 1.0 - mesh.texcoords[i * 2 + 1]
             };
+            let nx = if mesh.normals.is_empty() { 0.0 } else { mesh.normals[i * 3] };
+            let ny = if mesh.normals.is_empty() { 0.0 } else { mesh.normals[i * 3 + 1] };
+            let nz = if mesh.normals.is_empty() { 1.0 } else { mesh.normals[i * 3 + 2] };
             vertices.push(Vertex {
                 position: [
                     mesh.positions[i * 3],
@@ -98,6 +110,7 @@ fn load_obj(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
                     mesh.positions[i * 3 + 2],
                 ],
                 tex_coords: [u, v],
+                normal: [nx, ny, nz],
             });
         }
         for &idx in &mesh.indices {
@@ -148,12 +161,20 @@ fn load_gltf(vfs: &dyn Vfs, path: &str) -> anyhow::Result<CpuMesh> {
         .map(|iter| iter.into_f32().collect())
         .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
+    // Surface normals — optional, default to [0, 0, 1].
+    let normals: Vec<[f32; 3]> = reader
+        .read_normals()
+        .map(|iter| iter.collect())
+        .unwrap_or_else(|| vec![[0.0, 0.0, 1.0]; positions.len()]);
+
     let vertices: Vec<Vertex> = positions
         .iter()
         .zip(tex_coords.iter())
-        .map(|(pos, uv)| Vertex {
+        .zip(normals.iter())
+        .map(|((pos, uv), n)| Vertex {
             position: *pos,
             tex_coords: *uv,
+            normal: *n,
         })
         .collect();
 

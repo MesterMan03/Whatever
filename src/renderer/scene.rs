@@ -12,12 +12,14 @@ use wgpu::util::DeviceExt;
 pub struct Vertex {
     pub position: [f32; 3],
     pub tex_coords: [f32; 2],
+    pub normal: [f32; 3],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
         0 => Float32x3,
         1 => Float32x2,
+        2 => Float32x3,
     ];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
@@ -185,13 +187,14 @@ impl Scene {
             .get(&mesh_renderer.mesh)
             .expect("just inserted");
 
-        // Apply transform to every vertex on the CPU.
+        // Apply transform to every vertex on the CPU (position + normal).
         let transformed: Vec<Vertex> = cpu
             .vertices
             .iter()
             .map(|v| Vertex {
                 position: apply_transform(v.position, transform),
                 tex_coords: v.tex_coords,
+                normal: apply_transform_normal(v.normal, transform),
             })
             .collect();
 
@@ -269,6 +272,9 @@ fn build_vertices(transform: &Transform) -> [Vertex; 4] {
     let [qx, qy, qz, qw] = transform.rotation;
     let rot = Quat::from_xyzw(qx, qy, qz, qw);
 
+    // The sprite lies in the XZ plane; its face normal is +Z in local space.
+    let baked_normal = (rot * Vec3::Z).to_array();
+
     let corners = [
         Vec3::new(-hw, 0.0, -hd),
         Vec3::new(hw, 0.0, -hd),
@@ -278,22 +284,10 @@ fn build_vertices(transform: &Transform) -> [Vertex; 4] {
     .map(|c| (rot * c + origin).to_array());
 
     [
-        Vertex {
-            position: corners[0],
-            tex_coords: [0.0, 1.0],
-        },
-        Vertex {
-            position: corners[1],
-            tex_coords: [1.0, 1.0],
-        },
-        Vertex {
-            position: corners[2],
-            tex_coords: [1.0, 0.0],
-        },
-        Vertex {
-            position: corners[3],
-            tex_coords: [0.0, 0.0],
-        },
+        Vertex { position: corners[0], tex_coords: [0.0, 1.0], normal: baked_normal },
+        Vertex { position: corners[1], tex_coords: [1.0, 1.0], normal: baked_normal },
+        Vertex { position: corners[2], tex_coords: [1.0, 0.0], normal: baked_normal },
+        Vertex { position: corners[3], tex_coords: [0.0, 0.0], normal: baked_normal },
     ]
 }
 
@@ -305,6 +299,18 @@ fn apply_transform(pos: [f32; 3], transform: &Transform) -> [f32; 3] {
     let rot = Quat::from_xyzw(qx, qy, qz, qw);
     let origin = Vec3::from(transform.position);
     (rot * (scale * v) + origin).to_array()
+}
+
+/// Apply a `Transform` to a model-space surface normal.
+///
+/// The normal matrix is `R × S⁻¹` — this correctly handles non-uniform scale
+/// so normals remain perpendicular to their surfaces after stretching.
+fn apply_transform_normal(normal: [f32; 3], transform: &Transform) -> [f32; 3] {
+    let n = Vec3::from(normal);
+    let scale = Vec3::from(transform.scale);
+    let [qx, qy, qz, qw] = transform.rotation;
+    let rot = Quat::from_xyzw(qx, qy, qz, qw);
+    (rot * (n / scale)).normalize_or_zero().to_array()
 }
 
 fn load_texture(

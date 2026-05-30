@@ -1,13 +1,15 @@
 use crate::console::command_node_from_spec;
 use crate::console::{ConsoleAction, DevConsole, EngineSettingAction};
 use crate::debug::{DebugConfig, DebugLogger};
-use crate::ecs::{EntityId, World};
+use crate::ecs::{
+    EntityId, World,
+};
 use crate::input::InputState;
 use crate::logging::{LogMirror, SharedLogWriter};
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
 use crate::renderer::{
-    EguiOutput, MeshUpdateTarget, RenderContext, Renderer, SpriteUpdateTarget, WgpuContext,
-    view_proj_from_entity,
+    EguiOutput, GpuDirectionalLight, GpuLightingData, GpuPointLight, MeshUpdateTarget,
+    RenderContext, Renderer, SpriteUpdateTarget, WgpuContext, view_proj_from_entity,
 };
 use crate::sandbox::SandboxConfig;
 use crate::script::ipc::{EngineMessage, ScriptMessage};
@@ -204,8 +206,8 @@ impl Engine {
 
         self.frame_number += 1;
 
-        // Compute camera view-projection for this frame.
-        let camera_vp = self.compute_camera_vp();
+        // Compute camera view-projection and position for this frame.
+        let (camera_vp, camera_pos) = self.compute_camera_info();
         let no_camera = camera_vp.is_none();
 
         // Run egui for this frame
@@ -303,26 +305,39 @@ impl Engine {
             None
         };
 
-        if let Some(renderer) = self.renderer.as_mut()
-            && let Err(e) = renderer.render(camera_vp, egui_out.as_ref(), self.vfs.as_ref())
-        {
-            tracing::error!("render error: {e}");
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.update_lighting(&collect_lights(&self.world));
+            if let Err(e) =
+                renderer.render(camera_vp, camera_pos, egui_out.as_ref(), self.vfs.as_ref())
+            {
+                tracing::error!("render error: {e}");
+            }
         }
     }
 
-    /// Derive a view-projection matrix from the current main camera entity.
-    /// Returns `None` if no camera is set, the entity is no longer alive, or it
-    /// is missing either `core:transform` or `core:camera`.
-    fn compute_camera_vp(&self) -> Option<glam::Mat4> {
-        let camera_id = self.main_camera.as_ref()?;
+    /// Derive a view-projection matrix and world-space camera position from the
+    /// current main camera entity.  Returns `(None, None)` if no camera is set,
+    /// the entity is stale, or it is missing `core:transform` / `core:camera`.
+    fn compute_camera_info(&self) -> (Option<glam::Mat4>, Option<glam::Vec3>) {
+        let Some(camera_id) = self.main_camera.as_ref() else {
+            return (None, None);
+        };
         if !self.world.is_alive(camera_id) {
-            return None;
+            return (None, None);
         }
         let idx = camera_id.index;
-        let transform = self.world.world_transform(camera_id)?;
-        let cam = self.world.camera_components.get(&idx)?;
-        let aspect = self.renderer.as_ref()?.aspect;
-        Some(view_proj_from_entity(&transform, cam, aspect))
+        let Some(transform) = self.world.world_transform(camera_id) else {
+            return (None, None);
+        };
+        let Some(cam) = self.world.camera_components.get(&idx) else {
+            return (None, None);
+        };
+        let Some(aspect) = self.renderer.as_ref().map(|r| r.aspect) else {
+            return (None, None);
+        };
+        let vp = view_proj_from_entity(&transform, cam, aspect);
+        let pos = glam::Vec3::from(transform.position);
+        (Some(vp), Some(pos))
     }
 
     fn set_cursor_captured(&mut self, captured: bool) {
@@ -698,7 +713,7 @@ fn apply_render_command(
                 tracing::warn!("update_sprite error (entity {}): {e}", entity_idx);
             }
             // Pre-warm pipeline so the first render frame has no stall.
-            renderer.get_or_build_pipeline(vfs, &sprite.shader);
+            renderer.get_or_build_pipeline(vfs, &sprite.shader, false);
         }
         RenderCommand::RemoveSprite { entity_idx } => {
             renderer.scene.remove_sprite(*entity_idx);
@@ -748,7 +763,7 @@ fn apply_render_command(
                 tracing::warn!("update_mesh error (entity {}): {e}", entity_idx);
             }
             // Pre-warm pipeline cache so the first render frame has no stall.
-            renderer.get_or_build_pipeline(vfs, &shader_path);
+            renderer.get_or_build_pipeline(vfs, &shader_path, true);
         }
         RenderCommand::RemoveMesh { entity_idx } => {
             renderer.scene.remove_mesh(*entity_idx);
@@ -957,4 +972,54 @@ impl ApplicationHandler for Engine {
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Lighting helpers
+// ---------------------------------------------------------------------------
+
+fn collect_lights(world: &World) -> GpuLightingData {
+    use bytemuck::Zeroable;
+
+    let mut data = GpuLightingData::zeroed();
+
+    // Additive ambient: sum all ambient light components.
+    for al in world.ambient_lights.values() {
+        let c = glam::Vec3::from(al.color) * al.intensity;
+        data.ambient_color = (glam::Vec3::from(data.ambient_color) + c).to_array();
+        data.ambient_intensity = 1.0;
+    }
+
+    // Directional lights (up to 4).
+    let mut dir_count = 0u32;
+    for dl in world.directional_lights.values().take(4) {
+        data.dir_lights[dir_count as usize] = GpuDirectionalLight {
+            direction: dl.direction,
+            _pad0: 0.0,
+            color: dl.color,
+            intensity: dl.intensity,
+        };
+        dir_count += 1;
+    }
+    data.dir_light_count = dir_count;
+
+    // Point lights (up to 8) — position comes from core:transform.
+    let mut pt_count = 0u32;
+    for (idx, pl) in world.point_lights.iter().take(8) {
+        let position = if let Some(t) = world.transforms.get(idx) {
+            t.position
+        } else {
+            [0.0, 0.0, 0.0]
+        };
+        data.point_lights[pt_count as usize] = GpuPointLight {
+            position,
+            range: pl.range,
+            color: pl.color,
+            intensity: pl.intensity,
+        };
+        pt_count += 1;
+    }
+    data.point_light_count = pt_count;
+
+    data
 }

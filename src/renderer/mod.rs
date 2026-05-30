@@ -1,5 +1,6 @@
 mod camera;
 mod context;
+mod lighting;
 mod mesh;
 mod scene;
 mod text;
@@ -7,14 +8,32 @@ mod texture;
 
 pub use camera::view_proj_from_entity;
 pub use context::WgpuContext;
+pub use lighting::{GpuDirectionalLight, GpuLightingData, GpuPointLight};
 pub use scene::{MeshUpdateTarget, RenderContext, Scene, SpriteUpdateTarget, Vertex};
 pub use text::GlyphonText;
 
 use crate::vfs::{Vfs, VfsPath};
 use anyhow::{Context, anyhow};
 use bytemuck::cast_slice;
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use std::collections::{HashMap, HashSet};
+
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+    device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth_texture"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
+}
 
 pub struct EguiOutput {
     pub paint_jobs: Vec<egui::ClippedPrimitive>,
@@ -28,24 +47,31 @@ pub struct Renderer {
     pub aspect: f32,
     pub scene: Scene,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
-    /// Cache of compiled render pipelines keyed by shader VFS path.
-    pipeline_cache: HashMap<String, wgpu::RenderPipeline>,
-    /// Shader paths that failed to compile — errors are logged once and then
-    /// suppressed to avoid per-frame spam.
-    pipeline_errors: HashSet<String>,
+    /// Depth texture view — recreated on resize.
+    depth_view: wgpu::TextureView,
+    /// Cache of compiled render pipelines keyed by (shader VFS path, back_cull).
+    pipeline_cache: HashMap<(String, bool), wgpu::RenderPipeline>,
+    /// Keys that failed to compile — errors are logged once and then suppressed.
+    pipeline_errors: HashSet<(String, bool)>,
+    /// Camera uniform buffer — 80 bytes: 64 bytes view_proj + 16 bytes position+pad.
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     /// Stored so that `get_or_build_pipeline` can construct new pipeline layouts.
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    /// Lighting uniform buffer (group 2, binding 0).
+    lighting_buffer: wgpu::Buffer,
+    lighting_bind_group: wgpu::BindGroup,
+    lighting_bind_group_layout: wgpu::BindGroupLayout,
     egui_renderer: egui_wgpu::Renderer,
     pub text: GlyphonText,
 }
 
 impl Renderer {
     pub async fn new(ctx: WgpuContext, vfs: &dyn Vfs) -> anyhow::Result<Self> {
+        // 80 bytes: mat4x4 (64) + vec3 position (12) + f32 pad (4).
         let camera_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera_buffer"),
-            size: size_of::<[f32; 16]>() as u64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -56,7 +82,7 @@ impl Renderer {
                 label: Some("camera_bgl"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -99,8 +125,42 @@ impl Renderer {
                 ],
             });
 
+        let lighting_bgl =
+            ctx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("lighting_bgl"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+
+        let lighting_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("lighting_buffer"),
+            size: size_of::<GpuLightingData>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let lighting_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lighting_bg"),
+            layout: &lighting_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lighting_buffer.as_entire_binding(),
+            }],
+        });
+
         let scene = Scene::new();
         let aspect = ctx.config.width as f32 / ctx.config.height.max(1) as f32;
+        let depth_view =
+            create_depth_view(&ctx.device, ctx.config.width, ctx.config.height);
         let egui_renderer =
             egui_wgpu::Renderer::new(&ctx.device, ctx.config.format, None, 1, false);
         let text = GlyphonText::new(vfs).context("init text system")?;
@@ -109,11 +169,15 @@ impl Renderer {
             aspect,
             scene,
             texture_bind_group_layout: texture_bgl,
+            depth_view,
             pipeline_cache: HashMap::new(),
             pipeline_errors: HashSet::new(),
             camera_buffer,
             camera_bind_group,
             camera_bind_group_layout: camera_bgl,
+            lighting_buffer,
+            lighting_bind_group,
+            lighting_bind_group_layout: lighting_bgl,
             egui_renderer,
             text,
             ctx,
@@ -121,35 +185,39 @@ impl Renderer {
     }
 
     /// Return a reference to the compiled pipeline for `shader_path`, building
-    /// it on first use.  Returns `None` if the shader has already failed
-    /// (error was logged at compile time) or if compilation fails now.
+    /// it on first use.  `back_cull = true` enables back-face culling (use for
+    /// 3-D meshes); `false` disables it (use for flat sprites and text).
+    /// Returns `None` if the shader has already failed (error was logged once).
     pub fn get_or_build_pipeline(
         &mut self,
         vfs: &dyn Vfs,
         shader_path: &str,
+        back_cull: bool,
     ) -> Option<&wgpu::RenderPipeline> {
-        if self.pipeline_errors.contains(shader_path) {
+        let key = (shader_path.to_owned(), back_cull);
+        if self.pipeline_errors.contains(&key) {
             return None;
         }
-        if !self.pipeline_cache.contains_key(shader_path) {
-            match self.compile_pipeline(vfs, shader_path) {
+        if !self.pipeline_cache.contains_key(&key) {
+            match self.compile_pipeline(vfs, shader_path, back_cull) {
                 Ok(pipeline) => {
-                    self.pipeline_cache.insert(shader_path.to_owned(), pipeline);
+                    self.pipeline_cache.insert(key.clone(), pipeline);
                 }
                 Err(e) => {
                     tracing::error!(shader = shader_path, "shader compile error: {e}");
-                    self.pipeline_errors.insert(shader_path.to_owned());
+                    self.pipeline_errors.insert(key);
                     return None;
                 }
             }
         }
-        self.pipeline_cache.get(shader_path)
+        self.pipeline_cache.get(&key)
     }
 
     fn compile_pipeline(
         &self,
         vfs: &dyn Vfs,
         shader_path: &str,
+        back_cull: bool,
     ) -> anyhow::Result<wgpu::RenderPipeline> {
         let vfs_path = VfsPath::parse(shader_path)
             .ok_or_else(|| anyhow!("invalid VFS path for shader '{shader_path}'"))?;
@@ -172,6 +240,7 @@ impl Renderer {
                     bind_group_layouts: &[
                         &self.camera_bind_group_layout,
                         &self.texture_bind_group_layout,
+                        &self.lighting_bind_group_layout,
                     ],
                     push_constant_ranges: &[],
                 });
@@ -200,10 +269,20 @@ impl Renderer {
                     }),
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
+                        cull_mode: if back_cull {
+                            Some(wgpu::Face::Back)
+                        } else {
+                            None
+                        },
                         ..Default::default()
                     },
-                    depth_stencil: None,
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
                     multisample: wgpu::MultisampleState::default(),
                     multiview: None,
                     cache: None,
@@ -220,14 +299,17 @@ impl Renderer {
     pub fn render(
         &mut self,
         camera_vp: Option<Mat4>,
+        camera_pos: Option<Vec3>,
         egui_output: Option<&EguiOutput>,
         vfs: &dyn Vfs,
     ) -> anyhow::Result<()> {
         let vp = camera_vp.unwrap_or(Mat4::IDENTITY);
-        let vp_arr: [f32; 16] = vp.to_cols_array();
-        self.ctx
-            .queue
-            .write_buffer(&self.camera_buffer, 0, cast_slice(&vp_arr));
+        let pos = camera_pos.unwrap_or(Vec3::ZERO);
+        // 80-byte camera uniform: [view_proj (64 bytes)] + [position (12 bytes)] + [pad (4 bytes)]
+        let mut cam_data = [0u8; 80];
+        cam_data[..64].copy_from_slice(cast_slice(&vp.to_cols_array()));
+        cam_data[64..76].copy_from_slice(cast_slice(&pos.to_array()));
+        self.ctx.queue.write_buffer(&self.camera_buffer, 0, &cam_data);
 
         let output = match self.ctx.surface.get_current_texture() {
             Ok(t) => t,
@@ -268,25 +350,24 @@ impl Renderer {
         // Pre-warm any pipelines that are not yet compiled.  This must happen
         // outside the render pass (pipelines cannot be built mid-pass).
         const TEXT_SHADER: &str = "core://shaders/sprite.wgsl";
-        let sprite_shaders: Vec<String> = self
+        // Collect (path, back_cull) pairs for every drawable that needs a pipeline.
+        let mut pipeline_keys: Vec<(String, bool)> = self
             .scene
             .entity_sprites
             .values()
-            .map(|q| q.shader_path.clone())
-            .chain(std::iter::once(TEXT_SHADER.to_owned()))
+            .map(|q| (q.shader_path.clone(), false))
+            .chain(std::iter::once((TEXT_SHADER.to_owned(), false)))
+            .chain(
+                self.scene
+                    .entity_meshes
+                    .values()
+                    .map(|d| (d.shader_path.clone(), true)),
+            )
             .collect();
-        let mesh_shaders: Vec<String> = self
-            .scene
-            .entity_meshes
-            .values()
-            .map(|d| d.shader_path.clone())
-            .collect();
-        for path in sprite_shaders.iter().chain(mesh_shaders.iter()) {
-            if !self.pipeline_cache.contains_key(path.as_str())
-                && !self.pipeline_errors.contains(path.as_str())
-            {
-                self.get_or_build_pipeline(vfs, path);
-            }
+        pipeline_keys.sort_unstable();
+        pipeline_keys.dedup();
+        for (path, back_cull) in &pipeline_keys {
+            self.get_or_build_pipeline(vfs, path, *back_cull);
         }
 
         // Main scene pass — sprites, meshes, and text share the same pass.
@@ -301,12 +382,20 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
 
             rpass.set_bind_group(0, &self.camera_bind_group, &[]);
+            rpass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
             // --- Sprites grouped by shader ------------------------------------
             // Collect (shader_path, entity_idx) pairs so we can sort by shader.
@@ -321,7 +410,7 @@ impl Renderer {
             let mut current_shader: Option<&str> = None;
             for (shader, idx) in &sprite_by_shader {
                 if current_shader != Some(shader) {
-                    match self.pipeline_cache.get(*shader) {
+                    match self.pipeline_cache.get(&(shader.to_string(), false)) {
                         Some(pipeline) => {
                             rpass.set_pipeline(pipeline);
                             current_shader = Some(shader);
@@ -358,7 +447,7 @@ impl Renderer {
             current_shader = None;
             for (shader, idx) in &mesh_by_shader {
                 if current_shader != Some(shader) {
-                    match self.pipeline_cache.get(*shader) {
+                    match self.pipeline_cache.get(&(shader.to_string(), true)) {
                         Some(pipeline) => {
                             rpass.set_pipeline(pipeline);
                             current_shader = Some(shader);
@@ -383,8 +472,10 @@ impl Renderer {
                 }
             }
 
-            // --- Text quads (always use the sprite shader) --------------------
-            if let Some(pipeline) = self.pipeline_cache.get(TEXT_SHADER) {
+            // --- Text quads (always use the sprite shader, no back-cull) ------
+            if let Some(pipeline) =
+                self.pipeline_cache.get(&(TEXT_SHADER.to_owned(), false))
+            {
                 rpass.set_pipeline(pipeline);
                 for quad in self.text.quads() {
                     rpass.set_bind_group(1, &quad.bind_group, &[]);
@@ -435,8 +526,15 @@ impl Renderer {
         Ok(())
     }
 
+    pub fn update_lighting(&mut self, data: &GpuLightingData) {
+        self.ctx
+            .queue
+            .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(data));
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         self.ctx.resize(width, height);
         self.aspect = width as f32 / height.max(1) as f32;
+        self.depth_view = create_depth_view(&self.ctx.device, width, height);
     }
 }

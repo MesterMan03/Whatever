@@ -1,9 +1,0 @@
-{
-  "name": "shader_test",
-  "module": "src/index.ts",
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "build": "bun build src/index.ts --outfile scripts/index.js --minify --external=@whatever-engine/api"
-  }
-}

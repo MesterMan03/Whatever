@@ -73,11 +73,14 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.spawnMesh(mesh, shader, position, options?)` → `Promise<Entity>` — convenience
 - `Scene.spawnText(text, position, options?)` → `Promise<Entity>` — convenience
 - `Scene.moveEntity(entity_id, position)` → `Promise<void>` — convenience
+- `Scene.addAmbientLight(color?, intensity?)` → `Promise<Entity>` — convenience
+- `Scene.addDirectionalLight(direction, color?, intensity?)` → `Promise<Entity>` — convenience
+- `Scene.addPointLight(position, color?, intensity?, range?)` → `Promise<Entity>` — convenience
 - `Scene.setParent(entity_id, parent_id | null)` — fire-and-forget
 - `Scene.getParent(entity_id)` → `Promise<string | null>`
 - `Scene.getChildren(entity_id)` → `Promise<string[]>`
 
-Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
 
 ### `BuiltInComponents.Transform`
 
@@ -101,7 +104,7 @@ Methods (all setters chainable, return `this`):
 ### `BuiltInComponents.MeshRenderer`
 
 - `getMesh()`, `setMesh(path)` — VFS mesh path (`.json`, `.obj`, `.glb`, `.gltf`)
-- `getShader()`, `setShader(path)` — VFS shader path (see `docs/SHADER.md`)
+- `getShader()`, `setShader(path)` — VFS shader path (default: `"core://shaders/mesh_lit.wgsl"`; see `docs/SHADER.md`)
 - `getTexture()`, `setTexture(path | null)` — VFS texture path; `null` = 1×1 white fallback
 
 ### `BuiltInComponents.TextRenderer`
@@ -118,6 +121,29 @@ Makes an entity usable as a scene camera. Requires `core:transform` on the same 
 - `getFov()`, `setFov(degrees)` — vertical FOV in degrees (default: `45`)
 - `getZNear()`, `setZNear(v)` — near clip plane (default: `0.1`)
 - `getZFar()`, `setZFar(v)` — far clip plane (default: `1000`)
+
+### `BuiltInComponents.AmbientLight`
+
+Uniform fill light. Multiple ambient lights are additive. No position needed.
+
+- `getColor()`, `setColor(r, g, b)` — RGB colour, channels in `[0.0, 1.0]` (default: white)
+- `getIntensity()`, `setIntensity(v)` — multiplier (default: `0.1`)
+
+### `BuiltInComponents.DirectionalLight`
+
+Infinitely distant light (sun-like). Max 4 active simultaneously.
+
+- `getDirection()`, `setDirection(x, y, z)` — normalised world-space direction (default: `[0, -1, 0]`)
+- `getColor()`, `setColor(r, g, b)` — RGB colour (default: white)
+- `getIntensity()`, `setIntensity(v)` — multiplier (default: `1.0`)
+
+### `BuiltInComponents.PointLight`
+
+Omnidirectional point light. Position comes from `core:transform`. Max 8 active simultaneously.
+
+- `getColor()`, `setColor(r, g, b)` — RGB colour (default: white)
+- `getIntensity()`, `setIntensity(v)` — multiplier (default: `1.0`)
+- `getRange()`, `setRange(v)` — attenuation radius in world units (default: `10`)
 
 ### `Mods`
 

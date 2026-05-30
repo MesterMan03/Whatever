@@ -431,6 +431,30 @@ preserving its rotation and scale.
 await Scene.moveEntity(id, [x, y, z]);
 ```
 
+### `Scene.addAmbientLight(color?, intensity?)` → `Promise<Entity>`
+
+Convenience: create an entity and attach `core:ambient_light`. Multiple ambient lights are additive.
+
+```ts
+await Scene.addAmbientLight([1, 0.9, 0.7], 0.15);
+```
+
+### `Scene.addDirectionalLight(direction, color?, intensity?)` → `Promise<Entity>`
+
+Convenience: create an entity and attach `core:directional_light`.
+
+```ts
+await Scene.addDirectionalLight([0, -1, -0.3], [1, 1, 1], 1.0);
+```
+
+### `Scene.addPointLight(position, color?, intensity?, range?)` → `Promise<Entity>`
+
+Convenience: create an entity with `core:transform` + `core:point_light`. The light is emitted from `position` in all directions.
+
+```ts
+await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15);
+```
+
 ### `Scene.setParent(entity_id, parent_id)`
 
 Attach an entity to a parent by raw IDs. Pass `null` as `parent_id` to detach.
@@ -554,7 +578,7 @@ Returned by `getComponent("core:mesh_renderer")`. Renders arbitrary triangle geo
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `mesh` | `string` | — | VFS path to mesh file (`.json`, `.obj`, `.glb`, `.gltf`) |
-| `shader` | `string` | `"core://shaders/sprite.wgsl"` | VFS path to a WGSL shader |
+| `shader` | `string` | `"core://shaders/mesh_lit.wgsl"` | VFS path to a WGSL shader |
 | `texture` | `string \| null` | `null` | VFS path to texture; `null` uses a 1×1 white fallback |
 
 | Method | Returns | Description |
@@ -645,6 +669,77 @@ Engine.on("tick", async ({ delta_seconds }) => {
   t.addZ(-5 * delta_seconds); // fly forward along -Z
   cam.setComponent(t);
 });
+```
+
+#### `BuiltInComponents.AmbientLight`
+
+Returned by `getComponent("core:ambient_light")`. Contributes a uniform fill light to the scene. Multiple ambient lights are **additive**.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `color` | `[r, g, b]` | `[1, 1, 1]` | RGB colour, each channel in `[0.0, 1.0]` |
+| `intensity` | `number` | `0.1` | Multiplier for the colour |
+
+| Method | Returns | Description |
+|---|---|---|
+| `getColor()` | `[r, g, b]` | Copy of the colour tuple |
+| `setColor(r, g, b)` | `this` | Change the colour |
+| `getIntensity()` | `number` | Current intensity |
+| `setIntensity(v)` | `this` | Change the intensity |
+
+```ts
+// Soft warm ambient fill
+await Scene.addAmbientLight([1, 0.9, 0.7], 0.15);
+```
+
+#### `BuiltInComponents.DirectionalLight`
+
+Returned by `getComponent("core:directional_light")`. Simulates an infinitely distant light source (e.g. the sun). Up to **4** directional lights are active simultaneously; extras are silently ignored.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `direction` | `[x, y, z]` | `[0, -1, 0]` | Normalised direction the light travels **towards** (world space) |
+| `color` | `[r, g, b]` | `[1, 1, 1]` | RGB colour, each channel in `[0.0, 1.0]` |
+| `intensity` | `number` | `1.0` | Multiplier for the colour |
+
+| Method | Returns | Description |
+|---|---|---|
+| `getDirection()` | `[x, y, z]` | Copy of the direction tuple |
+| `setDirection(x, y, z)` | `this` | Change the direction |
+| `getColor()` | `[r, g, b]` | Copy of the colour tuple |
+| `setColor(r, g, b)` | `this` | Change the colour |
+| `getIntensity()` | `number` | Current intensity |
+| `setIntensity(v)` | `this` | Change the intensity |
+
+```ts
+// Sun shining down and slightly forward
+await Scene.addDirectionalLight([0, -1, -0.3], [1, 0.95, 0.8], 1.2);
+```
+
+#### `BuiltInComponents.PointLight`
+
+Returned by `getComponent("core:point_light")`. Emits light in all directions from the entity's `core:transform` position. Attenuation is quadratic — falls off to zero at `range` units. Up to **8** point lights are active simultaneously; extras are silently ignored.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `color` | `[r, g, b]` | `[1, 1, 1]` | RGB colour, each channel in `[0.0, 1.0]` |
+| `intensity` | `number` | `1.0` | Multiplier for the colour |
+| `range` | `number` | `10` | Distance (world units) at which the light reaches zero |
+
+| Method | Returns | Description |
+|---|---|---|
+| `getColor()` | `[r, g, b]` | Copy of the colour tuple |
+| `setColor(r, g, b)` | `this` | Change the colour |
+| `getIntensity()` | `number` | Current intensity |
+| `setIntensity(v)` | `this` | Change the intensity |
+| `getRange()` | `number` | Current range |
+| `setRange(v)` | `this` | Change the range |
+
+Requires a `core:transform` on the same entity to provide the position.
+
+```ts
+// Orange glow above the origin
+await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15);
 ```
 
 ---

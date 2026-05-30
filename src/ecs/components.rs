@@ -51,10 +51,77 @@ pub struct MeshRenderer {
     /// VFS path to the mesh file.
     pub mesh: String,
     /// VFS path to a WGSL shader that satisfies the engine shader contract.
+    /// Defaults to `"core://shaders/mesh_lit.wgsl"` (Blinn-Phong lit shader).
+    #[serde(default = "default_mesh_shader")]
     pub shader: String,
     /// Optional VFS path to a texture.  When absent the engine binds a 1×1 white fallback.
     #[serde(default)]
     pub texture: Option<String>,
+}
+
+fn default_mesh_shader() -> String {
+    "core://shaders/mesh_lit.wgsl".to_owned()
+}
+
+pub const COMPONENT_AMBIENT_LIGHT: &str = "core:ambient_light";
+
+/// Global ambient light — every surface receives this regardless of orientation.
+/// If multiple entities have this component their contributions are summed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmbientLight {
+    /// RGB colour, each channel `[0.0, 1.0]`.  Defaults to white.
+    #[serde(default = "default_light_color")]
+    pub color: [f32; 3],
+    /// Brightness multiplier.  Defaults to `0.1`.
+    #[serde(default = "default_ambient_intensity")]
+    pub intensity: f32,
+}
+
+fn default_ambient_intensity() -> f32 {
+    0.1
+}
+
+pub const COMPONENT_DIRECTIONAL_LIGHT: &str = "core:directional_light";
+
+/// Infinite-distance directional light (like the sun).
+/// `direction` is the normalized world-space vector pointing **toward** the light
+/// (i.e. the negation of the light's travel direction).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectionalLight {
+    /// Normalized world-space direction toward the light source.
+    pub direction: [f32; 3],
+    /// RGB colour, each channel `[0.0, 1.0]`.
+    #[serde(default = "default_light_color")]
+    pub color: [f32; 3],
+    /// Brightness multiplier.
+    #[serde(default = "default_light_intensity")]
+    pub intensity: f32,
+}
+
+pub const COMPONENT_POINT_LIGHT: &str = "core:point_light";
+
+/// Omnidirectional point light.  Position is read from the entity's `core:transform`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PointLight {
+    /// RGB colour, each channel `[0.0, 1.0]`.
+    #[serde(default = "default_light_color")]
+    pub color: [f32; 3],
+    /// Brightness multiplier.
+    #[serde(default = "default_light_intensity")]
+    pub intensity: f32,
+    /// Maximum illumination radius in world units.
+    #[serde(default = "default_point_light_range")]
+    pub range: f32,
+}
+
+fn default_light_color() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
+}
+fn default_light_intensity() -> f32 {
+    1.0
+}
+fn default_point_light_range() -> f32 {
+    10.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

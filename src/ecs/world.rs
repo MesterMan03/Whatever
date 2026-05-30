@@ -1,7 +1,8 @@
 use super::components::{
-    COMPONENT_CAMERA, COMPONENT_MESH_RENDERER, COMPONENT_SPRITE_RENDERER,
-    COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, CameraComponent, MeshRenderer, SpriteRenderer,
-    TextRenderer, Transform,
+    COMPONENT_AMBIENT_LIGHT, COMPONENT_CAMERA, COMPONENT_DIRECTIONAL_LIGHT,
+    COMPONENT_MESH_RENDERER, COMPONENT_POINT_LIGHT, COMPONENT_SPRITE_RENDERER,
+    COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, AmbientLight, CameraComponent, DirectionalLight,
+    MeshRenderer, PointLight, SpriteRenderer, TextRenderer, Transform,
 };
 use super::entity::{EntityAllocator, EntityId};
 use glam::{Quat, Vec3};
@@ -14,6 +15,9 @@ pub struct World {
     pub text_renderers: HashMap<u32, TextRenderer>,
     pub camera_components: HashMap<u32, CameraComponent>,
     pub mesh_renderers: HashMap<u32, MeshRenderer>,
+    pub ambient_lights: HashMap<u32, AmbientLight>,
+    pub directional_lights: HashMap<u32, DirectionalLight>,
+    pub point_lights: HashMap<u32, PointLight>,
     /// `type_id` → (`entity_index` → JSON blob)
     pub custom: HashMap<String, HashMap<u32, serde_json::Value>>,
     /// child index → parent `EntityId`
@@ -31,6 +35,9 @@ impl World {
             text_renderers: HashMap::new(),
             camera_components: HashMap::new(),
             mesh_renderers: HashMap::new(),
+            ambient_lights: HashMap::new(),
+            directional_lights: HashMap::new(),
+            point_lights: HashMap::new(),
             custom: HashMap::new(),
             parents: HashMap::new(),
             children: HashMap::new(),
@@ -222,6 +229,9 @@ impl World {
             self.text_renderers.remove(&idx);
             self.camera_components.remove(&idx);
             self.mesh_renderers.remove(&idx);
+            self.ambient_lights.remove(&idx);
+            self.directional_lights.remove(&idx);
+            self.point_lights.remove(&idx);
             for type_map in self.custom.values_mut() {
                 type_map.remove(&idx);
             }
@@ -289,6 +299,35 @@ impl World {
                     return false;
                 }
             },
+            COMPONENT_AMBIENT_LIGHT => match serde_json::from_value::<AmbientLight>(data) {
+                Ok(l) => {
+                    self.ambient_lights.insert(idx, l);
+                }
+                Err(e) => {
+                    tracing::warn!("invalid core:ambient_light data: {e}");
+                    return false;
+                }
+            },
+            COMPONENT_DIRECTIONAL_LIGHT => {
+                match serde_json::from_value::<DirectionalLight>(data) {
+                    Ok(l) => {
+                        self.directional_lights.insert(idx, l);
+                    }
+                    Err(e) => {
+                        tracing::warn!("invalid core:directional_light data: {e}");
+                        return false;
+                    }
+                }
+            }
+            COMPONENT_POINT_LIGHT => match serde_json::from_value::<PointLight>(data) {
+                Ok(l) => {
+                    self.point_lights.insert(idx, l);
+                }
+                Err(e) => {
+                    tracing::warn!("invalid core:point_light data: {e}");
+                    return false;
+                }
+            },
             _ => {
                 self.custom
                     .entry(type_id.to_owned())
@@ -311,6 +350,9 @@ impl World {
             COMPONENT_TEXT_RENDERER => self.text_renderers.remove(&idx).is_some(),
             COMPONENT_CAMERA => self.camera_components.remove(&idx).is_some(),
             COMPONENT_MESH_RENDERER => self.mesh_renderers.remove(&idx).is_some(),
+            COMPONENT_AMBIENT_LIGHT => self.ambient_lights.remove(&idx).is_some(),
+            COMPONENT_DIRECTIONAL_LIGHT => self.directional_lights.remove(&idx).is_some(),
+            COMPONENT_POINT_LIGHT => self.point_lights.remove(&idx).is_some(),
             _ => self
                 .custom
                 .get_mut(type_id)
@@ -346,6 +388,18 @@ impl World {
                 .mesh_renderers
                 .get(&idx)
                 .and_then(|m| serde_json::to_value(m).ok()),
+            COMPONENT_AMBIENT_LIGHT => self
+                .ambient_lights
+                .get(&idx)
+                .and_then(|l| serde_json::to_value(l).ok()),
+            COMPONENT_DIRECTIONAL_LIGHT => self
+                .directional_lights
+                .get(&idx)
+                .and_then(|l| serde_json::to_value(l).ok()),
+            COMPONENT_POINT_LIGHT => self
+                .point_lights
+                .get(&idx)
+                .and_then(|l| serde_json::to_value(l).ok()),
             _ => self.custom.get(type_id)?.get(&idx).cloned(),
         }
     }
