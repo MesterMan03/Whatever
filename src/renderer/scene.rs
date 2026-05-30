@@ -170,9 +170,10 @@ impl Scene {
             .get(&entity_idx)
             .is_none_or(|d| d.mesh_path != mesh_renderer.mesh);
 
-        let texture_changed = self.entity_meshes.get(&entity_idx).is_none_or(|d| {
-            d.texture_path.as_deref() != mesh_renderer.texture.as_deref()
-        });
+        let texture_changed = self
+            .entity_meshes
+            .get(&entity_idx)
+            .is_none_or(|d| d.texture_path.as_deref() != mesh_renderer.texture.as_deref());
 
         // Ensure the CPU mesh is cached.
         if mesh_changed || !self.mesh_cpu_cache.contains_key(&mesh_renderer.mesh) {
@@ -198,16 +199,18 @@ impl Scene {
             .collect();
 
         // Fast path: only transform changed — reuse buffers and bind group.
-        if !mesh_changed && !texture_changed
-            && let Some(drawable) = self.entity_meshes.get_mut(&entity_idx) {
-                queue.write_buffer(
-                    &drawable.vertex_buffer,
-                    0,
-                    bytemuck::cast_slice(&transformed),
-                );
-                drawable.shader_path = mesh_renderer.shader.clone();
-                return Ok(());
-            }
+        if !mesh_changed
+            && !texture_changed
+            && let Some(drawable) = self.entity_meshes.get_mut(&entity_idx)
+        {
+            queue.write_buffer(
+                &drawable.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&transformed),
+            );
+            drawable.shader_path = mesh_renderer.shader.clone();
+            return Ok(());
+        }
 
         // Full (re)build.
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -61,9 +61,10 @@ impl World {
 
         // Detach from current parent first.
         if let Some(old_parent) = self.parents.remove(&child_id.index)
-            && let Some(siblings) = self.children.get_mut(&old_parent.index) {
-                siblings.retain(|&idx| idx != child_id.index);
-            }
+            && let Some(siblings) = self.children.get_mut(&old_parent.index)
+        {
+            siblings.retain(|&idx| idx != child_id.index);
+        }
 
         let Some(parent_id) = parent_id else {
             // Detach only — done.
@@ -206,9 +207,10 @@ impl World {
 
         // Detach the root from its own parent.
         if let Some(old_parent) = self.parents.remove(&id.index)
-            && let Some(siblings) = self.children.get_mut(&old_parent.index) {
-                siblings.retain(|&i| i != id.index);
-            }
+            && let Some(siblings) = self.children.get_mut(&old_parent.index)
+        {
+            siblings.retain(|&i| i != id.index);
+        }
 
         // Free every entity in the subtree.
         for idx in to_destroy {
