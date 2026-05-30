@@ -70,13 +70,14 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.getComponent(entity_id, component_type)` → `Promise<T | null>` — typed for built-in components
 - `Scene.query(component_types)` → `Promise<QueryResult[]>` — each row has `entity: Entity` and `components`
 - `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>` — convenience
+- `Scene.spawnMesh(mesh, shader, position, options?)` → `Promise<Entity>` — convenience
 - `Scene.spawnText(text, position, options?)` → `Promise<Entity>` — convenience
 - `Scene.moveEntity(entity_id, position)` → `Promise<void>` — convenience
 - `Scene.setParent(entity_id, parent_id | null)` — fire-and-forget
 - `Scene.getParent(entity_id)` → `Promise<string | null>`
 - `Scene.getChildren(entity_id)` → `Promise<string[]>`
 
-Built-in component types: `core:transform`, `core:sprite_renderer`, `core:text_renderer`, `core:camera`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
 
 ### `BuiltInComponents.Transform`
 
@@ -95,6 +96,13 @@ Methods (all setters chainable, return `this`):
 ### `BuiltInComponents.SpriteRenderer`
 
 - `getTexture()`, `setTexture(path)` — VFS texture path
+- `getShader()`, `setShader(path)` — VFS shader path (default: `"core://shaders/sprite.wgsl"`; see `docs/SHADER.md`)
+
+### `BuiltInComponents.MeshRenderer`
+
+- `getMesh()`, `setMesh(path)` — VFS mesh path (`.json`, `.obj`, `.glb`, `.gltf`)
+- `getShader()`, `setShader(path)` — VFS shader path (see `docs/SHADER.md`)
+- `getTexture()`, `setTexture(path | null)` — VFS texture path; `null` = 1×1 white fallback
 
 ### `BuiltInComponents.TextRenderer`
 
@@ -135,4 +143,4 @@ Inter-mod communication. Payloads must be JSON-serializable.
 bun run build:types
 ```
 
-Full API documentation is in [`docs/scripting-api.md`](../docs/scripting-api.md) at the repo root.
+Full API documentation is in [`docs/SCRIPTING.md`](../docs/SCRIPTING.md) at the repo root.

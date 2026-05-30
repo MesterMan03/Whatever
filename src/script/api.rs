@@ -2,7 +2,8 @@ use super::host::{PendingReply, ScriptHost};
 use super::ipc::{EngineMessage, ModManifestDto, QueryResultDto, ScriptMessage};
 use crate::debug::DebugLogger;
 use crate::ecs::{
-    COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER, COMPONENT_TRANSFORM, EntityId, World,
+    COMPONENT_MESH_RENDERER, COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER,
+    COMPONENT_TRANSFORM, EntityId, World,
 };
 use crate::mods::ModRegistry;
 use base64::Engine as _;
@@ -27,6 +28,8 @@ pub enum RenderCommand {
     RemoveSprite { entity_idx: u32 },
     UpsertText { entity_idx: u32 },
     RemoveText { entity_idx: u32 },
+    UpsertMesh { entity_idx: u32 },
+    RemoveMesh { entity_idx: u32 },
 }
 
 // --- Dispatcher --------------------------------------------------------------
@@ -278,6 +281,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             let idx = id.index;
             let had_sprite = world.is_alive(&id) && world.sprite_renderers.contains_key(&idx);
             let had_text = world.is_alive(&id) && world.text_renderers.contains_key(&idx);
+            let had_mesh = world.is_alive(&id) && world.mesh_renderers.contains_key(&idx);
             world.destroy_entity(id);
             let mut render_cmds = Vec::new();
             if had_sprite {
@@ -285,6 +289,9 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             }
             if had_text {
                 render_cmds.push(RenderCommand::RemoveText { entity_idx: idx });
+            }
+            if had_mesh {
+                render_cmds.push(RenderCommand::RemoveMesh { entity_idx: idx });
             }
             if !render_cmds.is_empty() {
                 return DispatchResult {
@@ -343,6 +350,9 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                     }
                     if world.text_renderers.contains_key(&idx) {
                         render_cmds.push(RenderCommand::UpsertText { entity_idx: idx });
+                    }
+                    if world.mesh_renderers.contains_key(&idx) {
+                        render_cmds.push(RenderCommand::UpsertMesh { entity_idx: idx });
                     }
                 }
             }
@@ -428,6 +438,16 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                     ..Default::default()
                 };
             }
+            // Emit UpsertMesh only once both mesh renderer components are present.
+            if (component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_MESH_RENDERER)
+                && has_transform
+                && world.mesh_renderers.contains_key(&idx)
+            {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::UpsertMesh { entity_idx: idx }],
+                    ..Default::default()
+                };
+            }
         }
         ScriptMessage::ComponentRemove {
             entity_id,
@@ -449,6 +469,14 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_TEXT_RENDERER {
                 return DispatchResult {
                     render_cmds: vec![RenderCommand::RemoveText { entity_idx: idx }],
+                    ..Default::default()
+                };
+            }
+            if component_type == COMPONENT_TRANSFORM
+                || component_type == COMPONENT_MESH_RENDERER
+            {
+                return DispatchResult {
+                    render_cmds: vec![RenderCommand::RemoveMesh { entity_idx: idx }],
                     ..Default::default()
                 };
             }

@@ -1,5 +1,6 @@
-use super::texture::{GpuTexture, load_from_vfs};
-use crate::ecs::{SpriteRenderer, Transform};
+use super::mesh::{CpuMesh, load_mesh_from_vfs};
+use super::texture::{GpuTexture, create_from_pixels, load_from_vfs};
+use crate::ecs::{MeshRenderer, SpriteRenderer, Transform};
 use crate::vfs::{Vfs, VfsPath};
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3};
@@ -34,11 +35,28 @@ pub struct TexturedQuad {
     pub bind_group: wgpu::BindGroup,
     /// Cached VFS path; used to skip texture reloads when only the transform changed.
     pub texture_path: String,
+    /// Shader VFS path; used to look up the right pipeline at draw time.
+    pub shader_path: String,
+}
+
+pub struct MeshDrawable {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub index_count: u32,
+    pub bind_group: wgpu::BindGroup,
+    /// `None` means the fallback 1×1 white texture was used.
+    pub texture_path: Option<String>,
+    pub mesh_path: String,
+    pub shader_path: String,
 }
 
 pub struct Scene {
     /// Entity index → GPU sprite resources.
     pub entity_sprites: HashMap<u32, TexturedQuad>,
+    /// Entity index → GPU mesh resources.
+    pub entity_meshes: HashMap<u32, MeshDrawable>,
+    /// VFS path → parsed CPU-side mesh (avoids re-parsing on every transform change).
+    mesh_cpu_cache: HashMap<String, CpuMesh>,
 }
 
 pub struct RenderContext<'a> {
@@ -53,17 +71,25 @@ pub struct SpriteUpdateTarget<'a> {
     pub sprite: &'a SpriteRenderer,
 }
 
+pub struct MeshUpdateTarget<'a> {
+    pub entity_idx: u32,
+    pub transform: &'a Transform,
+    pub mesh_renderer: &'a MeshRenderer,
+}
+
 impl Scene {
     pub fn new() -> Self {
         Scene {
             entity_sprites: HashMap::new(),
+            entity_meshes: HashMap::new(),
+            mesh_cpu_cache: HashMap::new(),
         }
     }
 
     /// Create or update the sprite for `entity_idx`.
     ///
-    /// - If the entity already has a quad and the texture path is unchanged,
-    ///   only the vertex buffer is updated (cheap `queue.write_buffer`).
+    /// - If the entity already has a quad and the texture / shader paths are
+    ///   unchanged, only the vertex buffer is updated (cheap `queue.write_buffer`).
     /// - If the texture path changed or the entity is new, GPU resources are
     ///   (re)created.
     pub fn update_sprite(
@@ -87,6 +113,7 @@ impl Scene {
                 quad.bind_group = make_bind_group(device, bgl, &tex);
                 quad.texture_path = sprite.texture.clone();
             }
+            quad.shader_path = sprite.shader.clone();
             return Ok(());
         }
 
@@ -109,6 +136,7 @@ impl Scene {
                 index_buffer,
                 bind_group: make_bind_group(device, bgl, &tex),
                 texture_path: sprite.texture.clone(),
+                shader_path: sprite.shader.clone(),
             },
         );
         Ok(())
@@ -117,10 +145,122 @@ impl Scene {
     pub fn remove_sprite(&mut self, entity_idx: u32) {
         self.entity_sprites.remove(&entity_idx);
     }
+
+    /// Create or update the mesh drawable for `entity_idx`.
+    ///
+    /// The CPU mesh is cached by VFS path.  On a transform-only change the
+    /// cached vertices are re-transformed and written to the existing buffer.
+    pub fn update_mesh(
+        &mut self,
+        vfs: &dyn Vfs,
+        target: MeshUpdateTarget,
+        ctx: RenderContext,
+    ) -> anyhow::Result<()> {
+        let RenderContext { device, queue, bgl } = ctx;
+        let MeshUpdateTarget {
+            entity_idx,
+            transform,
+            mesh_renderer,
+        } = target;
+
+        let mesh_changed = self
+            .entity_meshes
+            .get(&entity_idx)
+            .map_or(true, |d| d.mesh_path != mesh_renderer.mesh);
+
+        let texture_changed = self.entity_meshes.get(&entity_idx).map_or(true, |d| {
+            d.texture_path.as_deref() != mesh_renderer.texture.as_deref()
+        });
+
+        // Ensure the CPU mesh is cached.
+        if mesh_changed || !self.mesh_cpu_cache.contains_key(&mesh_renderer.mesh) {
+            let cpu = load_mesh_from_vfs(vfs, &mesh_renderer.mesh)
+                .map_err(|e| anyhow::anyhow!("load mesh '{}': {e}", mesh_renderer.mesh))?;
+            self.mesh_cpu_cache
+                .insert(mesh_renderer.mesh.clone(), cpu);
+        }
+
+        let cpu = self
+            .mesh_cpu_cache
+            .get(&mesh_renderer.mesh)
+            .expect("just inserted");
+
+        // Apply transform to every vertex on the CPU.
+        let transformed: Vec<Vertex> = cpu
+            .vertices
+            .iter()
+            .map(|v| Vertex {
+                position: apply_transform(v.position, transform),
+                tex_coords: v.tex_coords,
+            })
+            .collect();
+
+        // Fast path: only transform changed — reuse buffers and bind group.
+        if !mesh_changed && !texture_changed {
+            if let Some(drawable) = self.entity_meshes.get_mut(&entity_idx) {
+                queue.write_buffer(
+                    &drawable.vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&transformed),
+                );
+                drawable.shader_path = mesh_renderer.shader.clone();
+                return Ok(());
+            }
+        }
+
+        // Full (re)build.
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh_vb"),
+            contents: bytemuck::cast_slice(&transformed),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh_ib"),
+            contents: bytemuck::cast_slice(&cpu.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let index_count = cpu.indices.len() as u32;
+
+        let (bind_group, texture_path) = match &mesh_renderer.texture {
+            Some(tex_path) => {
+                let tex = load_texture(device, queue, vfs, tex_path)?;
+                (make_bind_group(device, bgl, &tex), Some(tex_path.clone()))
+            }
+            None => {
+                // Clone the bind group reference — we store a fresh bind group
+                // built from the fallback texture that was created at renderer init.
+                // Since we can't clone wgpu::BindGroup, we keep using the renderer's
+                // fallback directly; store None in texture_path as a sentinel.
+                //
+                // Build a 1×1 opaque-white fallback texture inline.
+                let white = create_from_pixels(device, queue, &[255, 255, 255, 255], 1, 1);
+                (make_bind_group(device, bgl, &white), None)
+            }
+        };
+
+        self.entity_meshes.insert(
+            entity_idx,
+            MeshDrawable {
+                vertex_buffer,
+                index_buffer,
+                index_count,
+                bind_group,
+                texture_path,
+                mesh_path: mesh_renderer.mesh.clone(),
+                shader_path: mesh_renderer.shader.clone(),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn remove_mesh(&mut self, entity_idx: u32) {
+        self.entity_meshes.remove(&entity_idx);
+    }
 }
 
 // --- helpers -----------------------------------------------------------------
 
+/// Build the four vertices of a textured quad from a `Transform`.
 fn build_vertices(transform: &Transform) -> [Vertex; 4] {
     let origin = Vec3::from(transform.position);
     let [sx, _, sz] = transform.scale;
@@ -155,6 +295,16 @@ fn build_vertices(transform: &Transform) -> [Vertex; 4] {
             tex_coords: [0.0, 0.0],
         },
     ]
+}
+
+/// Apply a `Transform` (position + rotation + scale) to a model-space vertex position.
+fn apply_transform(pos: [f32; 3], transform: &Transform) -> [f32; 3] {
+    let v = Vec3::from(pos);
+    let scale = Vec3::from(transform.scale);
+    let [qx, qy, qz, qw] = transform.rotation;
+    let rot = Quat::from_xyzw(qx, qy, qz, qw);
+    let origin = Vec3::from(transform.position);
+    (rot * (scale * v) + origin).to_array()
 }
 
 fn load_texture(

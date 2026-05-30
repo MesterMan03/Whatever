@@ -69,7 +69,7 @@ bun run build:runtime
 ## Documentation
 
 **When modifying any file under `runtime/src/`** (the `@whatever-engine/api` scripting API), always update
-`docs/scripting-api.md` and `runtime/README.md` to reflect the changes (`docs/scripting-api.md` may contain detailed
+`docs/SCRIPTING.md` and `runtime/README.md` to reflect the changes (`docs/SCRIPTING.md` may contain detailed
 type descriptions, while `runtime/README.md` should only have basic function headers).
 The doc must stay in sync with the actual exported namespaces, types, and IPC messages.
 After editing, run `bun run build:runtime` to rebuild `runtime/dist/`.

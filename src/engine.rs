@@ -6,7 +6,8 @@ use crate::input::InputState;
 use crate::logging::{LogMirror, SharedLogWriter};
 use crate::mods::{GameMeta, ModRegistry, discover_and_load};
 use crate::renderer::{
-    EguiOutput, RenderContext, Renderer, SpriteUpdateTarget, WgpuContext, view_proj_from_entity,
+    EguiOutput, MeshUpdateTarget, RenderContext, Renderer, SpriteUpdateTarget, WgpuContext,
+    view_proj_from_entity,
 };
 use crate::sandbox::SandboxConfig;
 use crate::script::ipc::{EngineMessage, ScriptMessage};
@@ -303,7 +304,7 @@ impl Engine {
         };
 
         if let Some(renderer) = self.renderer.as_mut()
-            && let Err(e) = renderer.render(camera_vp, egui_out.as_ref())
+            && let Err(e) = renderer.render(camera_vp, egui_out.as_ref(), self.vfs.as_ref())
         {
             tracing::error!("render error: {e}");
         }
@@ -696,6 +697,8 @@ fn apply_render_command(
             if let Err(e) = renderer.scene.update_sprite(vfs, target, ctx) {
                 tracing::warn!("update_sprite error (entity {}): {e}", entity_idx);
             }
+            // Pre-warm pipeline so the first render frame has no stall.
+            renderer.get_or_build_pipeline(vfs, &sprite.shader);
         }
         RenderCommand::RemoveSprite { entity_idx } => {
             renderer.scene.remove_sprite(*entity_idx);
@@ -723,6 +726,32 @@ fn apply_render_command(
         }
         RenderCommand::RemoveText { entity_idx } => {
             renderer.text.remove_text(*entity_idx);
+        }
+        RenderCommand::UpsertMesh { entity_idx } => {
+            let entity_id = world.allocator.alive_entity_ids().find(|e| e.index == *entity_idx);
+            let Some(entity_id) = entity_id else { return };
+            let Some(world_transform) = world.world_transform(&entity_id) else { return };
+            let Some(mesh_comp) = world.mesh_renderers.get(entity_idx) else { return };
+            let target = MeshUpdateTarget {
+                entity_idx: *entity_idx,
+                transform: &world_transform,
+                mesh_renderer: mesh_comp,
+            };
+            let ctx = RenderContext {
+                device: &renderer.ctx.device,
+                queue: &renderer.ctx.queue,
+                bgl: &renderer.texture_bind_group_layout,
+            };
+            // Clone shader path before the mutable borrow of renderer.scene.
+            let shader_path = mesh_comp.shader.clone();
+            if let Err(e) = renderer.scene.update_mesh(vfs, target, ctx) {
+                tracing::warn!("update_mesh error (entity {}): {e}", entity_idx);
+            }
+            // Pre-warm pipeline cache so the first render frame has no stall.
+            renderer.get_or_build_pipeline(vfs, &shader_path);
+        }
+        RenderCommand::RemoveMesh { entity_idx } => {
+            renderer.scene.remove_mesh(*entity_idx);
         }
     }
 }

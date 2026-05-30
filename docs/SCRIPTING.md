@@ -395,13 +395,30 @@ const label = await Scene.spawnText("Score: 0", [0, 0, 2], {
 ### `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>`
 
 Convenience: create an entity with `core:transform` and `core:sprite_renderer`
-pre-attached. Returns the entity.
+pre-attached. The `shader` field defaults to `"core://shaders/sprite.wgsl"`;
+use `entity.setComponent(new BuiltInComponents.SpriteRenderer({ ..., shader: "..." }))` to change it after spawning.
 
 ```ts
 const entity = await Scene.spawnSprite(
   "my_mod://textures/player.png",
   [0, 0, 0],
   [1, 1, 1],   // optional, defaults to [1, 1, 1]
+);
+```
+
+### `Scene.spawnMesh(mesh, shader, position, options?)` → `Promise<Entity>`
+
+Convenience: create an entity with `core:transform` and `core:mesh_renderer` pre-attached.
+
+```ts
+const entity = await Scene.spawnMesh(
+  "my_mod://meshes/triangle.glb",       // mesh path
+  "my_mod://shaders/tint.wgsl",     // shader path
+  [0, 0, -5],                       // world position
+  {
+    texture: "my_mod://textures/crate.png",  // optional
+    scale:   [2, 2, 2],                      // optional, defaults to [1, 1, 1]
+  },
 );
 ```
 
@@ -516,16 +533,40 @@ The constructor `new BuiltInComponents.Transform({ position?, rotation?, scale? 
 
 Returned by `getComponent("core:sprite_renderer")`.
 
-| Field | Type | Description |
-|---|---|---|
-| `texture` | `string` | VFS path `mod_id://path/to/texture` |
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `texture` | `string` | — | VFS path `mod_id://path/to/texture` |
+| `shader` | `string` | `"core://shaders/sprite.wgsl"` | VFS path to a WGSL shader; see `docs/SHADER.md` |
 
 | Method | Returns | Description |
 |---|---|---|
 | `getTexture()` | `string` | Current texture path |
 | `setTexture(path)` | `this` | Change the texture |
+| `getShader()` | `string` | Current shader VFS path |
+| `setShader(path)` | `this` | Change the shader |
 
 Sprites are rendered on the XZ plane; the Y axis is up. A sprite becomes visible as soon as the entity has **both** `core:transform` and `core:sprite_renderer` set.
+
+#### `BuiltInComponents.MeshRenderer`
+
+Returned by `getComponent("core:mesh_renderer")`. Renders arbitrary triangle geometry from a mesh file.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `mesh` | `string` | — | VFS path to mesh file (`.json`, `.obj`, `.glb`, `.gltf`) |
+| `shader` | `string` | `"core://shaders/sprite.wgsl"` | VFS path to a WGSL shader |
+| `texture` | `string \| null` | `null` | VFS path to texture; `null` uses a 1×1 white fallback |
+
+| Method | Returns | Description |
+|---|---|---|
+| `getMesh()` | `string` | Current mesh VFS path |
+| `setMesh(path)` | `this` | Change the mesh |
+| `getShader()` | `string` | Current shader VFS path |
+| `setShader(path)` | `this` | Change the shader |
+| `getTexture()` | `string \| null` | Current texture path or `null` |
+| `setTexture(path)` | `this` | Change the texture |
+
+A mesh entity becomes visible as soon as it has **both** `core:transform` and `core:mesh_renderer` set. The engine applies the transform (position, rotation, scale) to the mesh vertices on the CPU at upload time. See `docs/SHADER.md` for the supported mesh formats and shader contract.
 
 #### `BuiltInComponents.TextRenderer`
 

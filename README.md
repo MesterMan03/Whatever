@@ -45,6 +45,7 @@ mods/                   Engine-shipped mods (tracked in git)
     src/                TypeScript source for the core script
     scripts/            Compiled JS entry point (built from src/ via bun build:core)
   script_test/          Scripting API integration test
+  shader_test/          Custom shader and mesh renderer verification mod
 mods_user/              User-installed mods (gitignored)
 runtime/                @whatever-engine/api — TypeScript scripting API package
   src/                  Source
@@ -71,6 +72,7 @@ src/
   ecs/                  Entity-component system
 docs/
   scripting-api.md      Full scripting API reference
+  SHADER.md             Custom shader contract, mesh formats, and patterns
   SANDBOX.md            Security sandbox design and implementation details
 ```
 
@@ -119,7 +121,7 @@ Scripted mods run as a Bun subprocess per mod. The engine communicates over NDJS
 The `@whatever-engine/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory. 
 It contains all the necessary abstractions for the IPC messaging so that devs can work with properly typed structures without extra boilerplate.
 
-See [`docs/scripting-api.md`](docs/scripting-api.md) for the full reference.
+See [`docs/SCRIPTING.md`](docs/SCRIPTING.md) for the full reference.
 
 ### Regenerating type declarations
 

@@ -27,6 +27,34 @@ impl Default for Transform {
 pub struct SpriteRenderer {
     /// VFS path to the texture, e.g. `"my_mod://textures/player.png"`.
     pub texture: String,
+    /// VFS path to a WGSL shader that satisfies the engine shader contract.
+    /// Defaults to `"core://shaders/sprite.wgsl"`.
+    #[serde(default = "default_sprite_shader")]
+    pub shader: String,
+}
+
+fn default_sprite_shader() -> String {
+    "core://shaders/sprite.wgsl".to_owned()
+}
+
+pub const COMPONENT_MESH_RENDERER: &str = "core:mesh_renderer";
+
+/// Renders arbitrary geometry loaded from a mesh file.
+///
+/// The mesh file format is detected from the file extension:
+/// - `.json` — `{"vertices":[[x,y,z,u,v],...], "indices":[...]}`
+/// - `.obj`  — Wavefront OBJ (materials are ignored)
+/// - `.glb` / `.gltf` — glTF 2.0 (first mesh/primitive; materials and animations ignored;
+///   only GLB and self-contained GLTF with embedded buffers are supported)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshRenderer {
+    /// VFS path to the mesh file.
+    pub mesh: String,
+    /// VFS path to a WGSL shader that satisfies the engine shader contract.
+    pub shader: String,
+    /// Optional VFS path to a texture.  When absent the engine binds a 1×1 white fallback.
+    #[serde(default)]
+    pub texture: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

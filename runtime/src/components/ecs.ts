@@ -178,17 +178,55 @@ export namespace BuiltInComponents {
     }
   }
 
+  export const MESH_RENDERER_ID = "core:mesh_renderer";
+
   /** SpriteRenderer component. Returned by `getComponent("core:sprite_renderer")` as a live class instance. */
   export class SpriteRenderer implements Component {
     readonly id = SPRITE_RENDERER_ID;
     texture: string;
+    /** VFS path to a WGSL shader. Defaults to `"core://shaders/sprite.wgsl"`. */
+    shader: string;
 
-    constructor(init: { texture?: string; } = {}) {
+    constructor(init: { texture?: string; shader?: string } = {}) {
       this.texture = init.texture ?? "";
+      this.shader = init.shader ?? "core://shaders/sprite.wgsl";
     }
 
     getTexture(): string { return this.texture; }
     setTexture(texture: string): this { this.texture = texture; return this; }
+    getShader(): string { return this.shader; }
+    setShader(shader: string): this { this.shader = shader; return this; }
+  }
+
+  /**
+   * MeshRenderer component.  Renders arbitrary geometry loaded from a mesh file.
+   *
+   * Supported mesh formats (detected by file extension):
+   * - `.json`        — `{"vertices":[[x,y,z,u,v],...], "indices":[...]}`
+   * - `.obj`         — Wavefront OBJ (materials ignored)
+   * - `.glb`/`.gltf` — glTF 2.0, first mesh/primitive, geometry only
+   */
+  export class MeshRenderer implements Component {
+    readonly id = MESH_RENDERER_ID;
+    /** VFS path to the mesh file. */
+    mesh: string;
+    /** VFS path to a WGSL shader that satisfies the engine shader contract. */
+    shader: string;
+    /** Optional VFS path to a texture.  Omit to use the 1×1 white fallback. */
+    texture: string | null;
+
+    constructor(init: { mesh?: string; shader?: string; texture?: string | null } = {}) {
+      this.mesh = init.mesh ?? "";
+      this.shader = init.shader ?? "core://shaders/sprite.wgsl";
+      this.texture = init.texture ?? null;
+    }
+
+    getMesh(): string { return this.mesh; }
+    setMesh(mesh: string): this { this.mesh = mesh; return this; }
+    getShader(): string { return this.shader; }
+    setShader(shader: string): this { this.shader = shader; return this; }
+    getTexture(): string | null { return this.texture; }
+    setTexture(texture: string | null): this { this.texture = texture; return this; }
   }
 
   /**
@@ -260,14 +298,16 @@ interface _ComponentRegistry {
   [BuiltInComponents.SPRITE_RENDERER_ID]: BuiltInComponents.SpriteRenderer;
   [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
   [BuiltInComponents.CAMERA_ID]: BuiltInComponents.Camera;
+  [BuiltInComponents.MESH_RENDERER_ID]: BuiltInComponents.MeshRenderer;
 }
 
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
 interface _ComponentSetRegistry {
   [BuiltInComponents.TRANSFORM_ID]: { position: [number, number, number]; rotation: [number, number, number, number]; scale: [number, number, number] };
-  [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; };
+  [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; shader?: string };
   [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font?: string; font_size?: number; color?: [number, number, number, number]; };
   [BuiltInComponents.CAMERA_ID]: { fovy_degrees?: number; znear?: number; zfar?: number };
+  [BuiltInComponents.MESH_RENDERER_ID]: { mesh: string; shader: string; texture?: string | null };
 }
 
 // Converts raw component JSON into the appropriate class instance for built-in types.
@@ -276,6 +316,7 @@ const _componentHydrators: Record<string, (data: any) => any> = {
   "core:sprite_renderer": (data) => new BuiltInComponents.SpriteRenderer(data),
   "core:text_renderer": (data) => new BuiltInComponents.TextRenderer(data),
   "core:camera": (data) => new BuiltInComponents.Camera(data),
+  "core:mesh_renderer": (data) => new BuiltInComponents.MeshRenderer(data),
 };
 
 function _setComponentImpl<K extends keyof _ComponentSetRegistry>(entity_id: string, component_type: K, data: _ComponentSetRegistry[K]): void;
@@ -471,6 +512,30 @@ export const Scene = {
       font: options.font ?? "core://fonts/default.ttf",
       font_size: options.font_size ?? 24,
       color: options.color ?? [1, 1, 1, 1]
+    });
+    return entity;
+  },
+
+  /**
+   * Convenience: create an entity and attach `core:transform` + `core:mesh_renderer`.
+   * The mesh becomes visible as soon as both components are set.
+   */
+  async spawnMesh(
+    mesh: string,
+    shader: string,
+    position: [number, number, number],
+    options: { texture?: string | null; scale?: [number, number, number] } = {},
+  ): Promise<Entity> {
+    const entity = await Scene.createEntity();
+    entity.setComponent("core:transform", {
+      position,
+      rotation: [0, 0, 0, 1],
+      scale: options.scale ?? [1, 1, 1],
+    });
+    entity.setComponent("core:mesh_renderer", {
+      mesh,
+      shader,
+      texture: options.texture ?? null,
     });
     return entity;
   },

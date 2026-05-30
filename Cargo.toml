@@ -30,6 +30,8 @@ egui-winit = "0.30"
 chrono = "0.4.44"
 flate2 = "1"
 glyphon = "0.7"
+tobj    = "4"
+gltf    = { version = "1", default-features = false, features = ["utils", "import"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock    = "0.4"

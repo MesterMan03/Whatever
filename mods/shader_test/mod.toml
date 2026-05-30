@@ -1,0 +1,11 @@
+[mod]
+id          = "shader_test"
+name        = "Shader Test"
+version     = "0.1.0"
+description = "Verification mod for custom shaders and mesh rendering"
+
+[assets]
+root = "assets"
+
+[script]
+entry = "scripts/index.js"

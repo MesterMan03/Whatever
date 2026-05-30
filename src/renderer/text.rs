@@ -163,6 +163,7 @@ impl GlyphonText {
                     index_buffer,
                     bind_group,
                     texture_path: String::new(), // not VFS-backed
+                    shader_path: "core://shaders/sprite.wgsl".to_owned(),
                 },
                 world_w,
                 world_h,
