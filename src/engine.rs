@@ -1,3 +1,4 @@
+use crate::audio::AudioManager;
 use crate::console::command_node_from_spec;
 use crate::console::{ConsoleAction, DevConsole, EngineSettingAction};
 use crate::debug::{DebugConfig, DebugLogger};
@@ -58,6 +59,7 @@ pub struct Engine {
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
     should_quit: bool,
+    audio: AudioManager,
 }
 
 impl Engine {
@@ -162,6 +164,7 @@ impl Engine {
             egui_ctx: egui::Context::default(),
             egui_state: None,
             should_quit: false,
+            audio: AudioManager::new()?,
         })
     }
 
@@ -195,6 +198,14 @@ impl Engine {
 
         let messages = self.script_host.drain_messages(&mut self.debug);
         self.dispatch_messages(messages);
+
+        for (mod_id, audio_id) in self.audio.poll_finished() {
+            self.script_host.send(
+                &mod_id,
+                &EngineMessage::AudioClose { audio_id },
+                &mut self.debug,
+            );
+        }
 
         let now = Instant::now();
         while now.duration_since(self.last_tick) >= self.tick_interval {
@@ -359,6 +370,7 @@ impl Engine {
     fn dispatch_messages(&mut self, messages: Vec<(String, ScriptMessage)>) {
         if let Some(window) = self.window.as_ref() {
             let window = Arc::clone(window);
+            let vfs = Arc::clone(&self.vfs);
             for (mod_id, msg) in messages {
                 // Intercept tick subscriptions before the general dispatcher
                 if let ScriptMessage::Subscribe { ref events } = msg {
@@ -430,6 +442,8 @@ impl Engine {
                     game_id: &self.game_meta.game.id,
                     debug: &mut self.debug,
                     world: &mut self.world,
+                    vfs: vfs.as_ref(),
+                    audio: &mut self.audio,
                 };
 
                 let result = dispatch(&mod_id, msg, ctx);
@@ -592,6 +606,7 @@ impl Engine {
                         break;
                     };
                     let window = Arc::clone(window);
+                    let vfs = Arc::clone(&self.vfs);
                     let ctx = EngineContext {
                         window: &window,
                         script_host: &mut self.script_host,
@@ -599,6 +614,8 @@ impl Engine {
                         game_id: &self.game_meta.game.id,
                         debug: &mut self.debug,
                         world: &mut self.world,
+                        vfs: vfs.as_ref(),
+                        audio: &mut self.audio,
                     };
                     let result = dispatch(&mod_id, msg, ctx);
                     self.apply_dispatch_result(result);

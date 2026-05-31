@@ -1,11 +1,14 @@
 use super::host::{PendingReply, ScriptHost};
 use super::ipc::{EngineMessage, ModManifestDto, QueryResultDto, ScriptMessage};
+use crate::audio::manager::LoadOpts;
+use crate::audio::{AudioManager, CloseStrategy};
 use crate::debug::DebugLogger;
 use crate::ecs::{
     COMPONENT_MESH_RENDERER, COMPONENT_SPRITE_RENDERER, COMPONENT_TEXT_RENDERER,
     COMPONENT_TRANSFORM, EntityId, World,
 };
 use crate::mods::ModRegistry;
+use crate::vfs::{Vfs, VfsPath};
 use base64::Engine as _;
 use std::sync::Arc;
 use winit::window::Window;
@@ -41,6 +44,8 @@ pub struct EngineContext<'a> {
     pub game_id: &'a str,
     pub debug: &'a mut DebugLogger,
     pub world: &'a mut World,
+    pub vfs: &'a dyn Vfs,
+    pub audio: &'a mut AudioManager,
 }
 
 pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> DispatchResult {
@@ -51,6 +56,8 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         game_id,
         debug,
         world,
+        vfs,
+        audio,
     } = ctx;
     match msg {
         // --- Logging ---------------------------------------------------------
@@ -525,6 +532,147 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             );
         }
 
+        // --- Audio -----------------------------------------------------------
+        ScriptMessage::AudioLoad {
+            request_id,
+            audio_id,
+            path,
+            play,
+            volume,
+            speed,
+            loop_,
+            close_strategy,
+        } => {
+            debug.audio(mod_id, &format!("AudioLoad {audio_id} path={path} play={play}"));
+            let reply = match VfsPath::parse(&path) {
+                None => EngineMessage::AudioLoaded {
+                    request_id,
+                    audio_id,
+                    duration_ms: None,
+                    sample_rate: 0,
+                    channels: 0,
+                    error: Some(format!("invalid vfs path: {path}")),
+                },
+                Some(vfs_path) => match vfs.read(&vfs_path) {
+                    Err(e) => EngineMessage::AudioLoaded {
+                        request_id,
+                        audio_id,
+                        duration_ms: None,
+                        sample_rate: 0,
+                        channels: 0,
+                        error: Some(format!("vfs read error: {e}")),
+                    },
+                    Ok(data) => {
+                        let strategy = if close_strategy == "Manual" {
+                            CloseStrategy::Manual
+                        } else {
+                            CloseStrategy::Auto
+                        };
+                        let opts = LoadOpts { play, volume, speed, loop_: loop_, close_strategy: strategy };
+                        match audio.load(audio_id.clone(), mod_id.to_owned(), data, opts) {
+                            Ok(meta) => EngineMessage::AudioLoaded {
+                                request_id,
+                                audio_id,
+                                duration_ms: meta.duration_ms,
+                                sample_rate: meta.sample_rate,
+                                channels: meta.channels,
+                                error: None,
+                            },
+                            Err(e) => EngineMessage::AudioLoaded {
+                                request_id,
+                                audio_id,
+                                duration_ms: None,
+                                sample_rate: 0,
+                                channels: 0,
+                                error: Some(e.to_string()),
+                            },
+                        }
+                    }
+                },
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+
+        ScriptMessage::AudioPlay {
+            request_id,
+            audio_id,
+            volume,
+            speed,
+        } => {
+            debug.audio(mod_id, &format!("AudioPlay {audio_id}"));
+            let reply = match audio.play(&audio_id, volume, speed) {
+                Ok(pos) => build_audio_state(request_id, audio_id.clone(), pos, audio),
+                Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+
+        ScriptMessage::AudioPause { request_id, audio_id } => {
+            debug.audio(mod_id, &format!("AudioPause {audio_id}"));
+            let reply = match audio.pause(&audio_id) {
+                Ok(pos) => build_audio_state(request_id, audio_id.clone(), pos, audio),
+                Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+
+        ScriptMessage::AudioStop { audio_id } => {
+            debug.audio(mod_id, &format!("AudioStop {audio_id}"));
+            audio.stop(&audio_id);
+            script_host.send(mod_id, &EngineMessage::AudioClose { audio_id }, debug);
+        }
+
+        ScriptMessage::AudioSeekTo {
+            request_id,
+            audio_id,
+            position_ms,
+        } => {
+            debug.audio(mod_id, &format!("AudioSeekTo {audio_id} pos={position_ms}ms"));
+            let reply = match audio.seek_to(&audio_id, position_ms) {
+                Ok(prev) => build_audio_state(request_id, audio_id.clone(), prev, audio),
+                Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+
+        ScriptMessage::AudioSeek {
+            request_id,
+            audio_id,
+            offset_ms,
+        } => {
+            debug.audio(mod_id, &format!("AudioSeek {audio_id} offset={offset_ms}ms"));
+            let reply = match audio.seek(&audio_id, offset_ms) {
+                Ok(new_pos) => build_audio_state(request_id, audio_id.clone(), new_pos, audio),
+                Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+
+        ScriptMessage::AudioSetLoop { audio_id, loop_ } => {
+            debug.audio(mod_id, &format!("AudioSetLoop {audio_id} loop={loop_}"));
+            if let Err(e) = audio.set_loop(&audio_id, loop_) {
+                tracing::warn!(mod_id, "AudioSetLoop {audio_id}: {e}");
+            }
+        }
+
+        ScriptMessage::AudioQuery { request_id, audio_id } => {
+            debug.audio(mod_id, &format!("AudioQuery {audio_id}"));
+            let reply = match audio.query(&audio_id) {
+                Ok(state) => EngineMessage::AudioState {
+                    request_id,
+                    audio_id,
+                    position_ms: state.position_ms,
+                    volume: state.volume,
+                    speed: state.speed,
+                    is_playing: state.is_playing,
+                    is_looping: state.is_looping,
+                    error: None,
+                },
+                Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
+            };
+            script_host.send(mod_id, &reply, debug);
+        }
+
         // --- Tick rate -------------------------------------------------------
         ScriptMessage::SetTickRate { ticks_per_second } => {
             return DispatchResult {
@@ -573,6 +721,38 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
     }
 
     DispatchResult::default()
+}
+
+fn build_audio_state(
+    request_id: String,
+    audio_id: String,
+    position_ms: u64,
+    audio: &AudioManager,
+) -> EngineMessage {
+    let state = audio.query(&audio_id).ok();
+    EngineMessage::AudioState {
+        request_id,
+        audio_id,
+        position_ms,
+        volume: state.as_ref().map_or(1.0, |s| s.volume),
+        speed: state.as_ref().map_or(1.0, |s| s.speed),
+        is_playing: state.as_ref().map_or(false, |s| s.is_playing),
+        is_looping: state.as_ref().map_or(false, |s| s.is_looping),
+        error: None,
+    }
+}
+
+fn audio_state_error(request_id: String, audio_id: String, error: String) -> EngineMessage {
+    EngineMessage::AudioState {
+        request_id,
+        audio_id,
+        position_ms: 0,
+        volume: 0.0,
+        speed: 0.0,
+        is_playing: false,
+        is_looping: false,
+        error: Some(error),
+    }
 }
 
 /// Returns the root of a mod's persistent data directory.

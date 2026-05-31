@@ -12,6 +12,8 @@ pub fn node() -> CommandNode {
             .with_handler(Arc::new(run_modloader)),
         CommandNode::engine("ipc", "Toggle IPC debug logging").with_handler(Arc::new(run_ipc)),
         CommandNode::engine("vfs", "Toggle VFS debug logging").with_handler(Arc::new(run_vfs)),
+        CommandNode::engine("audio", "Toggle audio debug logging")
+            .with_handler(Arc::new(run_audio)),
     ])
 }
 
@@ -24,6 +26,7 @@ fn run_disable(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
     ctx.debug.set_modloader(false);
     ctx.debug.set_ipc(false);
     ctx.debug.set_vfs(false);
+    ctx.debug.set_audio(false);
     Ok(vec!["all debug logging disabled".into()])
 }
 
@@ -32,6 +35,7 @@ fn run_all(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
     ctx.debug.set_modloader(true);
     ctx.debug.set_ipc(true);
     ctx.debug.set_vfs(true);
+    ctx.debug.set_audio(true);
     Ok(vec!["all debug logging enabled".into()])
 }
 
@@ -60,5 +64,12 @@ fn run_vfs(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
     Ok(vec![format!(
         "vfs debug: {}",
         state(ctx.debug.toggle_vfs())
+    )])
+}
+
+fn run_audio(_: ParsedArgs, ctx: &CommandContext) -> CommandResult {
+    Ok(vec![format!(
+        "audio debug: {}",
+        state(ctx.debug.toggle_audio())
     )])
 }

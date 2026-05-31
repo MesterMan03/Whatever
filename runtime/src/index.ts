@@ -9,3 +9,5 @@ export { BuiltInComponents, Entity, Scene } from "./components/ecs.ts";
 export { Mods, Message } from "./components/mods.ts";
 export { Console } from "./components/console.ts";
 export type { ArgType, ArgSpec, CommandSpec } from "./components/console.ts";
+export { Audio } from "./components/audio.ts";
+export type { AudioHandle, AudioMetadata, CloseStrategy } from "./components/audio.ts";

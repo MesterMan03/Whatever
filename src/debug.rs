@@ -8,15 +8,17 @@ pub struct DebugSwitches {
     modloader: AtomicBool,
     ipc: AtomicBool,
     vfs: AtomicBool,
+    audio: AtomicBool,
 }
 
 impl DebugSwitches {
-    pub fn new(window: bool, modloader: bool, ipc: bool, vfs: bool) -> Self {
+    pub fn new(window: bool, modloader: bool, ipc: bool, vfs: bool, audio: bool) -> Self {
         DebugSwitches {
             window: AtomicBool::new(window),
             modloader: AtomicBool::new(modloader),
             ipc: AtomicBool::new(ipc),
             vfs: AtomicBool::new(vfs),
+            audio: AtomicBool::new(audio),
         }
     }
 
@@ -32,6 +34,9 @@ impl DebugSwitches {
     pub fn vfs(&self) -> bool {
         self.vfs.load(Relaxed)
     }
+    pub fn audio(&self) -> bool {
+        self.audio.load(Relaxed)
+    }
 
     pub fn set_window(&self, v: bool) {
         self.window.store(v, Relaxed)
@@ -44,6 +49,9 @@ impl DebugSwitches {
     }
     pub fn set_vfs(&self, v: bool) {
         self.vfs.store(v, Relaxed)
+    }
+    pub fn set_audio(&self, v: bool) {
+        self.audio.store(v, Relaxed)
     }
 
     pub fn toggle_window(&self) -> bool {
@@ -58,6 +66,9 @@ impl DebugSwitches {
     pub fn toggle_vfs(&self) -> bool {
         !self.vfs.fetch_xor(true, Relaxed)
     }
+    pub fn toggle_audio(&self) -> bool {
+        !self.audio.fetch_xor(true, Relaxed)
+    }
 }
 
 pub type SharedDebugSwitches = Arc<DebugSwitches>;
@@ -67,6 +78,7 @@ pub struct DebugConfig {
     pub modloader: bool,
     pub ipc: bool,
     pub vfs: bool,
+    pub audio: bool,
 }
 
 impl DebugConfig {
@@ -76,6 +88,7 @@ impl DebugConfig {
             modloader: false,
             ipc: false,
             vfs: false,
+            audio: false,
         };
         for arg in args {
             let val = if let Some(v) = arg.strip_prefix("--debug=") {
@@ -90,11 +103,13 @@ impl DebugConfig {
                         cfg.modloader = true;
                         cfg.ipc = true;
                         cfg.vfs = true;
+                        cfg.audio = true;
                     }
                     "window" => cfg.window = true,
                     "modloader" => cfg.modloader = true,
                     "ipc" => cfg.ipc = true,
                     "vfs" => cfg.vfs = true,
+                    "audio" => cfg.audio = true,
                     _ => {}
                 }
             }
@@ -117,6 +132,7 @@ impl DebugLogger {
                 config.modloader,
                 config.ipc,
                 config.vfs,
+                config.audio,
             )),
             log_writer,
             console_mirror: Arc::new(Mutex::new(Vec::new())),
@@ -150,6 +166,12 @@ impl DebugLogger {
     pub fn ipc(&self, mod_id: &str, direction: &str, msg: &str) {
         if self.switches.ipc() {
             self.write_debug_line("ipc", &format!("[{mod_id}] {direction} {msg}"));
+        }
+    }
+
+    pub fn audio(&self, mod_id: &str, msg: &str) {
+        if self.switches.audio() {
+            self.write_debug_line("audio", &format!("[{mod_id}] {msg}"));
         }
     }
 

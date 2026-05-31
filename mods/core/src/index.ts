@@ -52,7 +52,7 @@ Console.register({
     }],
     handler: async (args) => {
         const texture = args["texture"] as string;
-        const entity = await Scene.spawnSprite(texture, [0, 0, 0], [1, 1, 3]);
+        const entity = await Scene.spawnSprite(texture, "core://shaders/sprite.wgsl", [0, 0, 0], [1, 1, 3]);
         for (const sprite of previousSprites) {
             const transform = await sprite.getComponent("core:transform");
             if (transform != null) {

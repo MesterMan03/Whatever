@@ -138,6 +138,27 @@ pub enum EngineMessage {
     Shutdown {
         exit_code: i32,
     },
+    AudioLoaded {
+        request_id: String,
+        audio_id: String,
+        duration_ms: Option<u64>,
+        sample_rate: u32,
+        channels: u16,
+        error: Option<String>,
+    },
+    AudioState {
+        request_id: String,
+        audio_id: String,
+        position_ms: u64,
+        volume: f32,
+        speed: f32,
+        is_playing: bool,
+        is_looping: bool,
+        error: Option<String>,
+    },
+    AudioClose {
+        audio_id: String,
+    },
     CommandInvoke {
         request_id: String,
         command_path: Vec<String>,
@@ -271,6 +292,47 @@ pub enum ScriptMessage {
     },
     SetWindowMode {
         mode: String,
+    },
+    AudioLoad {
+        request_id: String,
+        audio_id: String,
+        path: String,
+        play: bool,
+        volume: f32,
+        speed: f32,
+        loop_: bool,
+        close_strategy: String,
+    },
+    AudioPlay {
+        request_id: String,
+        audio_id: String,
+        volume: Option<f32>,
+        speed: Option<f32>,
+    },
+    AudioPause {
+        request_id: String,
+        audio_id: String,
+    },
+    AudioStop {
+        audio_id: String,
+    },
+    AudioSeekTo {
+        request_id: String,
+        audio_id: String,
+        position_ms: u64,
+    },
+    AudioSeek {
+        request_id: String,
+        audio_id: String,
+        offset_ms: i64,
+    },
+    AudioSetLoop {
+        audio_id: String,
+        loop_: bool,
+    },
+    AudioQuery {
+        request_id: String,
+        audio_id: String,
     },
     SetTickRate {
         ticks_per_second: f64,

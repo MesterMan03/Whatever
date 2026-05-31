@@ -5,7 +5,7 @@ TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC prot
 ## Usage
 
 ```ts
-import { Engine, Window, File, Scene, Entity, Mods, Message, Console } from "@whatever-engine/api";
+import { Engine, Window, File, Scene, Entity, Mods, Message, Console, Audio } from "@whatever-engine/api";
 
 Engine.on("init", ({ mod_id }) => {
   Engine.log("info", `loaded as ${mod_id}`);
@@ -144,6 +144,31 @@ Omnidirectional point light. Position comes from `core:transform`. Max 8 active 
 - `getColor()`, `setColor(r, g, b)` — RGB colour (default: white)
 - `getIntensity()`, `setIntensity(v)` — multiplier (default: `1.0`)
 - `getRange()`, `setRange(v)` — attenuation radius in world units (default: `10`)
+
+### `Audio`
+
+Play audio files loaded from the VFS. Supported formats: WAV, OGG/Vorbis, MP3.
+
+- `Audio.play({ path, seek?, speed?, volume? })` — fire-and-forget; engine frees the handle automatically when playback ends
+- `Audio.load({ path, play?, closeStrategy?, volume?, speed?, loop? })` → `Promise<AudioHandle>` — load and optionally start playback; returns a controllable handle
+
+`AudioHandle` methods:
+- `handle.isStopped()` — `boolean` (sync): `true` after `stop()` or engine-initiated close
+- `handle.play(opts?)` → `Promise<number>` — resume playback; returns position in ms; `opts` can override `volume` and `speed`
+- `handle.pause()` → `Promise<number>` — pause; returns position in ms
+- `handle.stop()` — void (sync): stop and free the handle; fires `close` handlers immediately
+- `handle.position()` → `Promise<number>` — current position in ms
+- `handle.isPlaying()` → `Promise<boolean>`
+- `handle.volume()` → `Promise<number>`
+- `handle.speed()` → `Promise<number>`
+- `handle.isLooping()` → `Promise<boolean>`
+- `handle.metadata()` → `Promise<AudioMetadata>` — `{ duration_ms, sample_rate, channels }`; cached after first call
+- `handle.seekTo(ms)` → `Promise<number>` — seek to absolute position; returns previous position
+- `handle.seek(offsetMs)` → `Promise<number>` — seek forward/backward; returns new position; clamped to `[0, duration-1]`, pauses if past end
+- `handle.loop(enabled)` — void (sync): enable or disable looping; resets position to 0 when changed
+- `handle.on("close", fn)` — fired on both manual `stop()` and engine-initiated close
+
+`CloseStrategy`: `"Auto"` (default) — engine frees handle when playback ends; `"Manual"` — mod must call `stop()`.
 
 ### `Mods`
 

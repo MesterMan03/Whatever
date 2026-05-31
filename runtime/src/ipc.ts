@@ -7,6 +7,10 @@ import {
   _EVENT_SUBSCRIBE,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
+import {
+  _audioLoadCallbacks, _audioStateCallbacks, _audioHandles, AudioHandle,
+  type AudioMetadata,
+} from "./components/audio.ts";
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
@@ -28,6 +32,9 @@ type _EngineMsg =
   | { type: "ComponentQueryResponse"; request_id: string; results: Array<{ entity_id: string; components: Record<string, JsonValue> }> }
   | { type: "EntityParentResponse"; request_id: string; entity_id: string; parent_id: string | null }
   | { type: "EntityChildrenResponse"; request_id: string; entity_id: string; child_ids: string[] }
+  | { type: "AudioLoaded"; request_id: string; audio_id: string; duration_ms: number | null; sample_rate: number; channels: number; error: string | null }
+  | { type: "AudioState"; request_id: string; audio_id: string; position_ms: number; volume: number; speed: number; is_playing: boolean; is_looping: boolean; error: string | null }
+  | { type: "AudioClose"; audio_id: string }
   | { type: "Shutdown"; exit_code: number };
 
 function _dispatch(msg: _EngineMsg): void {
@@ -156,6 +163,49 @@ function _dispatch(msg: _EngineMsg): void {
       _entityChildrenCallbacks.delete(msg.request_id);
       cb.resolve(msg.child_ids);
     }
+    return;
+  }
+
+  if (msg.type === "AudioLoaded") {
+    const cb = _audioLoadCallbacks.get(msg.request_id);
+    if (cb) {
+      _audioLoadCallbacks.delete(msg.request_id);
+      if (msg.error) {
+        cb.reject(new Error(msg.error));
+      } else {
+        const meta: AudioMetadata = {
+          duration_ms: msg.duration_ms,
+          sample_rate: msg.sample_rate,
+          channels: msg.channels,
+        };
+        cb.resolve(new AudioHandle(msg.audio_id, meta));
+      }
+    }
+    return;
+  }
+
+  if (msg.type === "AudioState") {
+    const cb = _audioStateCallbacks.get(msg.request_id);
+    if (cb) {
+      _audioStateCallbacks.delete(msg.request_id);
+      if (msg.error) {
+        cb.reject(new Error(msg.error));
+      } else {
+        cb.resolve({
+          position_ms: msg.position_ms,
+          volume: msg.volume,
+          speed: msg.speed,
+          is_playing: msg.is_playing,
+          is_looping: msg.is_looping,
+        });
+      }
+    }
+    return;
+  }
+
+  if (msg.type === "AudioClose") {
+    const handle = _audioHandles.get(msg.audio_id);
+    if (handle) handle._handleClose();
     return;
   }
 

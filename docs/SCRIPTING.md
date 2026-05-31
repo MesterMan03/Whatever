@@ -5,7 +5,7 @@ communicates with each script over NDJSON on stdin/stdout. The `@whatever-engine
 package abstracts the wire protocol.
 
 ```ts
-import { Engine, Window, File, Scene, Mods, Message, Console } from "@whatever-engine/api";
+import { Engine, Window, File, Scene, Mods, Message, Console, Audio } from "@whatever-engine/api";
 ```
 
 The package is provided by the engine's workspace (`runtime/`). No install step
@@ -740,6 +740,125 @@ Requires a `core:transform` on the same entity to provide the position.
 ```ts
 // Orange glow above the origin
 await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15);
+```
+
+---
+
+## `Audio`
+
+Play audio files loaded from the VFS. Supported formats: WAV, OGG/Vorbis, MP3.
+
+```ts
+import { Audio, CloseStrategy } from "@whatever-engine/api";
+import type { AudioHandle, AudioMetadata } from "@whatever-engine/api";
+```
+
+### `Audio.play(opts)`
+
+Fire-and-forget playback. The engine loads the file and plays it once; the handle is freed automatically when done. No `AudioHandle` is returned.
+
+```ts
+Audio.play({ path: "mymod://sounds/explosion.wav" });
+Audio.play({ path: "mymod://music/theme.ogg", volume: 0.5, speed: 1.2 });
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `path` | `string` | — | VFS path to the audio file |
+| `volume` | `number` | `1.0` | Playback volume (`0.0`–`1.0+`) |
+| `speed` | `number` | `1.0` | Playback speed multiplier |
+
+### `Audio.load(opts)` → `Promise<AudioHandle>`
+
+Load an audio file and return a controllable `AudioHandle`. Rejects if the path is invalid or the file cannot be decoded.
+
+```ts
+const handle = await Audio.load({ path: "mymod://music/loop.ogg", loop: true, play: true, closeStrategy: "Manual" });
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `path` | `string` | — | VFS path to the audio file |
+| `play` | `boolean` | `false` | Start playback immediately |
+| `volume` | `number` | `1.0` | Initial volume |
+| `speed` | `number` | `1.0` | Initial speed |
+| `loop` | `boolean` | `false` | Loop playback |
+| `closeStrategy` | `CloseStrategy` | `"Auto"` | When to free the handle (see below) |
+
+**`CloseStrategy`**
+
+- `"Auto"` — engine frees the handle and fires the `close` event when playback naturally ends.
+- `"Manual"` — mod must call `handle.stop()` to free the resource; useful for sound effects replayed multiple times without reloading.
+
+---
+
+### `AudioHandle`
+
+#### `handle.isStopped()` → `boolean` (sync)
+
+Returns `true` immediately after `stop()` is called, or after the engine fires a `close` event. Safe to call at any time. Use as a guard before any async method:
+
+```ts
+if (!handle.isStopped()) {
+  await handle.pause();
+}
+```
+
+#### `handle.play(opts?)` → `Promise<number>`
+
+Resume (or start) playback. Returns the position in ms at the time playback resumed. If already playing, updates `volume`/`speed` and returns the current position.
+
+```ts
+const pos = await handle.play({ volume: 0.9, speed: 1.5 });
+```
+
+#### `handle.pause()` → `Promise<number>`
+
+Pause playback. Returns the position in ms at the time of pausing.
+
+#### `handle.stop()` → `void` (sync)
+
+Stop playback and free the handle. Fires all `close` handlers immediately. Calling any async method after `stop()` throws.
+
+#### `handle.position()` → `Promise<number>`
+
+Current playback position in ms.
+
+#### `handle.isPlaying()` → `Promise<boolean>`
+
+#### `handle.volume()` → `Promise<number>`
+
+#### `handle.speed()` → `Promise<number>`
+
+#### `handle.isLooping()` → `Promise<boolean>`
+
+#### `handle.metadata()` → `Promise<AudioMetadata>`
+
+Returns `{ duration_ms: number | null, sample_rate: number, channels: number }`. The result is cached locally after the first call; subsequent calls return immediately.
+
+#### `handle.seekTo(ms)` → `Promise<number>`
+
+Jump to an absolute position in ms. Returns the **previous** position.
+
+#### `handle.seek(offsetMs)` → `Promise<number>`
+
+Move forward (positive) or backward (negative) by `offsetMs` ms. Returns the **new** position. Clamped to `[0, duration-1]`; seeking past the end pauses at the last ms without closing the handle.
+
+#### `handle.loop(enabled)` → `void` (sync)
+
+Enable or disable looping. Changing this resets the playback position to 0.
+
+#### `handle.on("close", fn)` → `void`
+
+Register a callback fired when the handle closes — either from `stop()` or when the engine auto-closes it (playback ended + `closeStrategy: "Auto"`).
+
+```ts
+const sfx = await Audio.load({ path: "mymod://sounds/hit.wav", closeStrategy: "Manual" });
+sfx.on("close", () => console.log("sfx freed"));
+
+await sfx.play();
+// later...
+sfx.stop();
 ```
 
 ---

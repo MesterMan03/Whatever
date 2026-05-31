@@ -22,7 +22,7 @@ impl LayeredVfs {
             override_dests: HashSet::new(),
             log_writer: None,
             log_console: Arc::new(Mutex::new(Vec::new())),
-            switches: Arc::new(DebugSwitches::new(false, false, false, false)),
+            switches: Arc::new(DebugSwitches::new(false, false, false, false, false)),
         }
     }
 

@@ -1,3 +1,4 @@
+mod audio;
 mod console;
 mod debug;
 mod ecs;
