@@ -53,8 +53,8 @@ pub struct AudioManager {
 
 impl AudioManager {
     pub fn new() -> anyhow::Result<Self> {
-        let (_stream, stream_handle) = OutputStream::try_default()
-            .map_err(|e| anyhow!("audio output init failed: {e}"))?;
+        let (_stream, stream_handle) =
+            OutputStream::try_default().map_err(|e| anyhow!("audio output init failed: {e}"))?;
         Ok(AudioManager {
             _stream,
             stream_handle,
@@ -69,16 +69,20 @@ impl AudioManager {
         data: Vec<u8>,
         opts: LoadOpts,
     ) -> anyhow::Result<AudioMetadata> {
-        let source = Decoder::new(Cursor::new(data.clone()))
-            .map_err(|e| anyhow!("decode error: {e}"))?;
+        let source =
+            Decoder::new(Cursor::new(data.clone())).map_err(|e| anyhow!("decode error: {e}"))?;
 
         let channels = source.channels();
         let sample_rate = source.sample_rate();
         let duration_ms = source.total_duration().map(|d| d.as_millis() as u64);
-        let metadata = AudioMetadata { duration_ms, sample_rate, channels };
+        let metadata = AudioMetadata {
+            duration_ms,
+            sample_rate,
+            channels,
+        };
 
-        let sink = Sink::try_new(&self.stream_handle)
-            .map_err(|e| anyhow!("sink create failed: {e}"))?;
+        let sink =
+            Sink::try_new(&self.stream_handle).map_err(|e| anyhow!("sink create failed: {e}"))?;
         sink.set_volume(opts.volume);
         sink.set_speed(opts.speed);
 
@@ -119,7 +123,10 @@ impl AudioManager {
         volume: Option<f32>,
         speed: Option<f32>,
     ) -> anyhow::Result<u64> {
-        let handle = self.handles.get_mut(audio_id).ok_or_else(|| anyhow!("handle not found"))?;
+        let handle = self
+            .handles
+            .get_mut(audio_id)
+            .ok_or_else(|| anyhow!("handle not found"))?;
         if let Some(v) = volume {
             handle.sink.set_volume(v);
             handle.volume = v;
@@ -133,7 +140,10 @@ impl AudioManager {
     }
 
     pub fn pause(&mut self, audio_id: &str) -> anyhow::Result<u64> {
-        let handle = self.handles.get_mut(audio_id).ok_or_else(|| anyhow!("handle not found"))?;
+        let handle = self
+            .handles
+            .get_mut(audio_id)
+            .ok_or_else(|| anyhow!("handle not found"))?;
         handle.sink.pause();
         Ok(handle.sink.get_pos().as_millis() as u64)
     }
@@ -145,32 +155,46 @@ impl AudioManager {
     }
 
     pub fn seek_to(&mut self, audio_id: &str, position_ms: u64) -> anyhow::Result<u64> {
-        let handle = self.handles.get_mut(audio_id).ok_or_else(|| anyhow!("handle not found"))?;
+        let handle = self
+            .handles
+            .get_mut(audio_id)
+            .ok_or_else(|| anyhow!("handle not found"))?;
         let prev = handle.sink.get_pos().as_millis() as u64;
-        handle.sink.try_seek(Duration::from_millis(position_ms))
+        handle
+            .sink
+            .try_seek(Duration::from_millis(position_ms))
             .map_err(|e| anyhow!("seek failed: {e}"))?;
         Ok(prev)
     }
 
     pub fn seek(&mut self, audio_id: &str, offset_ms: i64) -> anyhow::Result<u64> {
-        let handle = self.handles.get_mut(audio_id).ok_or_else(|| anyhow!("handle not found"))?;
+        let handle = self
+            .handles
+            .get_mut(audio_id)
+            .ok_or_else(|| anyhow!("handle not found"))?;
         let current = handle.sink.get_pos().as_millis() as i64;
         let new_pos = (current + offset_ms).max(0);
 
         let clamped = if let Some(dur_ms) = handle.metadata.duration_ms {
             if new_pos >= dur_ms as i64 {
                 let last = dur_ms.saturating_sub(1);
-                handle.sink.try_seek(Duration::from_millis(last))
+                handle
+                    .sink
+                    .try_seek(Duration::from_millis(last))
                     .map_err(|e| anyhow!("seek failed: {e}"))?;
                 handle.sink.pause();
                 last
             } else {
-                handle.sink.try_seek(Duration::from_millis(new_pos as u64))
+                handle
+                    .sink
+                    .try_seek(Duration::from_millis(new_pos as u64))
                     .map_err(|e| anyhow!("seek failed: {e}"))?;
                 new_pos as u64
             }
         } else {
-            handle.sink.try_seek(Duration::from_millis(new_pos as u64))
+            handle
+                .sink
+                .try_seek(Duration::from_millis(new_pos as u64))
                 .map_err(|e| anyhow!("seek failed: {e}"))?;
             new_pos as u64
         };
@@ -179,7 +203,10 @@ impl AudioManager {
     }
 
     pub fn set_loop(&mut self, audio_id: &str, loop_: bool) -> anyhow::Result<()> {
-        let handle = self.handles.get_mut(audio_id).ok_or_else(|| anyhow!("handle not found"))?;
+        let handle = self
+            .handles
+            .get_mut(audio_id)
+            .ok_or_else(|| anyhow!("handle not found"))?;
         if handle.is_looping == loop_ {
             return Ok(());
         }
@@ -207,7 +234,10 @@ impl AudioManager {
     }
 
     pub fn query(&self, audio_id: &str) -> anyhow::Result<AudioState> {
-        let handle = self.handles.get(audio_id).ok_or_else(|| anyhow!("handle not found"))?;
+        let handle = self
+            .handles
+            .get(audio_id)
+            .ok_or_else(|| anyhow!("handle not found"))?;
         Ok(AudioState {
             position_ms: handle.sink.get_pos().as_millis() as u64,
             volume: handle.volume,

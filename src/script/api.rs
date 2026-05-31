@@ -543,7 +543,10 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             loop_,
             close_strategy,
         } => {
-            debug.audio(mod_id, &format!("AudioLoad {audio_id} path={path} play={play}"));
+            debug.audio(
+                mod_id,
+                &format!("AudioLoad {audio_id} path={path} play={play}"),
+            );
             let reply = match VfsPath::parse(&path) {
                 None => EngineMessage::AudioLoaded {
                     request_id,
@@ -568,7 +571,13 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                         } else {
                             CloseStrategy::Auto
                         };
-                        let opts = LoadOpts { play, volume, speed, loop_: loop_, close_strategy: strategy };
+                        let opts = LoadOpts {
+                            play,
+                            volume,
+                            speed,
+                            loop_,
+                            close_strategy: strategy,
+                        };
                         match audio.load(audio_id.clone(), mod_id.to_owned(), data, opts) {
                             Ok(meta) => EngineMessage::AudioLoaded {
                                 request_id,
@@ -607,7 +616,10 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             script_host.send(mod_id, &reply, debug);
         }
 
-        ScriptMessage::AudioPause { request_id, audio_id } => {
+        ScriptMessage::AudioPause {
+            request_id,
+            audio_id,
+        } => {
             debug.audio(mod_id, &format!("AudioPause {audio_id}"));
             let reply = match audio.pause(&audio_id) {
                 Ok(pos) => build_audio_state(request_id, audio_id.clone(), pos, audio),
@@ -627,7 +639,10 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             audio_id,
             position_ms,
         } => {
-            debug.audio(mod_id, &format!("AudioSeekTo {audio_id} pos={position_ms}ms"));
+            debug.audio(
+                mod_id,
+                &format!("AudioSeekTo {audio_id} pos={position_ms}ms"),
+            );
             let reply = match audio.seek_to(&audio_id, position_ms) {
                 Ok(prev) => build_audio_state(request_id, audio_id.clone(), prev, audio),
                 Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
@@ -640,7 +655,10 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             audio_id,
             offset_ms,
         } => {
-            debug.audio(mod_id, &format!("AudioSeek {audio_id} offset={offset_ms}ms"));
+            debug.audio(
+                mod_id,
+                &format!("AudioSeek {audio_id} offset={offset_ms}ms"),
+            );
             let reply = match audio.seek(&audio_id, offset_ms) {
                 Ok(new_pos) => build_audio_state(request_id, audio_id.clone(), new_pos, audio),
                 Err(e) => audio_state_error(request_id, audio_id, e.to_string()),
@@ -655,7 +673,10 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             }
         }
 
-        ScriptMessage::AudioQuery { request_id, audio_id } => {
+        ScriptMessage::AudioQuery {
+            request_id,
+            audio_id,
+        } => {
             debug.audio(mod_id, &format!("AudioQuery {audio_id}"));
             let reply = match audio.query(&audio_id) {
                 Ok(state) => EngineMessage::AudioState {
@@ -736,8 +757,8 @@ fn build_audio_state(
         position_ms,
         volume: state.as_ref().map_or(1.0, |s| s.volume),
         speed: state.as_ref().map_or(1.0, |s| s.speed),
-        is_playing: state.as_ref().map_or(false, |s| s.is_playing),
-        is_looping: state.as_ref().map_or(false, |s| s.is_looping),
+        is_playing: state.as_ref().is_some_and(|s| s.is_playing),
+        is_looping: state.as_ref().is_some_and(|s| s.is_looping),
         error: None,
     }
 }
