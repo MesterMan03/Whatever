@@ -1,0 +1,11 @@
+[mod]
+id          = "core"
+name        = "Graviton"
+version     = "0.1.0"
+description = "Epic dungeon crawler game"
+
+[assets]
+root = "assets"
+
+[script]
+entry = "scripts/index.ts"

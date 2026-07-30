@@ -2,5 +2,5 @@
 /mods_user
 /debug
 **/node_modules
-/logs
+**/logs
 /runtime/dist/

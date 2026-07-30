@@ -32,6 +32,7 @@
     }
   },
   "include": [
+    "games/**/*.ts",
     "mods/**/*.ts",
     "mods_user/**/*.ts"
   ]

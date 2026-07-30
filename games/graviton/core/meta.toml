@@ -1,0 +1,4 @@
+[game]
+id   = "graviton"
+name = "Graviton"
+tick_rate = 60

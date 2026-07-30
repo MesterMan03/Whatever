@@ -33,6 +33,9 @@ cargo run
 cargo run -- --debug=all
 cargo run -- --debug=ipc,modloader
 
+# Load mods from a custom directory instead of mods/ and mods_user/
+cargo run -- --mods /path/to/my/mods
+
 # Run tests
 cargo test
 ```

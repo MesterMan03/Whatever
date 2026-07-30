@@ -66,6 +66,7 @@ impl Engine {
     pub fn new(
         debug_config: &DebugConfig,
         cwd: &Path,
+        mods_override: Option<&Path>,
         log_mirror: LogMirror,
         log_writer: SharedLogWriter,
     ) -> anyhow::Result<Self> {
@@ -80,16 +81,19 @@ impl Engine {
         );
         let mut registry = ModRegistry::new();
 
-        let mods_dir = cwd.join("mods");
-        let mods_user_dir = cwd.join("mods_user");
-        discover_and_load(
-            &[mods_dir.as_path(), mods_user_dir.as_path()],
-            &mut vfs,
-            &mut registry,
-            &mut debug,
-        )?;
-
-        let meta_path = cwd.join("mods").join("core").join("meta.toml");
+        let (mods_dirs, meta_path) = if let Some(override_path) = mods_override {
+            (
+                vec![override_path.to_path_buf()],
+                override_path.join("core").join("meta.toml"),
+            )
+        } else {
+            (
+                vec![cwd.join("mods"), cwd.join("mods_user")],
+                cwd.join("mods").join("core").join("meta.toml"),
+            )
+        };
+        let mods_dir_refs: Vec<&Path> = mods_dirs.iter().map(|p| p.as_path()).collect();
+        discover_and_load(&mods_dir_refs, &mut vfs, &mut registry, &mut debug)?;
         let game_meta = if meta_path.exists() {
             let src = std::fs::read_to_string(&meta_path)
                 .with_context(|| format!("reading {}", meta_path.display()))?;
@@ -194,8 +198,6 @@ impl Engine {
         self.console.fps_cap = self.fps_cap;
         self.console.vsync = self.vsync;
 
-        let (dx, dy) = self.input.flush_mouse();
-
         let messages = self.script_host.drain_messages(&mut self.debug);
         self.dispatch_messages(messages);
 
@@ -207,9 +209,12 @@ impl Engine {
             );
         }
 
+        // Flush mouse only when a tick fires so accumulated delta isn't lost
+        // across the many frames that may occur between ticks at high FPS.
         let now = Instant::now();
         while now.duration_since(self.last_tick) >= self.tick_interval {
             self.last_tick += self.tick_interval;
+            let (dx, dy) = self.input.flush_mouse();
             self.run_tick(dx, dy);
         }
 
@@ -995,10 +1000,16 @@ impl ApplicationHandler for Engine {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.fps_cap.is_some() {
-            if let Some(w) = self.window.as_ref() {
-                w.request_redraw();
+            // Only request a redraw once the target time has elapsed; otherwise
+            // keep sleeping. Calling request_redraw() unconditionally here would
+            // bypass WaitUntil and ignore the cap entirely.
+            if Instant::now() >= self.next_frame_target {
+                if let Some(w) = self.window.as_ref() {
+                    w.request_redraw();
+                }
+            } else {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
             }
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
         }
     }
 }
