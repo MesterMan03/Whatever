@@ -11,7 +11,7 @@ pub fn node() -> CommandNode {
         CommandNode::engine("inspect", "Show all components on an entity")
             .with_args(vec![ArgSpec {
                 name: "entity_id".into(),
-                arg_type: ArgType::String,
+                arg_type: ArgType::EntityId,
                 required: true,
                 description: "Entity ID in index:generation format".into(),
                 has_suggest: false,

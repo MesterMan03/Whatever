@@ -4,6 +4,7 @@ import { relative, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as api from "../src/index.ts";
 import manifest from "../package.json";
+import { _configureMode } from "../src/environment.ts";
 
 const exit = (process as typeof process & { reallyExit(code: number): never }).reallyExit.bind(process);
 const stdout = Bun.stdout.writer();
@@ -20,17 +21,19 @@ try {
   if (process.argv[2] === "--runtime-info") {
     write(JSON.stringify({
       runtime: "whatever-mod-host",
-      protocol: 1,
+      protocol: 2,
       native_policy: 1,
       bun_version: Bun.version,
       api_version: manifest.version,
     }) + "\n");
     exit(0);
   }
-  const [entryArg, rootArg] = process.argv.slice(2);
-  if (!entryArg || !rootArg || process.argv.length !== 4) {
-    throw new Error("Usage: whatever-mod-host <entry> <mod-root>");
+  const [entryArg, rootArg, mode = "client"] = process.argv.slice(2);
+  if (!entryArg || !rootArg || ![4, 5].includes(process.argv.length)) {
+    throw new Error("Usage: whatever-mod-host <entry> <mod-root> [client|server]");
   }
+  if (mode !== "client" && mode !== "server") throw new Error("Invalid runtime mode");
+  _configureMode(mode);
   const root = realpathSync(rootArg);
   const entry = realpathSync(entryArg);
   const within = relative(root, entry);
@@ -66,7 +69,7 @@ try {
     throw new Error("The native runtime policy version is unsupported.");
   }
   await import(entryUrl);
-  write(JSON.stringify({ type: "RuntimeReady", protocol: 1 }) + "\n");
+  write(JSON.stringify({ type: "RuntimeReady", protocol: 2 }) + "\n");
 } catch (error) {
   write(JSON.stringify({
     type: "Log",

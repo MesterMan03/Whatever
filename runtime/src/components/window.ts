@@ -1,4 +1,6 @@
-import { _send } from "../shared.ts";
+import { _requireClient } from "../environment.ts";
+import { _send as _sendIpc } from "../shared.ts";
+const _send = (message: unknown): void => { _requireClient("Window"); _sendIpc(message); };
 
 export type WindowMode = "windowed" | "borderless" | "fullscreen";
 

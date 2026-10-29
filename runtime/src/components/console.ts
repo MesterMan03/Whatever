@@ -1,7 +1,8 @@
 import {_send} from "../shared.ts";
 
-/** Public arg type for Console.register(). */
-export type ArgType = "string" | "int" | "float" | "bool";
+/** Public arg type for Console.register().
+ * mod_id and entity_id are completed and validated by the engine; handlers receive strings. */
+export type ArgType = "string" | "int" | "float" | "bool" | "mod_id" | "entity_id";
 
 /** Argument specification for a command. */
 export type ArgSpec = {
@@ -11,7 +12,7 @@ export type ArgSpec = {
   description?: string;
   /** Called to provide autocomplete suggestions for this argument.
    *  Receives the current raw text the user has typed (empty string if nothing yet).
-   *  Return a list of candidate strings. */
+   *  Return a list of candidate strings. Ignored for engine-provided mod_id/entity_id types. */
   suggest?: (current: string) => string[] | Promise<string[]>;
 };
 
@@ -26,7 +27,7 @@ export type CommandSpec = {
 
 type _ArgSpec = {
   name: string;
-  type: "string" | "int" | "float" | "bool";
+  type: ArgType;
   required: boolean;
   description: string;
   has_suggest: boolean;
@@ -49,7 +50,8 @@ const _argSuggesters = new Map<string, NonNullable<ArgSpec["suggest"]>>();
 function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpec {
   const path = pathPrefix ? `${pathPrefix}.${spec.name}` : spec.name;
   const mappedArgs: _ArgSpec[] = (spec.args ?? []).map((a, i) => {
-    if (a.suggest) {
+    const engineSuggested = a.type === "mod_id" || a.type === "entity_id";
+    if (a.suggest && !engineSuggested) {
       _argSuggesters.set(`${path}:${i}`, a.suggest);
     }
     return {
@@ -57,7 +59,7 @@ function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpe
       type: a.type,
       required: a.required ?? false,
       description: a.description ?? "",
-      has_suggest: !!a.suggest,
+      has_suggest: !!a.suggest && !engineSuggested,
     };
   });
   if (spec.handler) {

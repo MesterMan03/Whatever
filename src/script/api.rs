@@ -10,14 +10,13 @@ use crate::ecs::{
 use crate::mods::ModRegistry;
 use crate::vfs::{Vfs, VfsPath};
 use base64::Engine as _;
-use std::sync::Arc;
-use winit::window::Window;
 
 // --- Return types ------------------------------------------------------------
 
 #[derive(Default)]
 pub struct DispatchResult {
     pub render_cmds: Vec<RenderCommand>,
+    pub client_commands: Vec<ScriptMessage>,
     pub new_tick_rate: Option<f64>,
     /// `Some(Some(fps))` = set cap; `Some(None)` = remove cap.
     pub new_fps_cap: Option<Option<f64>>,
@@ -26,6 +25,7 @@ pub struct DispatchResult {
     pub set_main_camera: Option<Option<EntityId>>,
 }
 
+#[derive(Debug)]
 pub enum RenderCommand {
     UpsertSprite { entity_idx: u32 },
     RemoveSprite { entity_idx: u32 },
@@ -35,10 +35,22 @@ pub enum RenderCommand {
     RemoveMesh { entity_idx: u32 },
 }
 
+impl RenderCommand {
+    pub fn key(&self) -> (u8, u32) {
+        match *self {
+            Self::UpsertSprite { entity_idx } | Self::RemoveSprite { entity_idx } => {
+                (0, entity_idx)
+            }
+            Self::UpsertText { entity_idx } | Self::RemoveText { entity_idx } => (1, entity_idx),
+            Self::UpsertMesh { entity_idx } | Self::RemoveMesh { entity_idx } => (2, entity_idx),
+        }
+    }
+}
+
 // --- Dispatcher --------------------------------------------------------------
 
 pub struct EngineContext<'a> {
-    pub window: &'a Arc<Window>,
+    pub mode: crate::runtime::RuntimeMode,
     pub script_host: &'a mut ScriptHost,
     pub registry: &'a ModRegistry,
     pub game_id: &'a str,
@@ -50,7 +62,7 @@ pub struct EngineContext<'a> {
 
 pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> DispatchResult {
     let EngineContext {
-        window,
+        mode,
         script_host,
         registry,
         game_id,
@@ -67,6 +79,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                     &EngineMessage::Init {
                         mod_id: mod_id.to_owned(),
                         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        mode,
                     },
                     debug,
                 );
@@ -87,30 +100,17 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         }
 
         // --- Window ----------------------------------------------------------
-        ScriptMessage::SetWindowTitle { title } => {
-            debug.window(&format!("[{mod_id}] SetWindowTitle: {title}"));
-            window.set_title(&title);
-        }
-        ScriptMessage::SetWindowSize { width, height } => {
-            debug.window(&format!("[{mod_id}] SetWindowSize: {width}x{height}"));
-            let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
-        }
-        ScriptMessage::SetWindowMode { mode } => {
-            debug.window(&format!("[{mod_id}] SetWindowMode: {mode}"));
-            let fullscreen = match mode.as_str() {
-                "windowed" => None,
-                "borderless" => Some(winit::window::Fullscreen::Borderless(None)),
-                "fullscreen" => window
-                    .current_monitor()
-                    .and_then(|m| m.video_modes().next())
-                    .map(winit::window::Fullscreen::Exclusive)
-                    .or(Some(winit::window::Fullscreen::Borderless(None))),
-                _ => {
-                    tracing::warn!(mod_id, "SetWindowMode: unknown mode '{mode}'");
-                    return DispatchResult::default();
-                }
-            };
-            window.set_fullscreen(fullscreen);
+        command @ (ScriptMessage::SetWindowTitle { .. }
+        | ScriptMessage::SetWindowSize { .. }
+        | ScriptMessage::SetWindowMode { .. }) => {
+            if mode == crate::runtime::RuntimeMode::Server {
+                tracing::warn!(mod_id, "Window is unavailable in server mode");
+            } else {
+                return DispatchResult {
+                    client_commands: vec![command],
+                    ..Default::default()
+                };
+            }
         }
 
         // --- Events ----------------------------------------------------------

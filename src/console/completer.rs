@@ -1,5 +1,5 @@
 use super::parser::tokenize_pub;
-use crate::console::types::{CommandNode, CommandSource};
+use crate::console::types::{ArgType, ArgumentContext, CommandNode, CommandSource};
 
 /// Context for firing an async (mod-side) arg suggestion IPC request.
 pub struct SuggestContext {
@@ -19,7 +19,14 @@ pub struct SuggestContext {
 /// For engine commands with a `suggest` fn, it is called to produce candidates.
 /// For mod commands with `has_suggest`, no candidates are returned here —
 /// call [`arg_suggest_context`] instead to fire the IPC request.
-pub fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
+pub fn complete(input: &str, roots: &[CommandNode], context: &ArgumentContext) -> Vec<String> {
+    let mut suggestions = complete_unsorted(input, roots, context);
+    suggestions.sort_unstable();
+    suggestions.dedup();
+    suggestions
+}
+
+fn complete_unsorted(input: &str, roots: &[CommandNode], context: &ArgumentContext) -> Vec<String> {
     let tokens = tokenize_pub(input);
     let trailing_space = input.ends_with(' ') || input.ends_with('\t');
 
@@ -33,6 +40,15 @@ pub fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
             .iter()
             .filter(|n| n.name.starts_with(partial.as_str()))
             .map(|n| n.name.clone())
+            .collect();
+    }
+
+    if tokens[0] == "help" && (tokens.len() == 1 || (tokens.len() == 2 && !trailing_space)) {
+        let partial = if trailing_space { "" } else { &tokens[1] };
+        return roots
+            .iter()
+            .filter(|n| n.name.starts_with(partial))
+            .map(|n| format!("help {}", n.name))
             .collect();
     }
 
@@ -58,19 +74,21 @@ pub fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
                     node.subcommands.iter().map(|n| n.name.clone()).collect()
                 } else {
                     let arg_index = complete_tokens.len() - cmd_path_len;
-                    sync_arg_suggestions(node, arg_index, "")
+                    sync_arg_suggestions(node, arg_index, "", context)
                 }
             } else {
                 Vec::new()
             }
         } else if let Some(node) = current_node {
             let arg_index = complete_tokens.len() - cmd_path_len;
-            sync_arg_suggestions(node, arg_index, "")
+            sync_arg_suggestions(node, arg_index, "", context)
         } else {
             Vec::new()
         }
     } else {
-        let partial = tokens.last().unwrap();
+        let Some(partial) = tokens.last() else {
+            return Vec::new();
+        };
         if all_consumed {
             if let Some(node) = current_node {
                 if !node.subcommands.is_empty() {
@@ -81,14 +99,14 @@ pub fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
                         .collect()
                 } else {
                     let arg_index = complete_tokens.len() - cmd_path_len;
-                    sync_arg_suggestions(node, arg_index, partial)
+                    sync_arg_suggestions(node, arg_index, partial, context)
                 }
             } else {
                 Vec::new()
             }
         } else if let Some(node) = current_node {
             let arg_index = complete_tokens.len() - cmd_path_len;
-            sync_arg_suggestions(node, arg_index, partial)
+            sync_arg_suggestions(node, arg_index, partial, context)
         } else {
             Vec::new()
         }
@@ -141,7 +159,7 @@ pub fn arg_suggest_context(input: &str, roots: &[CommandNode]) -> Option<Suggest
     };
 
     let arg_spec = current_node.args.get(arg_index)?;
-    if !arg_spec.has_suggest {
+    if !arg_spec.has_suggest || matches!(arg_spec.arg_type, ArgType::ModId | ArgType::EntityId) {
         return None;
     }
 
@@ -151,7 +169,7 @@ pub fn arg_suggest_context(input: &str, roots: &[CommandNode]) -> Option<Suggest
     };
 
     // Build command path (all tokens consumed as the command path).
-    let command_path = tokens[..cmd_path_len].to_vec();
+    let command_path = super::parser::mod_command_path(&tokens[..cmd_path_len]);
 
     // Prefix = everything up to (but not including) the partial token being completed.
     let prefix = tokens[..tokens
@@ -200,8 +218,40 @@ fn walk_tree<'a>(
 
 /// Return synchronous suggestions for the arg at `arg_index` given the partial `current`.
 /// Returns a `<name>` placeholder for args without a suggest fn, nothing for mod has_suggest.
-fn sync_arg_suggestions(node: &CommandNode, arg_index: usize, current: &str) -> Vec<String> {
+fn sync_arg_suggestions(
+    node: &CommandNode,
+    arg_index: usize,
+    current: &str,
+    context: &ArgumentContext,
+) -> Vec<String> {
     if let Some(arg_spec) = node.args.get(arg_index) {
+        let engine_candidates: Option<Vec<String>> = match arg_spec.arg_type {
+            ArgType::ModId => Some(
+                context
+                    .mod_registry
+                    .iter()
+                    .map(|m| m.manifest.meta.id.clone())
+                    .collect(),
+            ),
+            ArgType::EntityId => Some(
+                context
+                    .world
+                    .allocator
+                    .alive_entity_ids()
+                    .map(|id| id.to_string())
+                    .collect(),
+            ),
+            ArgType::Bool if arg_spec.suggest.is_none() && !arg_spec.has_suggest => {
+                Some(vec!["false".into(), "true".into()])
+            }
+            _ => None,
+        };
+        if let Some(candidates) = engine_candidates {
+            return candidates
+                .into_iter()
+                .filter(|value| value.starts_with(current))
+                .collect();
+        }
         if let Some(ref suggest_fn) = arg_spec.suggest {
             let results = suggest_fn(current);
             if current.is_empty() {
@@ -220,5 +270,48 @@ fn sync_arg_suggestions(node: &CommandNode, arg_index: usize, current: &str) -> 
         }
     } else {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::console::types::{ArgSpec, ArgType};
+    use std::sync::Arc;
+
+    fn complete(input: &str, roots: &[CommandNode]) -> Vec<String> {
+        super::complete(
+            input,
+            roots,
+            &ArgumentContext {
+                mod_registry: &crate::mods::ModRegistry::new(),
+                world: &crate::ecs::World::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn roots_subcommands_and_argument_suggestions_are_sorted_and_deduplicated() {
+        let roots = vec![
+            CommandNode::engine("zulu", ""),
+            CommandNode::engine("group", "").with_subcommands(vec![
+                CommandNode::engine("zebra", ""),
+                CommandNode::engine("apple", ""),
+            ]),
+            CommandNode::engine("alpha", "").with_args(vec![ArgSpec {
+                name: "value".into(),
+                arg_type: ArgType::String,
+                required: true,
+                description: String::new(),
+                has_suggest: false,
+                suggest: Some(Arc::new(|_| {
+                    vec!["zebra".into(), "apple".into(), "apple".into()]
+                })),
+            }]),
+        ];
+        assert_eq!(complete("", &roots), ["alpha", "group", "zulu"]);
+        assert_eq!(complete("group ", &roots), ["group apple", "group zebra"]);
+        assert_eq!(complete("alpha ", &roots), ["alpha apple", "alpha zebra"]);
+        assert_eq!(complete("alpha a", &roots), ["alpha apple"]);
     }
 }

@@ -16,7 +16,7 @@ fn get_node() -> CommandNode {
     CommandNode::engine("get", "Show details for a specific mod")
         .with_args(vec![ArgSpec {
             name: "mod_id".into(),
-            arg_type: ArgType::String,
+            arg_type: ArgType::ModId,
             required: true,
             description: "mod identifier".into(),
             has_suggest: false,
@@ -68,7 +68,10 @@ fn run_get(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         }
     }
     if let Some(ref script) = m.script {
-        lines.push(format!("script:      {}", script.entry));
+        lines.push(format!(
+            "script:      shared={:?}, client={:?}, server={:?}",
+            script.entry, script.client, script.server
+        ));
     }
     Ok(lines)
 }

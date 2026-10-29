@@ -10,6 +10,7 @@
     "prepare:bun": "bun tools/prepare-bun.ts",
     "build:bun": "bun tools/build-bun.ts",
     "build:host": "bun tools/build-mod-host.ts",
+    "test:server": "bun test tools/tests/server.test.ts --timeout 30000",
     "test:host": "bun test tools/tests/mod-host.test.ts --timeout 30000"
   },
   "dependencies": {

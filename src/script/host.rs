@@ -70,6 +70,7 @@ impl ScriptHost {
         &mut self,
         mod_id: &str,
         entry: &Path,
+        mode: crate::runtime::RuntimeMode,
         sandbox_cfg: &SandboxConfig,
         debug: &mut DebugLogger,
     ) -> anyhow::Result<()> {
@@ -90,6 +91,7 @@ impl ScriptHost {
         let mut cmd = host_command(&self.runtime);
         cmd.arg(&entry)
             .arg(&mod_root)
+            .arg(mode.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -159,6 +161,24 @@ impl ScriptHost {
             },
         );
         Ok(())
+    }
+
+    pub fn reap_exited(&mut self) -> Vec<String> {
+        let exited: Vec<String> = self
+            .processes
+            .iter_mut()
+            .filter_map(|(id, process)| match process.child.try_wait() {
+                Ok(Some(status)) => {
+                    tracing::info!(mod_id=%id,%status,"mod process exited");
+                    Some(id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        for id in &exited {
+            self.processes.remove(id);
+        }
+        exited
     }
 
     pub fn runtime_path(&self) -> &Path {
@@ -257,10 +277,20 @@ impl ScriptHost {
         let final_messages = self.drain_messages(debug);
         for proc in self.processes.values_mut() {
             let _ = proc.child.kill();
+            let _ = proc.child.wait();
         }
         // Remove all processes so subsequent send() calls are no-ops even if
         // the engine somehow tries to tick after shutdown.
         self.processes.clear();
         final_messages
+    }
+}
+
+impl Drop for ScriptHost {
+    fn drop(&mut self) {
+        for process in self.processes.values_mut() {
+            let _ = process.child.kill();
+            let _ = process.child.wait();
+        }
     }
 }

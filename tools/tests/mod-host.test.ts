@@ -18,7 +18,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(standaloneDirectory, { recursive: true, force: true }));
 
-async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts") {
+async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client") {
   const directory = mkdtempSync(join(tmpdir(), "whatever-host-"));
   try {
     const host = standaloneHost;
@@ -32,7 +32,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
     for (const [name, target] of Object.entries(links)) {
       symlinkSync(join(directory, target), join(root, name), process.platform === "win32" ? "junction" : "dir");
     }
-    const child = Bun.spawn([host, join(root, entryName), root], {
+    const child = Bun.spawn([host, join(root, entryName), root, mode], {
       cwd: directory,
       env: {
         PATH: "",
@@ -59,7 +59,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
           const message = JSON.parse(line);
           messages.push(message);
           if (message.type === "RuntimeReady") {
-            child.stdin.write(JSON.stringify({ type: "Init", mod_id: "fixture", engine_version: "0.4.0" }) + "\n");
+            child.stdin.write(JSON.stringify({ type: "Init", mod_id: "fixture", engine_version: "0.4.0", mode }) + "\n");
           } else if (message.type === "EntityCreate") {
             child.stdin.write(JSON.stringify({ type: "EntityCreated", request_id: message.request_id, entity_id: "0:0" }) + "\n");
           } else if (message.type === "Log" && message.message === "fixture-next-tick") {
@@ -86,6 +86,22 @@ function fixture(body: string) {
 }
 
 describe("bundled mod host", () => {
+  test("preserves engine-provided console argument types without mod suggestion callbacks", async () => {
+    const result = await runHost('import { Engine, Console } from "@whatever-engine/api";' +
+      'Console.register({name:"targets",args:[' +
+      '{name:"mod",type:"mod_id",required:true,suggest:()=>{throw new Error("engine owns suggestions")}},' +
+      '{name:"entity",type:"entity_id",suggest:()=>[]},' +
+      '{name:"custom",type:"string",suggest:()=>["value"]}],' +
+      'handler:()=>"ok"});' +
+      'Engine.on("init",()=>Engine.log("info","fixture-done"));');
+    const registration = result.messages.find(message => message.type === "RegisterCommand");
+    expect(registration?.args.map((arg: any) => [arg.type, arg.has_suggest])).toEqual([
+      ["mod_id", false], ["entity_id", false], ["string", true],
+    ]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
   test("runs outside the engine tree without PATH or node_modules and preserves IPC", async () => {
     const result = await runHost(fixture('const entity = await Scene.createEntity(); console.log("entity", entity.id);'));
     expect(result.messages.filter(message => message.type === "Log").map(message => message.message)).toEqual(["entity 0:0", "fixture-done"]);
@@ -112,6 +128,20 @@ describe("bundled mod host", () => {
     expect(result.messages[0]!.message).toContain("Macros are disabled");
     expect(result.messages[0]!.message).not.toContain("macro body executed");
   });
+  test("exposes server mode before evaluation and rejects client facilities", async () => {
+    const result = await runHost('import { Engine, Window, Audio } from "@whatever-engine/api";' +
+      'if (Engine.mode !== "server") throw new Error("mode unavailable at evaluation");' +
+      'Engine.on("init", async ({mode}) => {' +
+      'if (mode !== "server") throw new Error("incorrect init mode");' +
+      'for (const operation of [() => Window.setTitle("test"), () => Engine.setVsync(false), () => Audio.load({path:"core://test.wav"})]) {' +
+      'try { await operation(); throw new Error("UNEXPECTED"); } catch (error) { Engine.log("info", String(error)); }}' +
+      'Engine.log("info","fixture-done"); });', {}, {}, "index.ts", "server");
+    const logs=result.messages.filter(message=>message.type==="Log").map(message=>message.message);
+    expect(logs).toHaveLength(4);
+    for(const log of logs.slice(0,3)) expect(log).toContain("unavailable in server mode");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("resolves the engine API before a mod-supplied package", async () => {
     const result = await runHost(fixture(""), {
       "node_modules/@whatever-engine/api/package.json": '{"main":"index.js"}',

@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub fn discover_and_load(
     search_dirs: &[&Path],
+    mode: crate::runtime::RuntimeMode,
     vfs: &mut LayeredVfs,
     registry: &mut ModRegistry,
     debug: &mut DebugLogger,
@@ -56,6 +57,14 @@ pub fn discover_and_load(
         }
     }
 
+    manifests.retain(|(manifest, _)| {
+        let enabled = manifest.meta.sides.contains(&mode);
+        if !enabled {
+            tracing::info!(mod_id=%manifest.meta.id,%mode,"skipping mod for another runtime side");
+        }
+        enabled
+    });
+
     // validate dependency existence
     let id_to_version: HashMap<String, Version> = manifests
         .iter()
@@ -75,7 +84,7 @@ pub fn discover_and_load(
             })?;
             match id_to_version.get(dep_id) {
                 None => bail!(
-                    "mod '{}' requires '{}' which is not loaded",
+                    "mod '{}' requires '{}' which is not loaded on this runtime side",
                     manifest.meta.id,
                     dep_id
                 ),

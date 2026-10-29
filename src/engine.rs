@@ -1,41 +1,35 @@
-use crate::audio::AudioManager;
-use crate::console::command_node_from_spec;
-use crate::console::{ConsoleAction, DevConsole, EngineSettingAction};
-use crate::debug::{DebugConfig, DebugLogger};
+use crate::console::{ConsoleAction, DevConsole, EngineSettingAction, command_node_from_spec};
+use crate::debug::DebugLogger;
 use crate::ecs::{EntityId, World};
 use crate::input::InputState;
-use crate::logging::{LogMirror, SharedLogWriter};
-use crate::mods::{GameMeta, ModRegistry, discover_and_load};
+use crate::logging::LogMirror;
+use crate::mods::ModRegistry;
 use crate::renderer::{
     EguiOutput, GpuDirectionalLight, GpuLightingData, GpuPointLight, MeshUpdateTarget,
     RenderContext, Renderer, SpriteUpdateTarget, WgpuContext, view_proj_from_entity,
 };
-use crate::sandbox::SandboxConfig;
-use crate::script::ipc::{EngineMessage, ScriptMessage};
-use crate::script::{
-    DispatchResult, EngineContext, RecvOutcome, RenderCommand, ScriptHost, dispatch, mod_data_root,
+use crate::runtime::{LoadedGame, SimulationHandle};
+use crate::script::{RenderCommand, ipc::ScriptMessage};
+use crate::vfs::{Vfs, VfsHandle};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
 };
-use crate::vfs::{LayeredVfs, Vfs, VfsHandle};
-use crate::watchdog::Watchdog;
-use anyhow::Context;
-use std::collections::HashSet;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
-
+use winit::{
+    application::ApplicationHandler,
+    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow},
+    keyboard::{KeyCode, PhysicalKey},
+    window::{CursorGrabMode, Window, WindowId},
+};
 pub struct Engine {
     debug: DebugLogger,
     debug_mirror: Arc<std::sync::Mutex<Vec<String>>>,
     log_mirror: LogMirror,
-    game_meta: GameMeta,
+    game_name: String,
     vfs: VfsHandle,
-    registry: ModRegistry,
-    script_host: ScriptHost,
+    registry: Arc<ModRegistry>,
+    simulation: SimulationHandle,
     input: InputState,
     frame_number: u64,
     last_frame: Instant,
@@ -46,113 +40,31 @@ pub struct Engine {
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     world: World,
-    /// The entity whose `core:camera` + `core:transform` is used as the active
-    /// camera.  `None` means no camera is set; the renderer clears to black.
     main_camera: Option<EntityId>,
-    tick_number: u64,
-    last_tick: Instant,
     tick_interval: Duration,
-    tick_subscribers: HashSet<String>,
-    watchdog: Watchdog,
     console: DevConsole,
     debug_overlay: bool,
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
     should_quit: bool,
-    audio: AudioManager,
 }
-
 impl Engine {
-    pub fn new(
-        debug_config: &DebugConfig,
-        cwd: &Path,
-        mods_override: Option<&Path>,
-        log_mirror: LogMirror,
-        log_writer: SharedLogWriter,
-    ) -> anyhow::Result<Self> {
-        let mut debug = DebugLogger::new(debug_config, log_writer);
-
+    pub fn new(game: LoadedGame, log_mirror: LogMirror) -> anyhow::Result<Self> {
+        let debug = game.debug.clone();
         let debug_mirror = debug.console_mirror();
-        let mut vfs = LayeredVfs::new();
-        vfs.set_log(
-            debug.log_writer(),
-            Arc::clone(&debug_mirror),
-            debug.shared_switches(),
-        );
-        let mut registry = ModRegistry::new();
-
-        let (mods_dirs, meta_path) = if let Some(override_path) = mods_override {
-            (
-                vec![override_path.to_path_buf()],
-                override_path.join("core").join("meta.toml"),
-            )
-        } else {
-            (
-                vec![cwd.join("mods"), cwd.join("mods_user")],
-                cwd.join("mods").join("core").join("meta.toml"),
-            )
-        };
-        let mods_dir_refs: Vec<&Path> = mods_dirs.iter().map(|p| p.as_path()).collect();
-        discover_and_load(&mods_dir_refs, &mut vfs, &mut registry, &mut debug)?;
-        let game_meta = if meta_path.exists() {
-            let src = std::fs::read_to_string(&meta_path)
-                .with_context(|| format!("reading {}", meta_path.display()))?;
-            toml::from_str::<GameMeta>(&src)
-                .with_context(|| format!("parsing {}", meta_path.display()))?
-        } else {
-            GameMeta::default()
-        };
-
-        let vfs: VfsHandle = Arc::new(vfs);
-
-        let mut script_host = ScriptHost::new()?;
-        for loaded_mod in registry.iter() {
-            let Some(ref script_cfg) = loaded_mod.manifest.script else {
-                continue;
-            };
-            let entry = loaded_mod.root.join(&script_cfg.entry);
-            let mod_id = &loaded_mod.manifest.meta.id;
-
-            let mod_data_dir = match mod_data_root(&game_meta.game.id, mod_id) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::error!(mod_id, "could not determine mod data dir: {e:#}");
-                    continue;
-                }
-            };
-            if let Err(e) = std::fs::create_dir_all(&mod_data_dir) {
-                tracing::error!(mod_id, "could not create mod data dir: {e:#}");
-                continue;
-            }
-
-            let sandbox_cfg = SandboxConfig {
-                mod_id: mod_id.clone(),
-                mod_root: loaded_mod.root.clone(),
-                runtime_executable: script_host.runtime_path().to_path_buf(),
-            };
-
-            if let Err(e) = script_host.spawn(mod_id, &entry, &sandbox_cfg, &mut debug) {
-                tracing::error!(mod_id, entry = %entry.display(), "script spawn failed: {e:#}");
-            }
-        }
-
-        let tick_interval = Duration::from_secs_f64(1.0 / game_meta.game.tick_rate);
-
-        Ok(Engine {
+        let game_name = game.meta.game.name.clone();
+        let vfs = Arc::clone(&game.vfs);
+        let registry = Arc::clone(&game.registry);
+        let tick_interval = Duration::from_secs_f64(1.0 / game.meta.game.tick_rate);
+        let simulation = SimulationHandle::spawn(game)?;
+        Ok(Self {
             debug,
             debug_mirror,
             log_mirror,
-            game_meta,
+            game_name,
             vfs,
             registry,
-            script_host,
-            world: World::new(),
-            main_camera: None,
-            tick_number: 0,
-            last_tick: Instant::now(),
-            tick_interval,
-            tick_subscribers: HashSet::new(),
-            watchdog: Watchdog::new(Duration::from_millis(500)),
+            simulation,
             input: InputState::new(),
             frame_number: 0,
             last_frame: Instant::now(),
@@ -162,15 +74,16 @@ impl Engine {
             next_frame_target: Instant::now(),
             renderer: None,
             window: None,
+            world: World::new(),
+            main_camera: None,
+            tick_interval,
             console: DevConsole::new(),
             debug_overlay: false,
             egui_ctx: egui::Context::default(),
             egui_state: None,
             should_quit: false,
-            audio: AudioManager::new()?,
         })
     }
-
     fn frame(&mut self) {
         if let Ok(mut lines) = self.debug_mirror.lock() {
             for line in lines.drain(..) {
@@ -197,25 +110,7 @@ impl Engine {
         self.console.fps_cap = self.fps_cap;
         self.console.vsync = self.vsync;
 
-        let messages = self.script_host.drain_messages(&mut self.debug);
-        self.dispatch_messages(messages);
-
-        for (mod_id, audio_id) in self.audio.poll_finished() {
-            self.script_host.send(
-                &mod_id,
-                &EngineMessage::AudioClose { audio_id },
-                &mut self.debug,
-            );
-        }
-
-        // Flush mouse only when a tick fires so accumulated delta isn't lost
-        // across the many frames that may occur between ticks at high FPS.
-        let now = Instant::now();
-        while now.duration_since(self.last_tick) >= self.tick_interval {
-            self.last_tick += self.tick_interval;
-            let (dx, dy) = self.input.flush_mouse();
-            self.run_tick(dx, dy);
-        }
+        self.receive_simulation();
 
         self.frame_number += 1;
 
@@ -269,7 +164,7 @@ impl Engine {
             match console_action {
                 ConsoleAction::Quit => self.should_quit = true,
                 ConsoleAction::SendIpc { mod_id, message } => {
-                    self.script_host.send(&mod_id, &message, &mut self.debug);
+                    self.simulation.send(mod_id, message);
                 }
                 ConsoleAction::EngineSettings(action) => match action {
                     EngineSettingAction::SetFpsCap(cap) => self.fps_cap = cap,
@@ -371,108 +266,129 @@ impl Engine {
         }
     }
 
-    fn dispatch_messages(&mut self, messages: Vec<(String, ScriptMessage)>) {
-        if let Some(window) = self.window.as_ref() {
-            let window = Arc::clone(window);
-            let vfs = Arc::clone(&self.vfs);
-            for (mod_id, msg) in messages {
-                // Intercept tick subscriptions before the general dispatcher
-                if let ScriptMessage::Subscribe { ref events } = msg {
-                    if events.iter().any(|e| e == "Tick") {
-                        self.tick_subscribers.insert(mod_id.clone());
-                        tracing::debug!(mod_id, "subscribed to tick");
-                    }
-                    continue;
-                }
+    fn receive_simulation(&mut self) {
+        if self.simulation.is_finished() {
+            self.should_quit = true;
+        }
+        let Some(update) = self.simulation.take_presentation() else {
+            return;
+        };
+        self.world = update.world;
+        self.main_camera = update.main_camera;
+        self.tick_interval = Duration::from_secs_f64(1.0 / update.tick_rate);
+        for (mod_id, msg) in update.events {
+            // Intercept console-specific messages before the general dispatcher
+            if let ScriptMessage::RegisterCommand {
+                ref name,
+                ref description,
+                ref subcommands,
+                ref args,
+                has_handler,
+            } = msg
+            {
+                let mut node = command_node_from_spec(
+                    &crate::script::ipc::CommandNodeSpec {
+                        name: name.clone(),
+                        description: description.clone(),
+                        subcommands: subcommands.clone(),
+                        args: args.clone(),
+                        has_handler,
+                    },
+                    &mod_id,
+                );
+                // Override the top-level source (from_spec sets it for children too)
+                node.source = crate::console::CommandSource::Mod(mod_id.clone());
+                self.console.registry.register_mod(&mod_id, node);
+                continue;
+            }
 
-                // Intercept console-specific messages before the general dispatcher
-                if let ScriptMessage::RegisterCommand {
-                    ref name,
-                    ref description,
-                    ref subcommands,
-                    ref args,
-                    has_handler,
-                } = msg
-                {
-                    let mut node = command_node_from_spec(
-                        &crate::script::ipc::CommandNodeSpec {
-                            name: name.clone(),
-                            description: description.clone(),
-                            subcommands: subcommands.clone(),
-                            args: args.clone(),
-                            has_handler,
-                        },
-                        &mod_id,
-                    );
-                    // Override the top-level source (from_spec sets it for children too)
-                    node.source = crate::console::CommandSource::Mod(mod_id.clone());
-                    self.console.registry.register_mod(&mod_id, node);
-                    continue;
-                }
-
-                if let ScriptMessage::CommandResponse {
-                    ref request_id,
-                    ref output,
-                    ref error,
-                } = msg
-                {
-                    let matches = self
-                        .console
-                        .pending_invoke
-                        .as_ref()
-                        .map(|p| &p.request_id == request_id)
-                        .unwrap_or(false);
-                    if matches {
-                        self.console
-                            .handle_command_response(output.clone(), error.clone());
-                    }
-                    continue;
-                }
-
-                if let ScriptMessage::ArgSuggestResponse {
-                    ref request_id,
-                    ref suggestions,
-                } = msg
-                {
+            if let ScriptMessage::CommandResponse {
+                ref request_id,
+                ref output,
+                ref error,
+            } = msg
+            {
+                let matches = self
+                    .console
+                    .pending_invoke
+                    .as_ref()
+                    .map(|p| &p.request_id == request_id)
+                    .unwrap_or(false);
+                if matches {
                     self.console
-                        .handle_arg_suggest_response(request_id, suggestions.clone());
-                    continue;
+                        .handle_command_response(output.clone(), error.clone());
                 }
+                continue;
+            }
 
-                let ctx = EngineContext {
-                    window: &window,
-                    script_host: &mut self.script_host,
-                    registry: &self.registry,
-                    game_id: &self.game_meta.game.id,
-                    debug: &mut self.debug,
-                    world: &mut self.world,
-                    vfs: vfs.as_ref(),
-                    audio: &mut self.audio,
-                };
-
-                let result = dispatch(&mod_id, msg, ctx);
-                self.apply_dispatch_result(result);
+            if let ScriptMessage::ArgSuggestResponse {
+                ref request_id,
+                ref suggestions,
+            } = msg
+            {
+                self.console
+                    .handle_arg_suggest_response(request_id, suggestions.clone());
+                continue;
+            }
+        }
+        for command in update.client_commands {
+            match command {
+                ScriptMessage::SetWindowTitle { title } => {
+                    if let Some(window) = &self.window {
+                        window.set_title(&title);
+                    }
+                }
+                ScriptMessage::SetWindowSize { width, height } => {
+                    if let Some(window) = &self.window {
+                        let _ =
+                            window.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+                    }
+                }
+                ScriptMessage::SetWindowMode { mode } => {
+                    if let Some(window) = &self.window {
+                        let fullscreen = match mode.as_str() {
+                            "borderless" => Some(winit::window::Fullscreen::Borderless(None)),
+                            "fullscreen" => window
+                                .current_monitor()
+                                .and_then(|monitor| monitor.video_modes().next())
+                                .map(winit::window::Fullscreen::Exclusive)
+                                .or(Some(winit::window::Fullscreen::Borderless(None))),
+                            _ => None,
+                        };
+                        window.set_fullscreen(fullscreen);
+                    }
+                }
+                ScriptMessage::SetFpsCap { fps } => self.fps_cap = fps,
+                ScriptMessage::SetVsync { enabled } => {
+                    self.vsync = enabled;
+                    self.apply_vsync();
+                }
+                _ => {}
+            }
+        }
+        if let Some(renderer) = self.renderer.as_mut() {
+            for command in update.render_cmds.into_values() {
+                apply_render_command(&command, renderer, &self.world, self.vfs.as_ref());
             }
         }
     }
-
-    fn apply_dispatch_result(&mut self, result: DispatchResult) {
-        if let Some(rate) = result.new_tick_rate {
-            self.tick_interval = Duration::from_secs_f64(1.0 / rate);
-        }
-        if let Some(cap) = result.new_fps_cap {
-            self.fps_cap = cap;
-        }
-        if let Some(enabled) = result.new_vsync {
-            self.vsync = enabled;
-            self.apply_vsync();
-        }
-        if let Some(cam) = result.set_main_camera {
-            self.main_camera = cam;
-        }
-        if let Some(renderer) = self.renderer.as_mut() {
-            for cmd in &result.render_cmds {
-                apply_render_command(cmd, renderer, &self.world, self.vfs.as_ref());
+    fn sync_input(&mut self) {
+        if let Ok(mut input) = self.simulation.shared.input.lock() {
+            input.keys = if self.console.is_open {
+                vec![]
+            } else {
+                self.input
+                    .keys_pressed
+                    .iter()
+                    .map(|key| format!("{key:?}"))
+                    .collect()
+            };
+            let (dx, dy) = self.input.flush_mouse();
+            if self.console.is_open {
+                input.mouse = (0.0, 0.0);
+            } else {
+                input.mouse.0 += dx;
+                input.mouse.1 += dy;
             }
         }
     }
@@ -486,151 +402,6 @@ impl Engine {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.ctx.set_present_mode(mode);
         }
-    }
-
-    fn run_tick(&mut self, mouse_dx: f32, mouse_dy: f32) {
-        self.tick_number += 1;
-
-        // When the dev console is open, suppress raw input so typing in the
-        // console doesn't also trigger in-game actions.
-        let (eff_dx, eff_dy, keys_pressed) = if self.console.is_open {
-            (0.0_f32, 0.0_f32, Vec::new())
-        } else {
-            let keys = self
-                .input
-                .keys_pressed
-                .iter()
-                .map(|k| format!("{k:?}"))
-                .collect();
-            (mouse_dx, mouse_dy, keys)
-        };
-
-        let subscribers: Vec<String> = self.tick_subscribers.iter().cloned().collect();
-        if subscribers.is_empty() {
-            return;
-        }
-
-        let tick_msg = EngineMessage::Tick {
-            tick_number: self.tick_number,
-            delta_seconds: self.tick_interval.as_secs_f64(),
-            keys_pressed,
-            mouse_delta: [eff_dx, eff_dy],
-        };
-
-        // Send tick to each subscriber.  If the send fails (broken pipe /
-        // dead process) count that subscriber as immediately done so the wait
-        // loop below doesn't block forever.
-        let mut done: HashSet<String> = HashSet::new();
-        for id in &subscribers {
-            if !self.script_host.send(id, &tick_msg, &mut self.debug) {
-                done.insert(id.clone());
-            }
-        }
-
-        self.watchdog.start_tick();
-        while done.len() < subscribers.len() {
-            match self
-                .script_host
-                .recv_blocking(Duration::from_millis(100), &mut self.debug)
-            {
-                RecvOutcome::Message(mod_id, ScriptMessage::TickDone { tick_number: n })
-                    if n == self.tick_number =>
-                {
-                    done.insert(mod_id);
-                }
-                RecvOutcome::Message(mod_id, msg) => {
-                    // Mirror the same early-interception logic used in
-                    // dispatch_messages().  Async command handlers (and other
-                    // console messages) can resolve while the engine is
-                    // blocked waiting for TickDone; without these guards they
-                    // would fall through to dispatch() and trigger spurious
-                    // "reached dispatcher unexpectedly" warnings.
-
-                    if let ScriptMessage::Subscribe { ref events } = msg {
-                        if events.iter().any(|e| e == "Tick") {
-                            self.tick_subscribers.insert(mod_id.clone());
-                            tracing::debug!(mod_id, "subscribed to tick (mid-tick)");
-                        }
-                        continue;
-                    }
-
-                    if let ScriptMessage::RegisterCommand {
-                        ref name,
-                        ref description,
-                        ref subcommands,
-                        ref args,
-                        has_handler,
-                    } = msg
-                    {
-                        let mut node = command_node_from_spec(
-                            &crate::script::ipc::CommandNodeSpec {
-                                name: name.clone(),
-                                description: description.clone(),
-                                subcommands: subcommands.clone(),
-                                args: args.clone(),
-                                has_handler,
-                            },
-                            &mod_id,
-                        );
-                        node.source = crate::console::CommandSource::Mod(mod_id.clone());
-                        self.console.registry.register_mod(&mod_id, node);
-                        continue;
-                    }
-
-                    if let ScriptMessage::CommandResponse {
-                        ref request_id,
-                        ref output,
-                        ref error,
-                    } = msg
-                    {
-                        let matches = self
-                            .console
-                            .pending_invoke
-                            .as_ref()
-                            .map(|p| &p.request_id == request_id)
-                            .unwrap_or(false);
-                        if matches {
-                            self.console
-                                .handle_command_response(output.clone(), error.clone());
-                        }
-                        continue;
-                    }
-
-                    if let ScriptMessage::ArgSuggestResponse {
-                        ref request_id,
-                        ref suggestions,
-                    } = msg
-                    {
-                        self.console
-                            .handle_arg_suggest_response(request_id, suggestions.clone());
-                        continue;
-                    }
-
-                    let Some(window) = self.window.as_ref() else {
-                        break;
-                    };
-                    let window = Arc::clone(window);
-                    let vfs = Arc::clone(&self.vfs);
-                    let ctx = EngineContext {
-                        window: &window,
-                        script_host: &mut self.script_host,
-                        registry: &self.registry,
-                        game_id: &self.game_meta.game.id,
-                        debug: &mut self.debug,
-                        world: &mut self.world,
-                        vfs: vfs.as_ref(),
-                        audio: &mut self.audio,
-                    };
-                    let result = dispatch(&mod_id, msg, ctx);
-                    self.apply_dispatch_result(result);
-                }
-                // All stdout reader threads have exited — every process is
-                // dead.  No TickDone will ever arrive; bail out.
-                RecvOutcome::Disconnected => break,
-                RecvOutcome::Timeout => {}
-            }
-        }
-        self.watchdog.end_tick();
     }
 }
 
@@ -810,7 +581,7 @@ impl ApplicationHandler for Engine {
             return;
         }
 
-        let attrs = Window::default_attributes().with_title(&self.game_meta.game.name);
+        let attrs = Window::default_attributes().with_title(&self.game_name);
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -865,28 +636,26 @@ impl ApplicationHandler for Engine {
 
         self.renderer = Some(renderer);
         self.window = Some(Arc::clone(&window));
+        self.simulation.ready();
 
         window.request_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        // Check Ctrl+Alt+Enter console toggle BEFORE anything else
+        // F2 avoids the Windows Alt+Enter fullscreen shortcut.
         if let WindowEvent::KeyboardInput { ref event, .. } = event
             && let PhysicalKey::Code(code) = event.physical_key
         {
-            if code == KeyCode::Enter && event.state == ElementState::Pressed {
-                let ctrl = self.input.is_pressed(KeyCode::ControlLeft)
-                    || self.input.is_pressed(KeyCode::ControlRight);
-                let alt = self.input.is_pressed(KeyCode::AltLeft)
-                    || self.input.is_pressed(KeyCode::AltRight);
-                if ctrl && alt {
+            if code == KeyCode::F2 {
+                if event.state == ElementState::Pressed && !event.repeat {
                     self.console.toggle();
                     if self.console.is_open {
                         self.set_cursor_captured(false);
                         self.input.keys_pressed.clear();
                     }
-                    return;
+                    self.sync_input();
                 }
+                return;
             }
             // F1: toggle debug overlay
             if code == KeyCode::F1 && event.state == ElementState::Pressed {
@@ -926,12 +695,15 @@ impl ApplicationHandler for Engine {
         }
 
         match event {
+            WindowEvent::Focused(false) => {
+                self.input.keys_pressed.clear();
+                self.input.mouse_delta = (0.0, 0.0);
+            }
             WindowEvent::CloseRequested => {
                 self.debug.window("window close requested");
-                let final_messages = self.script_host.shutdown_all(0, &mut self.debug);
-                // Clear subscribers so any stray frame() after exit() returns immediately.
-                self.tick_subscribers.clear();
-                self.dispatch_messages(final_messages);
+                if let Err(error) = self.simulation.shutdown() {
+                    tracing::error!("shutdown: {error:#}");
+                }
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
@@ -945,10 +717,11 @@ impl ApplicationHandler for Engine {
                 self.frame();
                 if self.should_quit {
                     self.debug.window("quit command issued");
-                    let final_messages = self.script_host.shutdown_all(0, &mut self.debug);
-                    self.tick_subscribers.clear();
-                    self.dispatch_messages(final_messages);
+                    if let Err(error) = self.simulation.shutdown() {
+                        tracing::error!("shutdown: {error:#}");
+                    }
                     event_loop.exit();
+                    self.sync_input();
                     return;
                 }
                 if let Some(cap) = self.fps_cap {
@@ -979,11 +752,13 @@ impl ApplicationHandler for Engine {
             }
             _ => {}
         }
+        self.sync_input();
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             self.input.accumulate_mouse(dx as f32, dy as f32);
+            self.sync_input();
         }
     }
 

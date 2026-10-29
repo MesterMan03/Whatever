@@ -1,4 +1,5 @@
 [mod]
+sides = ["client"]
 id          = "shader_test"
 name        = "Shader Test"
 version     = "0.1.0"

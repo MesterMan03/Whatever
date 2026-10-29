@@ -21,6 +21,8 @@ pub enum ArgType {
     Int,
     Float,
     Bool,
+    ModId,
+    EntityId,
 }
 
 #[derive(Clone)]
@@ -57,6 +59,13 @@ impl std::fmt::Display for ArgValue {
 #[derive(Debug, Clone, Default)]
 pub struct ParsedArgs {
     pub positional: Vec<ArgValue>,
+}
+
+/// State used by engine-provided argument completion and validation.
+#[derive(Clone, Copy)]
+pub struct ArgumentContext<'a> {
+    pub mod_registry: &'a crate::mods::ModRegistry,
+    pub world: &'a crate::ecs::World,
 }
 
 pub type CommandResult = Result<Vec<String>, String>;

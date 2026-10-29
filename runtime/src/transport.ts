@@ -7,4 +7,4 @@ const native = (globalThis as unknown as { Bun: {
 export const _stdin = native.stdin.stream().getReader();
 const stdout = native.stdout.writer();
 export function _write(data: string): void { stdout.write(data); stdout.flush(); }
-export const _exit = (process as typeof process & { reallyExit(code: number): never }).reallyExit.bind(process);
+export const _exit = (process as unknown as { reallyExit(code: number): never }).reallyExit.bind(process);

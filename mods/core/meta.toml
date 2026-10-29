@@ -1,4 +1,5 @@
 [game]
+default_mode = "client"
 id   = "first_game"
 name = "First Game"
 tick_rate = 60

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize)]
 pub struct ModManifestDto {
     pub id: String,
+    pub sides: Vec<crate::runtime::RuntimeMode>,
     pub name: String,
     pub version: String,
     pub description: String,
@@ -26,7 +27,9 @@ pub struct LoadOrderDto {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScriptConfigDto {
-    pub entry: String,
+    pub entry: Option<String>,
+    pub client: Option<String>,
+    pub server: Option<String>,
     pub runtime: String,
 }
 
@@ -34,6 +37,7 @@ impl From<&ModManifest> for ModManifestDto {
     fn from(m: &ModManifest) -> Self {
         ModManifestDto {
             id: m.meta.id.clone(),
+            sides: m.meta.sides.clone(),
             name: m.meta.name.clone(),
             version: m.meta.version.clone(),
             description: m.meta.description.clone(),
@@ -46,6 +50,8 @@ impl From<&ModManifest> for ModManifestDto {
             },
             script: m.script.as_ref().map(|s| ScriptConfigDto {
                 entry: s.entry.clone(),
+                client: s.client.clone(),
+                server: s.server.clone(),
                 runtime: s.runtime.clone(),
             }),
         }
@@ -61,6 +67,7 @@ pub enum EngineMessage {
     Init {
         mod_id: String,
         engine_version: String,
+        mode: crate::runtime::RuntimeMode,
     },
     Frame {
         delta_seconds: f32,

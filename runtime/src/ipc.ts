@@ -18,7 +18,7 @@ const _decoder = new TextDecoder();
 type _EngineMsg =
   | { type: "CommandInvoke"; request_id: string; command_path: string[]; args: JsonValue[] }
   | { type: "ArgSuggestRequest"; request_id: string; command_path: string[]; arg_index: number; current: string }
-  | { type: "Init"; mod_id: string; engine_version: string }
+  | { type: "Init"; mod_id: string; engine_version: string; mode: import("./types.ts").RuntimeMode }
   | { type: "Frame"; delta_seconds: number; frame_number: number }
   | { type: "Input"; keys_pressed: string[]; mouse_delta: [number, number] }
   | { type: "Tick"; tick_number: number; delta_seconds: number; keys_pressed: string[]; mouse_delta: [number, number] }
@@ -51,16 +51,20 @@ function _dispatch(msg: _EngineMsg): void {
   }
 
   if (msg.type === "Tick") {
-    const handlers = _handlers.get("tick");
+    const fail = (error: unknown): never => {
+      try { _send({type: "Log", level: "error", message: "Tick handler failed: " + String(error)}); }
+      finally { return _exit(1); }
+    };
     const promises: Promise<void>[] = [];
-    if (handlers) {
-      for (const fn_ of handlers) {
-        const r = fn_(msg);
-        if (r instanceof Promise) promises.push(r);
+    try {
+      for (const handler of _handlers.get("tick") ?? []) {
+        const result = handler(msg);
+        if (result instanceof Promise) promises.push(result);
       }
-    }
-    Promise.all(promises).then(() =>
-      _send({ type: "TickDone", tick_number: msg.tick_number })
+    } catch (error) { fail(error); }
+    void Promise.all(promises).then(
+      () => _send({ type: "TickDone", tick_number: msg.tick_number }),
+      fail,
     );
     return;
   }

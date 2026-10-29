@@ -8,6 +8,7 @@ use super::entity::{EntityAllocator, EntityId};
 use glam::{Quat, Vec3};
 use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct World {
     pub allocator: EntityAllocator,
     pub transforms: HashMap<u32, Transform>,

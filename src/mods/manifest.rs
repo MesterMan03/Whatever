@@ -20,6 +20,8 @@ pub struct ModManifest {
 #[allow(dead_code)]
 pub struct ModMeta {
     pub id: String,
+    #[serde(default = "default_sides")]
+    pub sides: Vec<crate::runtime::RuntimeMode>,
     pub name: String,
     pub version: String,
     #[serde(default)]
@@ -41,7 +43,9 @@ pub struct LoadOrder {
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct ScriptConfig {
-    pub entry: String,
+    pub entry: Option<String>,
+    pub client: Option<String>,
+    pub server: Option<String>,
     #[serde(default = "default_runtime")]
     pub runtime: String,
 }
@@ -75,4 +79,20 @@ pub struct OverridesConfig {
     pub namespaces: Vec<String>,
     #[serde(flatten)]
     pub paths: HashMap<String, String>,
+}
+
+fn default_sides() -> Vec<crate::runtime::RuntimeMode> {
+    vec![
+        crate::runtime::RuntimeMode::Client,
+        crate::runtime::RuntimeMode::Server,
+    ]
+}
+impl ScriptConfig {
+    pub fn entry_for(&self, mode: crate::runtime::RuntimeMode) -> Option<&str> {
+        match mode {
+            crate::runtime::RuntimeMode::Client => self.client.as_deref(),
+            crate::runtime::RuntimeMode::Server => self.server.as_deref(),
+        }
+        .or(self.entry.as_deref())
+    }
 }

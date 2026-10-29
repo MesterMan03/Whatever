@@ -118,6 +118,7 @@ impl DebugConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct DebugLogger {
     switches: SharedDebugSwitches,
     log_writer: SharedLogWriter,

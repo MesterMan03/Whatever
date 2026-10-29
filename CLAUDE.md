@@ -9,7 +9,8 @@ The engine is a barebones backend. Every game is just a mod. The engine owns win
 | Module | Purpose |
 |---|---|
 | `src/main.rs` | CLI args, Engine::new(), engine.run() |
-| `src/engine.rs` | Engine struct; owns all subsystems; drives main loop |
+| `src/engine.rs` | Client presentation: window, graphics, input and world snapshots |
+| `src/runtime/` | Mode selection, independent simulation worker, tick clock and headless server |
 | `src/debug.rs` | DebugConfig (CLI parsing) + DebugLogger (file writers) |
 | `src/input.rs` | InputState: key + mouse delta accumulator |
 | `src/vfs/` | VFS trait, layered VFS, disk-backed layer |
@@ -33,7 +34,7 @@ Mods live in `mods/` (engine-shipped) and `mods_user/` (user-installed, git-igno
 
 ## IPC Protocol
 
-One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. `vendor/patches/bun-whatever.patch` reproduces the fork on the submodule's pinned upstream revision. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`.
+One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. `vendor/patches/bun-whatever.patch` reproduces the fork on the submodule's pinned upstream revision. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`. Host protocol 2 passes the runtime side before mod evaluation; `Init` includes `mode`. Simulation ticking and IPC run on the runtime worker independently of window redraws.
 
 The native module allowlist starts with only `@whatever-engine/api` and local JS/TS/JSON source inside the mod root. Node/Bun built-ins, npm packages and non-allowlisted globals are denied. Never add an unrestricted fallback or mod-controlled permission grants. See `docs/SANDBOX.md`.
 
@@ -50,6 +51,7 @@ bun run build:host
 bun run test:host
 cargo build
 cargo run
+cargo run -- --mode server
 cargo run -- --debug=all
 cargo run -- --debug=ipc,modloader
 cargo test

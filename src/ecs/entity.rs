@@ -22,11 +22,13 @@ impl fmt::Display for EntityId {
     }
 }
 
+#[derive(Clone)]
 struct EntitySlot {
     generation: u32,
     alive: bool,
 }
 
+#[derive(Clone)]
 pub struct EntityAllocator {
     slots: Vec<EntitySlot>,
     free: Vec<u32>,

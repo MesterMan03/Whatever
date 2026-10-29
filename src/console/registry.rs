@@ -33,6 +33,8 @@ pub fn command_node_from_spec(
                     "int" => ArgType::Int,
                     "float" => ArgType::Float,
                     "bool" => ArgType::Bool,
+                    "mod_id" => ArgType::ModId,
+                    "entity_id" => ArgType::EntityId,
                     _ => ArgType::String,
                 },
                 required: a.required,

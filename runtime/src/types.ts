@@ -1,3 +1,6 @@
+/** The runtime side selected before mods are evaluated. */
+export type RuntimeMode = "client" | "server";
+
 /** Base interface for all components. */
 export interface Component {
   id: string;
@@ -15,6 +18,7 @@ export type JsonValue =
 /** Metadata about a loaded mod, mirroring mod.toml. */
 export type ModManifest = {
   id: string;
+  sides: RuntimeMode[];
   name: string;
   version: string;
   description: string;
@@ -22,13 +26,13 @@ export type ModManifest = {
   license: string;
   dependencies: Record<string, string>;
   load_order: { after: string[]; before: string[] };
-  script?: { entry: string; runtime: string };
+  script?: { entry: string | null; client: string | null; server: string | null; runtime: string };
 };
 
 /** Payload types for each public event name. */
 export type EventPayloads = {
-  /** Fired once after the engine has initialised and the window is ready. */
-  init: { mod_id: string; engine_version: string };
+  /** Fired once after the runtime is ready; client mode also waits for its window. */
+  init: { mod_id: string; engine_version: string; mode: RuntimeMode };
   /** Fired when the game is shutting down. The process exits after all handlers return. */
   exit: { exit_code: number };
   /**

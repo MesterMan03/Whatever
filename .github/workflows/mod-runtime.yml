@@ -6,6 +6,10 @@ on:
       - ".gitmodules"
       - "vendor/**"
       - "runtime/**"
+      - "src/**"
+      - "mods/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "tools/**"
       - ".github/actions/build-mod-host/**"
       - ".github/workflows/mod-runtime.yml"
@@ -16,6 +20,10 @@ on:
       - ".gitmodules"
       - "vendor/**"
       - "runtime/**"
+      - "src/**"
+      - "mods/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "tools/**"
       - ".github/actions/build-mod-host/**"
       - ".github/workflows/mod-runtime.yml"
@@ -34,3 +42,13 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/build-mod-host
+      - name: Install Linux engine prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev
+      - name: Build engine and test headless runtime
+        shell: bash
+        run: |
+          cargo build --locked
+          bun run test:server
+          cargo test --locked client_ticks_without_redraws -- --ignored

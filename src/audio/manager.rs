@@ -46,8 +46,8 @@ pub struct LoadOpts {
 }
 
 pub struct AudioManager {
-    _stream: OutputStream,
-    stream_handle: OutputStreamHandle,
+    _stream: Option<OutputStream>,
+    stream_handle: Option<OutputStreamHandle>,
     handles: HashMap<String, AudioHandle>,
 }
 
@@ -56,10 +56,18 @@ impl AudioManager {
         let (_stream, stream_handle) =
             OutputStream::try_default().map_err(|e| anyhow!("audio output init failed: {e}"))?;
         Ok(AudioManager {
-            _stream,
-            stream_handle,
+            _stream: Some(_stream),
+            stream_handle: Some(stream_handle),
             handles: HashMap::new(),
         })
+    }
+
+    pub fn headless() -> Self {
+        Self {
+            _stream: None,
+            stream_handle: None,
+            handles: HashMap::new(),
+        }
     }
 
     pub fn load(
@@ -69,6 +77,9 @@ impl AudioManager {
         data: Vec<u8>,
         opts: LoadOpts,
     ) -> anyhow::Result<AudioMetadata> {
+        if self.stream_handle.is_none() {
+            anyhow::bail!("Audio is unavailable in server mode");
+        }
         let source =
             Decoder::new(Cursor::new(data.clone())).map_err(|e| anyhow!("decode error: {e}"))?;
 
@@ -81,8 +92,12 @@ impl AudioManager {
             channels,
         };
 
-        let sink =
-            Sink::try_new(&self.stream_handle).map_err(|e| anyhow!("sink create failed: {e}"))?;
+        let sink = Sink::try_new(
+            self.stream_handle
+                .as_ref()
+                .ok_or_else(|| anyhow!("Audio is unavailable in server mode"))?,
+        )
+        .map_err(|e| anyhow!("sink create failed: {e}"))?;
         sink.set_volume(opts.volume);
         sink.set_speed(opts.speed);
 

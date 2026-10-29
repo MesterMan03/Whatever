@@ -24,6 +24,7 @@ Other package imports, including `node:` and `bun:` modules, are denied initiall
 
 ### `Engine`
 
+- `Engine.mode` — read-only `"client" | "server"`, available before top-level evaluation
 - `Engine.on(event, handler)` — subscribe to an engine event (`init`, `exit`, `tick`, `mod_message`)
 - `Engine.log(level, message)` — log through the engine logger (`"info"`, `"warn"`, `"error"`)
 - `Engine.setTickRate(ticks_per_second)` — override the game tick rate at runtime
@@ -187,7 +188,7 @@ Inter-mod communication. Payloads must be JSON-serializable.
 
 ### `Console`
 
-- `Console.register(spec)` — register developer console commands with typed args and subcommands
+- `Console.register(spec)` — register developer console commands with typed args and subcommands. Argument types: `string`, `int`, `float`, `bool`, `mod_id`, `entity_id`. The engine completes and validates loaded mod IDs and living entity IDs; handlers receive ID strings. `bool` suggests `false`/`true` by default. Open the console with F2; Up/Down previews suggestions and Tab accepts.
 
 ## Development
 
@@ -199,3 +200,9 @@ bun run build:types
 Full API documentation is in [`docs/SCRIPTING.md`](../docs/SCRIPTING.md) at the repo root.
 
 The host captures private native pipe handles before lockdown; mods do not receive stdin, stdout or process objects. The public TypeScript declarations remain independent of Bun internals.
+
+
+Init payloads include `mode`. Simulation ticks run independently of rendering. Window/audio operations and presentation settings reject server use. Mod manifests expose supported `sides` and optional shared/client/server script entries; only mods active on the current side appear in `Mods.list()` and `Mods.get()`.
+
+
+Tick handler failures are logged and stop the faulty mod; they do not leave the engine waiting forever for its tick acknowledgement.

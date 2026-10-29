@@ -1,4 +1,6 @@
-import { _send, nextReqId } from "../shared.ts";
+import { _requireClient } from "../environment.ts";
+import { _send as _sendIpc, nextReqId } from "../shared.ts";
+const _send = (message: unknown): void => { _requireClient("Audio"); _sendIpc(message); };
 
 export type AudioMetadata = {
   duration_ms: number | null;
@@ -67,6 +69,7 @@ export class AudioHandle {
 
   async play(opts?: { volume?: number; speed?: number }): Promise<number> {
     if (this._isStopped) throw new Error("AudioHandle is stopped");
+    _requireClient("Audio");
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _audioStateCallbacks.set(request_id, {
@@ -85,6 +88,7 @@ export class AudioHandle {
 
   async pause(): Promise<number> {
     if (this._isStopped) throw new Error("AudioHandle is stopped");
+    _requireClient("Audio");
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _audioStateCallbacks.set(request_id, {
@@ -126,6 +130,7 @@ export class AudioHandle {
   /** Seek to an absolute position in ms. Returns the previous position. */
   async seekTo(ms: number): Promise<number> {
     if (this._isStopped) throw new Error("AudioHandle is stopped");
+    _requireClient("Audio");
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _audioStateCallbacks.set(request_id, {
@@ -139,6 +144,7 @@ export class AudioHandle {
   /** Seek forward (positive) or backward (negative) by ms. Returns the new position. */
   async seek(offsetMs: number): Promise<number> {
     if (this._isStopped) throw new Error("AudioHandle is stopped");
+    _requireClient("Audio");
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _audioStateCallbacks.set(request_id, {
@@ -151,6 +157,7 @@ export class AudioHandle {
 
   private _query(): Promise<_AudioStatePayload> {
     if (this._isStopped) return Promise.reject(new Error("AudioHandle is stopped"));
+    _requireClient("Audio");
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _audioStateCallbacks.set(request_id, { resolve, reject });
@@ -193,6 +200,7 @@ export const Audio = {
     speed?: number;
     loop?: boolean;
   }): Promise<AudioHandle> {
+    _requireClient("Audio");
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       const audio_id = request_id;

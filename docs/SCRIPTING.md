@@ -19,6 +19,14 @@ See [the runtime policy](SANDBOX.md) for the module and global allowlists.
 
 ## `Engine`
 
+### `Engine.mode`
+
+Read-only `"client" | "server"`, available during top-level mod evaluation as well as event handlers. The host sets it before importing the mod. `init` includes the same `mode` alongside `mod_id` and `engine_version`.
+
+Simulation ticks run on a separate engine worker. Tick handlers are awaited without blocking the client renderer. The server runs this worker without a window, GPU or audio output device. FPS and vsync affect presentation only. Invalid tick rates (nonpositive, nonfinite or unrepresentable) are logged and ignored.
+
+Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera` and `clearCamera` reject use in server mode. ECS component data and entity operations remain available there, including components a client may later render.
+
 ### `Engine.on(event, handler)`
 
 Subscribe to an engine event. Registering a handler also sends a `Subscribe`
@@ -27,7 +35,7 @@ unconditionally). For `tick`, all async handlers are awaited before the engine
 advances the simulation.
 
 ```ts
-Engine.on("init", ({ mod_id, engine_version }) => {
+Engine.on("init", ({ mod_id, engine_version, mode }) => {
   Engine.log("info", `loaded as ${mod_id}, engine v${engine_version}`);
 });
 
@@ -41,8 +49,7 @@ Engine.on("tick", async ({ tick_number, delta_seconds, keys_pressed }) => {
 ```
 
 The host sends an internal `RuntimeReady` message after mod evaluation completes.
-The engine sends `Init` once both this handshake and window initialization have
-completed, so top-level event registration is in place before `init` fires.
+The engine sends `Init` after this handshake and runtime readiness (including window initialization on clients), so top-level event registration is in place before `init` fires.
 
 ### Events
 
@@ -988,10 +995,30 @@ Console.register({
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` | Argument name — used as the key in the handler's `args` object |
-| `type` | `"string" \| "int" \| "float" \| "bool"` | Parsed type |
+| `type` | `"string" \| "int" \| "float" \| "bool" \| "mod_id" \| "entity_id"` | Parsed and validated argument type |
 | `required` | `boolean?` | Defaults to `false` |
 | `description` | `string?` | Shown in `help <command>` |
-| `suggest` | `(current: string) => string[] \| Promise<string[]>` | Optional. Called by the engine to provide autocomplete suggestions as the user types this argument. Receives the current raw text (empty string if nothing typed yet). Return a list of candidate strings; the engine sends the request via IPC and updates the completion dropdown when the promise resolves. |
+| `suggest` | `(current: string) => string[] \| Promise<string[]>` | Optional. Called by the engine to provide autocomplete suggestions as the user types this argument. Receives the current raw text (empty string if nothing typed yet). Return a list of candidate strings; the engine sends the request via IPC and updates the completion dropdown when the promise resolves. Ignored for `mod_id` and `entity_id`, which are completed by the engine. |
+
+Engine-provided argument types work for both built-in and mod commands:
+
+| Type | Completion and validation | Handler value |
+|---|---|---|
+| `mod_id` | Prefix matches from the mods loaded on the current runtime side; rejects IDs that are not loaded | `string` |
+| `entity_id` | Prefix matches from living entities in the current world snapshot; rejects malformed, dead or stale-generation IDs | `string` in `index:generation` format |
+| `bool` | Suggests `false` and `true` when no custom suggester is provided; also accepts `1/0` and `yes/no` | `boolean` |
+
+```ts
+Console.register({
+  name: "target_mod",
+  args: [{ name: "target", type: "mod_id", required: true }],
+  handler: ({ target }) => `Selected loaded mod: ${target}`,
+});
+```
+
+The engine validates arguments before invoking either an engine handler or a mod handler. Invalid IDs produce a console error; no command invocation is sent to the mod. Engine-provided suggestions use current engine state without a mod-side callback or suggestion IPC. Entities can still change after validation, so an entity command should handle an entity disappearing before an asynchronous operation finishes.
+
+The console opens with **F2**. Suggestions are alphabetically sorted, and Up/Down cycles through the entire list. The selected suffix appears as dim preview text; Tab or clicking accepts it, while Enter runs the entered text. Help renders signatures and descriptions on separate, wrapping lines.
 
 The handler receives a `Record<string, string | number | boolean>` where keys are
 the `name` fields from the `ArgSpec` list. Missing optional args are absent from
@@ -1069,3 +1096,10 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 | `RegisterCommand` | `name`, `description`, `subcommands`, `args`, `has_handler` |
 | `CommandResponse` | `request_id`, `output`, `error` |
 | `ArgSuggestResponse` | `request_id`, `suggestions` |
+
+## Mod sides and script entries
+
+The `[mod].sides` list defaults to both `client` and `server`. Inactive mods are removed before dependency validation. The `[script]` section may contain optional `entry`, `client` and `server` paths: a side entry overrides `entry`; without either, that mod has no script on that side. `Mods.list()` and `Mods.get()` expose only active mods, with `sides: RuntimeMode[]` and nullable script entry paths. `RuntimeMode` is exported as a public type.
+
+
+A synchronous throw or rejected promise from a tick handler is logged and terminates that mod process. The runtime removes exited subscribers from the current tick barrier so other mods can continue. Shutdown interrupts a waiting tick and cleans up remaining subprocesses.

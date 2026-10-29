@@ -17,7 +17,7 @@ fn list_node() -> CommandNode {
     .with_args(vec![
         ArgSpec {
             name: "mod_id".into(),
-            arg_type: ArgType::String,
+            arg_type: ArgType::ModId,
             required: true,
             description: "mod identifier".into(),
             has_suggest: false,

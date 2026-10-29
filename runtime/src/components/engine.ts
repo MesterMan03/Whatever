@@ -1,8 +1,11 @@
+import { _getMode, _requireClient } from "../environment.ts";
 import type { EventName, EventPayloads } from "../types.ts";
 import { _handlers, _send, _EVENT_SUBSCRIBE } from "../shared.ts";
 
 /** Core engine events and logging. */
 export const Engine = {
+  /** Runtime side, available before top-level mod code executes. */
+  get mode() { return _getMode(); },
   /**
    * Subscribe to an engine event. The handler is called each time the event fires.
    * For `tick`, async handlers are awaited before the engine advances the simulation.
@@ -28,11 +31,13 @@ export const Engine = {
 
   /** Set the FPS cap. Pass `null` to remove the cap (uncapped). */
   setFpsCap(fps: number | null): void {
+    _requireClient("Engine.setFpsCap");
     _send({ type: "SetFpsCap", fps });
   },
 
   /** Enable or disable vertical sync. Takes effect immediately. */
   setVsync(enabled: boolean): void {
+    _requireClient("Engine.setVsync");
     _send({ type: "SetVsync", enabled });
   },
 
@@ -48,6 +53,7 @@ export const Engine = {
    * used for rendering.
    */
   setMainCamera(entity_id: string): void {
+    _requireClient("Engine.setMainCamera");
     _send({ type: "SetMainCamera", entity_id });
   },
 
@@ -56,6 +62,7 @@ export const Engine = {
    * active camera" warning until `Engine.setMainCamera` is called again.
    */
   clearCamera(): void {
+    _requireClient("Engine.clearCamera");
     _send({ type: "SetMainCamera", entity_id: "" });
   },
 };

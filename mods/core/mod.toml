@@ -8,4 +8,4 @@ description = "Engine-provided core mod"
 root = "assets"
 
 [script]
-entry = "scripts/index.js"
+client = "scripts/index.js"

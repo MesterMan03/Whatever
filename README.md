@@ -33,8 +33,11 @@ bun run build:host
 # Build the engine
 cargo build
 
-# Run
+# Run the client (or use core/meta.toml default_mode)
 cargo run
+
+# Run a headless server
+cargo run -- --mode server
 
 # Run with debug logging
 cargo run -- --debug=all
@@ -70,7 +73,8 @@ runtime/                @whatever-engine/api — TypeScript scripting API packag
     index.d.ts          Type declarations for the API
 src/
   main.rs               CLI args, Engine::new(), engine.run()
-  engine.rs             Engine struct; owns all subsystems; drives main loop
+  engine.rs             Client window, rendering, input and presentation snapshots
+  runtime/              Mode selection, shared simulation worker, tick clock and server runner
   debug.rs              DebugConfig (CLI parsing) + DebugLogger (debug-category writes)
   logging.rs            Log file init, rotation, tracing subscriber setup
   input.rs              Keyboard/mouse accumulator
@@ -117,6 +121,29 @@ root = "assets"                 # default
 
 Mods are loaded in topological dependency order. `core` always loads first.
 
+### Client and server modes
+
+Set `default_mode = "client"` or `"server"` in the `[game]` section of core's `meta.toml`. The CLI `--mode client|server` overrides it; old metadata defaults to client mode.
+
+The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Rendering runs on the window thread and consumes the latest world snapshot. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
+
+Server mode creates no window, graphics context, egui context or audio output device. It uses the same simulation worker with empty input. Stop it with Ctrl+C, SIGTERM on Unix, or `quit` / `stop` on stdin. The executable still links desktop libraries; a smaller server-only build is separate future work.
+
+Mods may set `sides = ["client"]`, `["server"]` or `["client", "server"]` inside `[mod]`. Omission supports both sides. Inactive mods are filtered before dependency checks and load ordering; active dependencies must exist on the selected side.
+
+A script may provide a shared fallback and side overrides:
+
+```toml
+[script]
+entry = "scripts/shared.ts" # optional fallback
+client = "scripts/client.ts" # optional override
+server = "scripts/server.ts" # optional override
+```
+
+Only one entry executes per mod. A mod with no matching entry still contributes its assets and metadata. `Engine.mode` is available before top-level mod evaluation. Window, audio and presentation settings reject server use; ECS, files and inter-mod messages remain available. The shipped core script and visual demo mods run on the client.
+
+Run `bun run test:server` after building the engine and host to check headless startup and shutdown. The additional `cargo test client_ticks_without_redraws -- --ignored` integration case requires the bundled host and verifies client ticks with a 1 FPS cap and no renderer consuming snapshots.
+
 ### VFS paths
 
 Assets are accessed via `mod_id://relative/path`:
@@ -161,7 +188,9 @@ Log line format:
 [HH:MM:SS.mmm] [category] message     — debug category (ipc / modloader / window / vfs)
 ```
 
-Stdout mirrors the log with ANSI colours (WARN yellow, ERROR red). The in-game developer console (Ctrl+Alt+Enter) also shows INFO and above in real time.
+Stdout mirrors the log with ANSI colours (WARN yellow, ERROR red). The in-game developer console (F2) also shows INFO and above in real time.
+
+Suggestions are sorted alphabetically; Up/Down cycles through the full list and previews the selected completion as dim text in the input. Tab or a click accepts it, while Enter runs only the text already entered. Escape dismisses suggestions first, then closes the console. The input stays anchored when suggestions appear. Help lists command usage and descriptions on separate, wrapping lines.
 
 By default only events from this crate are captured. Set `RUST_LOG` to override:
 
@@ -173,7 +202,7 @@ RUST_LOG=wgpu=warn,Whatever=debug cargo run     # also include wgpu warnings
 ## Debug flags
 
 Pass `--debug=<flags>` to enable verbose category logging (comma-separated). 
-Lines are written to `logs/latest.log` alongside normal output and appear in the dev console (Ctrl + Alt + Enter).
+Lines are written to `logs/latest.log` alongside normal output and appear in the dev console (F2).
 
 | Flag | What it logs |
 |---|---|
