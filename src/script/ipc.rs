@@ -64,6 +64,11 @@ impl From<&ModManifest> for ModManifestDto {
 #[serde(tag = "type")]
 #[allow(dead_code)]
 pub enum EngineMessage {
+    NetworkResponse {
+        request_id: String,
+        result: Option<serde_json::Value>,
+        error: Option<String>,
+    },
     Init {
         mod_id: String,
         engine_version: String,
@@ -191,6 +196,10 @@ pub struct QueryResultDto {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum ScriptMessage {
+    NetworkRequest {
+        request_id: String,
+        request: serde_json::Value,
+    },
     RuntimeReady {
         protocol: u32,
     },

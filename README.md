@@ -53,13 +53,13 @@ cargo test
 ## Project Layout
 
 ```
-.gitattributes          Keep native fork patches in LF format
+.gitattributes          LF rules for native fork patches and mod source files
+.editorconfig           Two-space editor defaults for mod sources
+biome.json              Shared mod-source formatter configuration
 mods/                   Engine-shipped mods (tracked in git)
-  core/                 Built-in core mod (shaders, base assets, dev commands)
-    src/                TypeScript source for the core script
-    scripts/            Compiled JS entry point (built from src/ via bun build:core)
-  script_test/          Scripting API integration test
-  shader_test/          Custom shader and mesh renderer verification mod
+  core/                 Game metadata and shared shaders/fonts; no test scripts
+  debug/                First-party debug suite: dev commands, camera, rendering and sandbox probes
+  network_example/      Shared network.ts with separate client/server registration examples
 mods_user/              User-installed mods (gitignored)
 vendor/
   bun/                  Pinned Bun source submodule
@@ -67,7 +67,7 @@ vendor/
 tools/                  Fork preparation, host builds and end-to-end security tests
 runtime/                @whatever-engine/api — TypeScript scripting API package
   host/                 Trusted bootstrap compiled with the API into whatever-mod-host
-  src/                  Source
+  src/                  Source (components/ public namespaces, network/ schema and registration helpers)
   dist/
     index.js            Compiled API bundle (built from src/ via bun build:runtime)
     index.d.ts          Type declarations for the API
@@ -79,13 +79,14 @@ src/
   logging.rs            Log file init, rotation, tracing subscriber setup
   input.rs              Keyboard/mouse accumulator
   console/              Developer console (egui UI, command registry, tab completion)
-    commands/           Built-in engine commands (version, markbench, mods, vfs)
+    commands/           Built-in engine commands (version, logging, mods, vfs)
     completer.rs        Tab-completion logic
     parser.rs           Command tokenizer and argument parser
     registry.rs         CommandRegistry + script-to-node conversion
     types.rs            Shared types (CommandNode, ArgSpec, …)
     widget.rs           DevConsole render + execute
   script/               Bundled runtime discovery + subprocess host + NDJSON IPC
+  network/              Native schema registration, packet codecs and client-data validation
   sandbox/              Native-host OS restrictions and broker path containment
   audio/                Audio playback and handle management
   watchdog.rs           Slow-tick diagnostics
@@ -98,6 +99,17 @@ docs/
   SHADER.md             Custom shader contract, mesh formats, and patterns
   SANDBOX.md            Security sandbox design and implementation details
 ```
+
+## Mod formatting
+
+Biome formats JavaScript, TypeScript and JSON source under `mods/`, `mods_user/` and `games/` with **2 spaces**, a **100-column** line width and LF endings. Assets, dependencies and `dist/` output are excluded. Gitignored local mods are included deliberately. The root `biome.json` is the shared configuration; `.editorconfig` provides matching editor indentation. Editors with Biome support can use this configuration for format-on-save.
+
+```sh
+bun run format        # Format mod sources
+bun run format:check  # Check formatting without writing (also runs in CI)
+```
+
+Biome is a pinned development dependency. Run `bun install --frozen-lockfile` after pulling the setup. Formatting does not enable lint fixes or import organization.
 
 ## Mod System
 
@@ -127,7 +139,7 @@ Set `default_mode = "client"` or `"server"` in the `[game]` section of core's `m
 
 The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Rendering runs on the window thread and consumes the latest world snapshot. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
 
-Server mode creates no window, graphics context, egui context or audio output device. It uses the same simulation worker with empty input. Stop it with Ctrl+C, SIGTERM on Unix, or `quit` / `stop` on stdin. The executable still links desktop libraries; a smaller server-only build is separate future work.
+Server mode creates no window, graphics context, egui context or audio output device. It uses the same simulation worker with empty input. Enter built-in or mod console commands on stdin (`help`, `help dev`, `netdemo codec`). Stop it with Ctrl+C, SIGTERM on Unix, or `quit` / `stop`. The executable still links desktop libraries; a smaller server-only build is separate future work.
 
 Mods may set `sides = ["client"]`, `["server"]` or `["client", "server"]` inside `[mod]`. Omission supports both sides. Inactive mods are filtered before dependency checks and load ordering; active dependencies must exist on the selected side.
 
@@ -176,6 +188,14 @@ After editing `runtime/src/`, regenerate `index.d.ts`:
 ```sh
 bun run build:runtime
 ```
+
+## Debug suite and network API example
+
+The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`mods/debug`](mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. The Mandelbrot benchmark now measures the mod's Bun thread through `dev benchmark`.
+
+[`mods/network_example`](mods/network_example/README.md) registers the same shared specification on either side and logs an offline codec roundtrip. `netdemo spec` lists engine-assigned IDs and `netdemo codec` repeats the check. No sockets are opened. See [Network API](docs/SCRIPTING.md#network) for schemas, registration and client-data types. `send`/`broadcast` report that transport is unavailable.
+
+`bun run test:network` runs schema/proxy tests and compiler checks against the generated public declarations. Native codec and registration tests run with `cargo test`. `bun run test:server` also exercises native network IPC and stdin mod commands through the bundled host.
 
 ## Logging
 

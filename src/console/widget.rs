@@ -1,4 +1,4 @@
-use crate::console::commands::{debug_cmd, engine_cmd, markbench, mods_cmd, scene_cmd, vfs_cmd};
+use crate::console::commands::{debug_cmd, engine_cmd, mods_cmd, scene_cmd, vfs_cmd};
 use crate::console::completer;
 use crate::console::parser;
 use crate::console::registry::CommandRegistry;
@@ -75,7 +75,6 @@ impl DevConsole {
         registry.register_engine(CommandNode::engine("quit", "Shutdown the engine"));
         registry.register_engine(debug_cmd::node());
         registry.register_engine(engine_cmd::node());
-        registry.register_engine(markbench::node());
         registry.register_engine(mods_cmd::node());
         registry.register_engine(scene_cmd::node());
         registry.register_engine(vfs_cmd::node());
@@ -512,6 +511,37 @@ impl DevConsole {
             });
     }
 
+    pub(crate) fn discard_output(&mut self) {
+        self.output.clear();
+    }
+
+    pub(crate) fn execute_headless(
+        &mut self,
+        input: &str,
+        registry: &ModRegistry,
+        vfs: &dyn Vfs,
+        debug: crate::debug::SharedDebugSwitches,
+        world: &crate::ecs::World,
+    ) -> ConsoleAction {
+        if self.pending_invoke.is_some() {
+            tracing::warn!("a console command is still awaiting its mod response");
+            return ConsoleAction::None;
+        }
+        self.output.clear();
+        let action = self.execute(input, registry, vfs, debug, world);
+        // Regular command results/errors are already logged by execute/response.
+        // Help is rendered inline and needs its output mirrored explicitly.
+        if input.split_whitespace().next() == Some("help") {
+            for line in &self.output {
+                if let OutputLine::Text(text) = line {
+                    tracing::info!("{text}");
+                }
+            }
+        }
+        self.output.clear();
+        action
+    }
+
     fn execute(
         &mut self,
         input: &str,
@@ -534,7 +564,8 @@ impl DevConsole {
                 return ConsoleAction::None;
             }
             "help" => {
-                let lines = self.run_help(tokens.get(1).map(String::as_str));
+                let path = tokens[1..].join(" ");
+                let lines = self.run_help((!path.is_empty()).then_some(path.as_str()));
                 for line in lines {
                     self.output.push(OutputLine::Text(line));
                 }
@@ -688,8 +719,11 @@ impl DevConsole {
 
     fn run_help(&self, command: Option<&str>) -> Vec<String> {
         if let Some(cmd) = command {
-            if let Some(node) = self.registry.roots.iter().find(|n| n.name == cmd) {
-                return describe_node(node);
+            let path: Vec<_> = cmd.split_whitespace().collect();
+            if let Some(node) = self.registry.find(&path) {
+                let mut described = node.clone();
+                described.name = cmd.to_owned();
+                return describe_node(&described);
             }
             return vec![format!("no command named '{cmd}'")];
         }

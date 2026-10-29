@@ -190,6 +190,23 @@ Inter-mod communication. Payloads must be JSON-serializable.
 
 - `Console.register(spec)` — register developer console commands with typed args and subcommands. Argument types: `string`, `int`, `float`, `bool`, `mod_id`, `entity_id`. The engine completes and validates loaded mod IDs and living entity IDs; handlers receive ID strings. `bool` suggests `false`/`true` by default. Open the console with F2; Up/Down previews suggestions and Tab accepts.
 
+### `Network`
+
+- `Network.Type` — `I32`, `F64`, signed 32-bit ZigZag `VarInt`, `Bool`, `String`, `Array(type, options?)`, `Optional(type)`
+- `Network.Type.I32/F64/VarInt.with({ min?, max? })` — immutable numeric constraints
+- `Network.Type.String.with({ maxLength })` — UTF-8 byte limit; array `maxLength` counts elements
+- `Network.Struct(fields)` / `Network.Packet(fields)` / `Network.Specification(id, states)` — immutable definitions
+- `Network.Infer<typeof descriptor>` — inferred payload/client-data type
+- `Network.registerClient(spec)` / `Network.registerServer(spec, { clientData, initialClientData })` — await native validation/registration
+- `registration.packets` / `id` / `specificationId` / `fingerprint` — engine-assigned metadata
+- `registration.encodePacket(name, payload)` / `decodePacket(bytes)` — native offline codecs; packet ID and payload, no stream length prefix
+- `registration.on(name, handler)` — typed receive subscription; returns unsubscribe
+- `registration.send(...)` / `server.broadcast(...)` — typed API; rejects until transport is implemented
+- `server.onConnect(handler)` / `onDisconnect(handler)` / `clients` / `getClient(id)` — connection hooks; clients remain empty in this phase
+- `server.validateClientData(data)` — offline native validation/copy
+- `client.data` / `client.flushData()` — typed mutation proxy and native update acknowledgement for future connections
+- `registration.close()` — release native registration
+
 ## Development
 
 ```sh

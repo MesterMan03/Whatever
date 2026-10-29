@@ -55,7 +55,7 @@ The engine sends `Init` after this handshake and runtime readiness (including wi
 
 | Event | Payload | Description |
 |---|---|---|
-| `init` | `{ mod_id, engine_version }` | Fired once after engine init and window ready |
+| `init` | `{ mod_id, engine_version, mode }` | Fired once after engine initialization; server has no window |
 | `exit` | `{ exit_code }` | Fired on shutdown; process exits after all handlers return |
 | `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta }` | Fired every game tick; engine waits for async handlers |
 | `mod_message` | `{ source_mod_id, message, request_id? }` | Message from another mod (see `Message`) |
@@ -1033,10 +1033,74 @@ register it as `mod_id:name` instead and log a warning.
 
 ---
 
+## `Network`
+
+This phase implements engine registration and offline binary codecs. Registration opens no sockets. Client lists remain empty and no packet/connection events are generated until transport is added. `send` and `broadcast` reject rather than silently discarding packets.
+
+```ts
+const Hello = Network.Packet({name: Network.Type.String.with({maxLength: 64})});
+const Game = Network.Specification("my_mod:game", {
+  login: {
+    serverbound: {hello: Hello},
+    clientbound: {welcome: Network.Packet({playerId: Network.Type.I32})},
+  },
+});
+type HelloData = Network.Infer<typeof Hello>;
+const client = await Network.registerClient(Game); // client entry
+const bytes = await client.encodePacket("login.hello", {name: "Alex"});
+const decoded = await client.decodePacket(bytes); // discriminated union: packet, direction, state, data
+```
+
+Definitions are immutable snapshots. Structs and packets use ordered, named fields; arrays accept any descriptor, including structs and optional values. States/packet names are ASCII identifiers, without dots; unsafe property names are rejected. A specification ID must use the registering mod's namespace. Define shared schemas in a local module imported by both side entries, as in `mods/network_example/scripts/network.ts`.
+
+| Descriptor | JavaScript value | Wire representation |
+|---|---|---|
+| `Type.I32` | integer number, signed 32-bit | Four bytes, big endian |
+| `Type.F64` | finite number | Eight IEEE-754 bytes, big endian |
+| `Type.VarInt` | integer number, signed 32-bit | ZigZag followed by ULEB128 |
+| `Type.Bool` | boolean | One byte; decoding treats nonzero as true |
+| `Type.String` | string | Unsigned ULEB128 UTF-8 byte length, then UTF-8 |
+| `Type.Array(type, {maxLength?})` | array | Unsigned ULEB128 element count, then elements |
+| `Type.Optional(type)` | value or undefined | Presence byte, then value when present |
+| `Network.Struct(fields)` | object | Field values in declared order |
+
+Optional object fields can be omitted. Undefined is represented as null only inside private JSON IPC; it is restored to undefined by the SDK. Public values do not accept null as a substitute. Nested optionals, sparse arrays, unknown object fields, out-of-range numbers and malformed UTF-8 are rejected. Numeric `.with({min?, max?})` bounds affect validation and specification metadata, with no extra wire bytes. String `.with({maxLength})` bounds count UTF-8 bytes.
+
+Native limits: 1 MiB per encoded packet including its two-byte ID, up to 65,536 array elements, 32 schema nesting levels, 100,000 schema/value nodes and 1,024 states. A protocol may contain 65,536 packets. IDs increment across states and both directions, in state declaration order, serverbound then clientbound within each state. Mod load order has no effect. States group packets as metadata; no connection state machine is imposed.
+
+Registration checks the runtime side, ownership, names, schema constraints and server defaults before returning an engine handle. Conflicting/repeated registrations fail; `close()` releases the registration, and mod process exit removes its registrations. The fingerprint is a deterministic FNV-1a diagnostic digest; native identity/conflict checks compare the full manifest, and transport compatibility negotiation is deferred.
+
+Both registration handles expose `id`, `specificationId`, `fingerprint`, readonly `packets` (ID/path/state/direction), `decodePacket(bytes)` and `close()`. Client `encodePacket/send/on` and server equivalents infer names/payloads from direction. A client sends serverbound and receives clientbound packets; a server does the reverse. `decodePacket` is an offline inspection method for either direction and does not dispatch receive handlers. Its bytes contain `[u16 packet ID][payload]`; stream framing is a later transport concern.
+
+Server registration also declares per-client data:
+
+```ts
+const ClientData = Network.Struct({
+  playerId: Network.Type.Optional(Network.Type.I32),
+  tags: Network.Type.Array(Network.Type.String),
+});
+const server = await Network.registerServer(Game, {
+  clientData: ClientData,
+  initialClientData: {tags: []},
+});
+server.on("login.hello", async (packet, client) => {
+  client.data.playerId = 42;
+  client.data.tags.push(packet.name);
+  await client.flushData();
+  await server.send(client, "login.welcome", {playerId: client.data.playerId});
+});
+```
+
+Required client-data fields need initial values. Native connection allocation will copy defaults independently for each peer; data remains server/mod-local and is excluded from the wire fingerprint. The prepared SDK proxy validates assignments, nested edits and array mutations before submitting ordered snapshots to native storage. `flushData()` awaits outstanding writes and reports rejected updates. Disconnect makes the data view read-only for cleanup; reconnect gets fresh defaults. `server.validateClientData(value)` validates and copies data offline without inventing a connected peer.
+
+`on(packet, handler)` returns unsubscribe; client handlers receive data, server handlers receive data and `Network.Client<D>`. `server.onConnect/onDisconnect` likewise return unsubscribe. `server.clients` and `getClient(id)` return typed handles. Server `send(client, packet, data)` requires a client belonging to that registration. `broadcast(packet, data)` is explicit. Callback failures and asynchronous data-update failures are logged. These lifecycle hooks are prepared for trusted engine events; this phase does not create connections.
+
 ## IPC protocol reference
 
 This section documents the raw wire format. Normal mod code should use the API
 namespaces above rather than speaking the protocol directly.
+
+Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Send and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 3.
 
 **Transport:** NDJSON (one JSON object per line) on stdin/stdout per process.
 Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.

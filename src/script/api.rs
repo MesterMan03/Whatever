@@ -51,6 +51,7 @@ impl RenderCommand {
 
 pub struct EngineContext<'a> {
     pub mode: crate::runtime::RuntimeMode,
+    pub network: &'a mut crate::network::NetworkRegistry,
     pub script_host: &'a mut ScriptHost,
     pub registry: &'a ModRegistry,
     pub game_id: &'a str,
@@ -63,6 +64,7 @@ pub struct EngineContext<'a> {
 pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> DispatchResult {
     let EngineContext {
         mode,
+        network,
         script_host,
         registry,
         game_id,
@@ -72,6 +74,23 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         audio,
     } = ctx;
     match msg {
+        ScriptMessage::NetworkRequest {
+            request_id,
+            request,
+        } => {
+            let result = serde_json::from_value::<crate::network::NetworkRequest>(request)
+                .map_err(anyhow::Error::from)
+                .and_then(|request| network.request(mod_id, mode, request));
+            script_host.send(
+                mod_id,
+                &EngineMessage::NetworkResponse {
+                    request_id,
+                    result: result.as_ref().ok().cloned(),
+                    error: result.err().map(|e| e.to_string()),
+                },
+                debug,
+            );
+        }
         ScriptMessage::RuntimeReady { protocol } => {
             if protocol == super::runtime::HOST_PROTOCOL && script_host.mark_ready(mod_id) {
                 script_host.send(

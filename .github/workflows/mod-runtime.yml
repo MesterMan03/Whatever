@@ -50,5 +50,8 @@ jobs:
         shell: bash
         run: |
           cargo build --locked
+          cargo test --workspace --locked
+          bun run test:network
           bun run test:server
+          bun run test:mods
           cargo test --locked client_ticks_without_redraws -- --ignored

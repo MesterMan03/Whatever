@@ -1,0 +1,26 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  "files": {
+    "includes": [
+      "{mods,mods_user,games}/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts,json,jsonc}",
+      "!!**/assets",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!vendor",
+      "!!target"
+    ],
+    "ignoreUnknown": true
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "linter": {
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  }
+}

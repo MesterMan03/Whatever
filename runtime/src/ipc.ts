@@ -1,3 +1,4 @@
+import { handleResponse as handleNetworkResponse, handleEvent as handleNetworkEvent, type NetworkEvent } from "./network/registration.ts";
 import type { JsonValue, ModManifest, EventName, EventPayloads } from "./types.ts";
 import {
   _handlers, _fileCallbacks, _modListCallbacks, _modGetCallbacks, _msgCallbacks,
@@ -16,6 +17,8 @@ const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
+  | ({type: "NetworkEvent"} & NetworkEvent)
+  | {type: "NetworkResponse"; request_id: string; result: unknown; error: string | null}
   | { type: "CommandInvoke"; request_id: string; command_path: string[]; args: JsonValue[] }
   | { type: "ArgSuggestRequest"; request_id: string; command_path: string[]; arg_index: number; current: string }
   | { type: "Init"; mod_id: string; engine_version: string; mode: import("./types.ts").RuntimeMode }
@@ -40,6 +43,8 @@ type _EngineMsg =
   | { type: "Shutdown"; exit_code: number };
 
 function _dispatch(msg: _EngineMsg): void {
+  if (msg.type === "NetworkResponse") { handleNetworkResponse(msg); return; }
+  if (msg.type === "NetworkEvent") { handleNetworkEvent(msg); return; }
   if (msg.type === "CommandInvoke") {
     _handleCommandInvoke(msg);
     return;

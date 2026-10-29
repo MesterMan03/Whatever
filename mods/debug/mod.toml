@@ -1,0 +1,16 @@
+[mod]
+id = "debug"
+name = "Whatever Debug Suite"
+version = "0.1.0"
+description = "First-party runtime, rendering, sandbox and scripting diagnostics"
+sides = ["client", "server"]
+
+[dependencies]
+core = "*"
+
+[assets]
+root = "assets"
+
+[script]
+client = "scripts/client.ts"
+server = "scripts/server.ts"

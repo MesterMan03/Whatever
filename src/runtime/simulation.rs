@@ -29,6 +29,8 @@ pub struct Simulation {
     vfs: VfsHandle,
     debug: DebugLogger,
     script_host: ScriptHost,
+    network: crate::network::NetworkRegistry,
+    server_console: Option<crate::console::DevConsole>,
     world: World,
     audio: AudioManager,
     clock: TickClock,
@@ -113,6 +115,8 @@ impl Simulation {
             vfs,
             debug,
             script_host,
+            network: crate::network::NetworkRegistry::default(),
+            server_console: (mode == RuntimeMode::Server).then(crate::console::DevConsole::new),
             world: World::new(),
             audio,
             clock,
@@ -136,6 +140,7 @@ impl Simulation {
     fn controls(&mut self) {
         while let Ok(command) = self.commands.try_recv() {
             match command {
+                RuntimeCommand::ConsoleInput(input) => self.server_command(&input),
                 RuntimeCommand::Ready => {
                     if !self.ready {
                         self.ready = true;
@@ -164,6 +169,7 @@ impl Simulation {
                 self.message(id, message);
             }
             for id in self.script_host.reap_exited() {
+                self.network.remove_mod(&id);
                 self.subscribers.remove(&id);
                 self.pending_ready.remove(&id);
             }
@@ -200,6 +206,73 @@ impl Simulation {
         tracing::info!(ticks = self.tick_number, "simulation stopped");
         Ok(())
     }
+    fn server_command(&mut self, input: &str) {
+        let Some(console) = self.server_console.as_mut() else {
+            return;
+        };
+        let action = console.execute_headless(
+            input,
+            &self.registry,
+            self.vfs.as_ref(),
+            self.debug.shared_switches(),
+            &self.world,
+        );
+        match action {
+            crate::console::ConsoleAction::Quit => self.shared.stop.store(true, Ordering::Relaxed),
+            crate::console::ConsoleAction::SendIpc { mod_id, message } => {
+                if !self.script_host.send(&mod_id, &message, &mut self.debug) {
+                    console.handle_command_response(
+                        vec![],
+                        Some("command's mod process is unavailable".into()),
+                    );
+                    console.discard_output();
+                }
+            }
+            crate::console::ConsoleAction::EngineSettings(_) => {
+                tracing::warn!("presentation settings are unavailable on a headless server")
+            }
+            crate::console::ConsoleAction::None => {}
+        }
+    }
+    fn server_console_message(&mut self, mod_id: &str, message: &ScriptMessage) {
+        let Some(console) = self.server_console.as_mut() else {
+            return;
+        };
+        match message {
+            ScriptMessage::RegisterCommand {
+                name,
+                description,
+                subcommands,
+                args,
+                has_handler,
+            } => {
+                let spec = crate::script::ipc::CommandNodeSpec {
+                    name: name.clone(),
+                    description: description.clone(),
+                    subcommands: subcommands.clone(),
+                    args: args.clone(),
+                    has_handler: *has_handler,
+                };
+                console.registry.register_mod(
+                    mod_id,
+                    crate::console::command_node_from_spec(&spec, mod_id),
+                );
+            }
+            ScriptMessage::CommandResponse {
+                request_id,
+                output,
+                error,
+            } if console
+                .pending_invoke
+                .as_ref()
+                .is_some_and(|pending| pending.request_id == *request_id) =>
+            {
+                console.handle_command_response(output.clone(), error.clone());
+                console.discard_output();
+            }
+            _ => {}
+        }
+    }
     fn message(&mut self, id: String, message: ScriptMessage) {
         match &message {
             ScriptMessage::Subscribe { events } => {
@@ -222,6 +295,8 @@ impl Simulation {
                 if self.mode == RuntimeMode::Client {
                     self.events.push((id, message));
                     self.changed = true;
+                } else {
+                    self.server_console_message(&id, &message);
                 }
                 return;
             }
@@ -233,6 +308,7 @@ impl Simulation {
             message,
             EngineContext {
                 mode: self.mode,
+                network: &mut self.network,
                 script_host: &mut self.script_host,
                 registry: &self.registry,
                 game_id: &self.meta.game.id,

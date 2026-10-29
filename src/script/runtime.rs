@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub const HOST_PROTOCOL: u32 = 2;
+pub const HOST_PROTOCOL: u32 = 3;
 
 #[derive(Deserialize)]
 struct HostInfo {

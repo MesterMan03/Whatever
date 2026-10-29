@@ -1,8 +1,0 @@
-[mod]
-id          = "asset_mod"
-name        = "Asset Test Mod"
-version     = "0.1.0"
-description = "Asset Testing mod"
-
-[assets]
-root = "assets"

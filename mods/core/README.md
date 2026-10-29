@@ -1,26 +1,7 @@
-# Example of the "core" mod
+# Core
 
-The `core` mod acts as the heart of any game made in Whatever. It is always loaded first and has no dependencies.
+Core is the metadata and shared-asset layer of a Whatever game. It loads first and contains no diagnostic scripts or demonstration gameplay.
 
-It also requires a special `meta.toml` file with the following content:
+`meta.toml` selects the game's ID, name, tick rate and default runtime mode. Other mods use `core://shaders/sprite.wgsl`, `core://shaders/mesh_lit.wgsl` and `core://fonts/default.ttf`.
 
-```toml
-[game]
-id   = "game_id"
-name = "Game Name"
-tick_rate = 60
-```
-
-This file is used to set the game's ID and name, which are used in the window title and save file paths. The `core` mod can be thought of as the "base layer" of the engine, providing essential functionality and assets that other mods can build upon.
-
-## Scripting
-
-While the engine will support writing scripts using TypeScript with no compilation step, you can use Bun's bundler to automatically minify your scripts for production builds.
-
-You can see an example of this here, where `src` contains the original TypeScript files, and `script` contains the bundled output.
-
-The following command was used to bundle the scripts:
-
-```bash
-bun build src/index.ts --outfile scripts/index.js --minify --external=@whatever-engine/api
-```
+The first-party tools and demonstration camera are in [the debug suite](../debug/README.md). A game can replace core metadata/assets and omit the debug suite entirely.

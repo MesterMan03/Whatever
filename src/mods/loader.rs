@@ -305,3 +305,18 @@ fn has_explicit_order(mod_a: &str, mod_b: &str, mod_order: &ModOrder) -> bool {
     };
     references(mod_a, mod_b) || references(mod_b, mod_a)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_core_is_asset_only() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let core: ModManifest = toml::from_str(
+            &std::fs::read_to_string(root.join("mods/core/mod.toml")).expect("core manifest"),
+        )
+        .expect("parse core");
+        assert!(core.script.is_none());
+    }
+}

@@ -1,2 +1,35 @@
 # Native fork patches need LF endings; blank context markers contain a required space.
 vendor/patches/*.patch text eol=lf whitespace=-blank-at-eol
+
+# Keep formatted mod sources stable across Windows and Unix checkouts.
+biome.json text eol=lf
+mods/**/*.js text eol=lf
+mods/**/*.jsx text eol=lf
+mods/**/*.ts text eol=lf
+mods/**/*.tsx text eol=lf
+mods/**/*.mjs text eol=lf
+mods/**/*.cjs text eol=lf
+mods/**/*.mts text eol=lf
+mods/**/*.cts text eol=lf
+mods/**/*.json text eol=lf
+mods/**/*.jsonc text eol=lf
+mods_user/**/*.js text eol=lf
+mods_user/**/*.jsx text eol=lf
+mods_user/**/*.ts text eol=lf
+mods_user/**/*.tsx text eol=lf
+mods_user/**/*.mjs text eol=lf
+mods_user/**/*.cjs text eol=lf
+mods_user/**/*.mts text eol=lf
+mods_user/**/*.cts text eol=lf
+mods_user/**/*.json text eol=lf
+mods_user/**/*.jsonc text eol=lf
+games/**/*.js text eol=lf
+games/**/*.jsx text eol=lf
+games/**/*.ts text eol=lf
+games/**/*.tsx text eol=lf
+games/**/*.mjs text eol=lf
+games/**/*.cjs text eol=lf
+games/**/*.mts text eol=lf
+games/**/*.cts text eol=lf
+games/**/*.json text eol=lf
+games/**/*.jsonc text eol=lf

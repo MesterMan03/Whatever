@@ -7,7 +7,7 @@ const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
 if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
-async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string}={}) {
+async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[]}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
@@ -26,9 +26,11 @@ async function runServer(source:string, options:{mode?:string;defaultMode?:strin
     let stdout="";
     let stopped=false;
     let stopTime=0;
+    let commandsSent=false;
     const read=(async()=>{
       for await (const bytes of active.stdout as ReadableStream<Uint8Array>){
         stdout+=new TextDecoder().decode(bytes);
+        if(!commandsSent && options.commandsOnReady && stdout.includes("CONSOLE_READY")) {commandsSent=true;(active.stdin as import("bun").FileSink).write(options.commandsOnReady.join("\n")+"\n");}
         if(!stopped && stdout.includes(options.stopAt??"FIXTURE_DONE") && stdout.includes("SERVER_ONLY_READY")){
           stopped=true;stopTime=performance.now();
           (active.stdin as import("bun").FileSink).write("quit\n");
@@ -78,3 +80,29 @@ describe("headless runtime",()=>{
     const result=await runServer(source,{mode:"server",stopAt:"mod process exited"});
     expect(result.code).toBe(0);expect(result.stdout).toContain("mod process exited");expect(result.shutdownMs).toBeLessThan(3000);
   });});
+
+test("native network registration and offline codecs work through the bundled server host", async () => {
+  const source = 'import {Engine,Network} from "@whatever-engine/api";'+
+    'const game=Network.Specification("core:game",{login:{serverbound:{hello:Network.Packet({name:Network.Type.String})},clientbound:{welcome:Network.Packet({id:Network.Type.I32.with({min:0}),maybe:Network.Type.Optional(Network.Type.Bool)})}}});'+
+    'Engine.on("init",async()=>{try{'+
+    'const bad=Network.Specification("core:bad",{s:{serverbound:{p:Network.Packet({n:Network.Type.I32.with({bogus:1})})}}});'+
+    'try{await Network.registerServer(bad,{clientData:Network.Struct({}),initialClientData:{}});throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("unknown field"))throw e;}'+
+    'const server=await Network.registerServer(game,{clientData:Network.Struct({tags:Network.Type.Array(Network.Type.String)}),initialClientData:{tags:[]}});'+
+    'if(server.packets[0].id!==0||server.packets[1].id!==1)throw new Error("packet ID assignment");'+
+    'const bytes=await server.encodePacket("login.welcome",{id:42});'+
+    'if(bytes.join(",")!=="0,1,0,0,0,42,0")throw new Error("incorrect wire bytes: "+bytes);'+
+    'const decoded=await server.decodePacket(bytes);if(decoded.packet!=="login.welcome"||decoded.data.id!==42||decoded.data.maybe!==undefined)throw new Error("decode mismatch");'+
+    'const data=await server.validateClientData({tags:["ok"]});if(data.tags[0]!=="ok"||server.clients.length)throw new Error("client defaults");'+
+    'try{await server.broadcast("login.welcome",{id:1});throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("transport is not implemented"))throw e;}'+
+    'await server.close();try{await server.encodePacket("login.welcome",{id:1});throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("closed"))throw e;}'+
+    'Engine.log("info","FIXTURE_DONE");}catch(e){Engine.log("error","NETWORK_FAILURE "+e);}});';
+  const result=await runServer(source,{mode:"server"});
+  expect(result.stdout).toContain("FIXTURE_DONE");expect(result.stdout).not.toContain("NETWORK_FAILURE");
+});
+test("headless stdin executes registered mod commands using engine argument validation", async () => {
+  const source='import {Engine,Console} from "@whatever-engine/api";'+
+    'Console.register({name:"probe",args:[{name:"target",type:"mod_id",required:true}],handler:({target})=>"FIXTURE_DONE target="+target});'+
+    'Engine.on("init",()=>Engine.log("info","CONSOLE_READY"));';
+  const result=await runServer(source,{mode:"server",commandsOnReady:["probe core"]});
+  expect(result.stdout).toContain("FIXTURE_DONE target=core");
+});

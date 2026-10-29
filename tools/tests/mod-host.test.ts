@@ -18,7 +18,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(standaloneDirectory, { recursive: true, force: true }));
 
-async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client") {
+async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean) {
   const directory = mkdtempSync(join(tmpdir(), "whatever-host-"));
   try {
     const host = standaloneHost;
@@ -58,6 +58,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
           remaining = remaining.slice(newline + 1);
           const message = JSON.parse(line);
           messages.push(message);
+          if (onMessage?.(message, value => child.stdin.write(JSON.stringify(value)+"\n"))) continue;
           if (message.type === "RuntimeReady") {
             child.stdin.write(JSON.stringify({ type: "Init", mod_id: "fixture", engine_version: "0.4.0", mode }) + "\n");
           } else if (message.type === "EntityCreate") {
@@ -268,4 +269,33 @@ describe("bundled mod host", () => {
     expect(logs[1]).toBe("fixture-done");
     expect(result.exitCode).toBe(0);
   });
+});
+
+test("registered SDK peers keep typed data, ordered writes and disconnect state", async () => {
+  const writes: Array<Record<string, any>>=[];
+  const source='import {Engine,Network} from "@whatever-engine/api";'+
+    'Engine.on("init",async()=>{const spec=Network.Specification("fixture:peers",{s:{serverbound:{hello:Network.Packet({name:Network.Type.String})}}});'+
+    'const server=await Network.registerServer(spec,{clientData:Network.Struct({name:Network.Type.String,tags:Network.Type.Array(Network.Type.String)}),initialClientData:{name:"",tags:[]}});'+
+    'server.onConnect(async client=>{if(client.id==="a"){client.data.name="Alex";client.data.tags.push("player");await client.flushData();Engine.log("info","NETWORK_DATA_WRITTEN");}else if(client.data.tags.length)throw new Error("shared defaults");});'+
+    'server.onDisconnect(client=>{if(client.connected||client.data.name!=="Alex")throw new Error("bad disconnect state");try{client.data.name="bad";throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("disconnected"))throw e;}Engine.log("info","fixture-done");});'+
+    'Engine.log("info","NETWORK_HOST_READY");});';
+  const result=await runHost(source,{}, {}, "index.ts", "server", (message,reply)=>{
+    if(message.type==="NetworkRequest") {
+      const req=message.request;
+      if(req.op==="Register")reply({type:"NetworkResponse",request_id:message.request_id,error:null,result:{registration_id:"test:1",specification_id:"fixture:peers",fingerprint:"fixture",packets:[]}});
+      else {writes.push(req);reply({type:"NetworkResponse",request_id:message.request_id,error:null,result:null});}
+      return true;
+    }
+    if(message.type==="Log"&&message.message==="NETWORK_HOST_READY") {
+      for(const client_id of ["a","b"])reply({type:"NetworkEvent",event:"connected",registration_id:"test:1",client_id,data:{name:"",tags:[]}});
+      return true;
+    }
+    if(message.type==="Log"&&message.message==="NETWORK_DATA_WRITTEN") {
+      reply({type:"NetworkEvent",event:"disconnected",registration_id:"test:1",client_id:"a"});return true;
+    }
+    return false;
+  });
+  expect(result.exitCode).toBe(0);expect(result.stderr).toBe("");
+  expect(writes.map(w=>w.data)).toEqual([{name:"Alex",tags:[]},{name:"Alex",tags:["player"]}]);
+  expect(result.messages.filter(m=>m.type==="Log"&&m.level==="error")).toHaveLength(0);
 });

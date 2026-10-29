@@ -33,7 +33,7 @@ The bootstrap captures native stdin/stdout pipe handles for its private IPC tran
 3. The host runs with a cleared environment, retaining only Windows system-directory and temporary-directory variables when present, plus a fixed `BUN_DEBUG_QUIET_LOGS=1` to keep native debug diagnostics off IPC stdout. It receives no inherited PATH, Bun/Node options or application secrets.
 4. Compiled hosts disable automatic dotenv, bunfig, package.json and tsconfig loading. Runtime package installation, macros and native addons are disabled.
 5. The bootstrap registers the embedded API, installs its console, activates the native policy, and loads the mod.
-6. After evaluation, it sends `RuntimeReady`. The engine sends `Init` once the runtime is ready and this handshake has arrived; client mode also waits for its window. Host protocol 2 provides `client` or `server` before top-level mod evaluation and includes it in `Init`.
+6. After evaluation, it sends `RuntimeReady`. The engine sends `Init` once the runtime is ready and this handshake has arrived; client mode also waits for its window. Host protocol 3 provides `client` or `server` before top-level mod evaluation and includes it in `Init`.
 
 A missing or incompatible host is an engine startup error. A host built with stock Bun refuses to load any mod.
 
@@ -72,3 +72,4 @@ For a debug fork use `bun run build:bun --debug`. The host builder also accepts 
 The native resolver regression cases are in `vendor/bun/test/js/bun/resolve/resolve.test.ts` under `Whatever native module policy`. Run them with `bun bd test test/js/bun/resolve/resolve.test.ts -t Whatever` inside that checkout. Background transpilation, bytecode caches and transpilation caches are disabled for locked mod sources so cached transforms cannot skip the policy. The end-to-end host suite runs the compiled host outside the engine tree with an empty PATH.
 
 Linux checks can be run under WSL. Keep Linux Cargo outputs in a separate target directory so Windows and Linux never share compiled artifacts. Run sandboxed Linux game/mod files from WSL's Linux filesystem: the tested WSL kernel denied even allowlisted files on the Windows-mounted `/mnt/c` filesystem under Landlock. The kernel probe uses Linux-filesystem fixtures and verifies an allowed read plus denied engine-file and network access.
+The Network API submits declarative schemas and offline codec requests to the engine. Native registration checks the runtime side and mod namespace; subsequent requests check handle ownership. This phase grants no sockets or direct network globals. Client-data templates are server-local and validated independently of packet schemas.

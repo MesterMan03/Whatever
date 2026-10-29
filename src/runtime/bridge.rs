@@ -18,6 +18,7 @@ pub struct RuntimeInput {
     pub mouse: (f32, f32),
 }
 pub enum RuntimeCommand {
+    ConsoleInput(String),
     Ready,
     Ipc {
         mod_id: String,

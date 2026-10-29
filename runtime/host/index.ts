@@ -21,7 +21,7 @@ try {
   if (process.argv[2] === "--runtime-info") {
     write(JSON.stringify({
       runtime: "whatever-mod-host",
-      protocol: 2,
+      protocol: 3,
       native_policy: 1,
       bun_version: Bun.version,
       api_version: manifest.version,
@@ -69,7 +69,7 @@ try {
     throw new Error("The native runtime policy version is unsupported.");
   }
   await import(entryUrl);
-  write(JSON.stringify({ type: "RuntimeReady", protocol: 2 }) + "\n");
+  write(JSON.stringify({ type: "RuntimeReady", protocol: 3 }) + "\n");
 } catch (error) {
   write(JSON.stringify({
     type: "Log",

@@ -6,6 +6,3 @@ description = "Engine-provided core mod"
 
 [assets]
 root = "assets"
-
-[script]
-client = "scripts/index.js"

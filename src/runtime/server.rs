@@ -4,6 +4,7 @@ pub fn run_server(game: LoadedGame) -> anyhow::Result<()> {
     let mut simulation = SimulationHandle::spawn(game)?;
     simulation.ready();
     let stop = Arc::clone(&simulation.shared);
+    let commands = simulation.commands.clone();
     std::thread::Builder::new()
         .name("whatever-server-stdin".into())
         .spawn(move || {
@@ -14,9 +15,12 @@ pub fn run_server(game: LoadedGame) -> anyhow::Result<()> {
                     stop.stop.store(true, Ordering::Relaxed);
                     break;
                 }
+                if !line.trim().is_empty() {
+                    let _ = commands.send(super::bridge::RuntimeCommand::ConsoleInput(line));
+                }
             }
         })?;
-    tracing::info!("headless server running; use Ctrl+C or type quit to stop");
+    tracing::info!("headless server running; type help for commands, Ctrl+C or quit to stop");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

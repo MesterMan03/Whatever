@@ -1,0 +1,13 @@
+[mod]
+id = "network_example"
+name = "Network API Example"
+version = "0.1.0"
+description = "Shared protocol registration and offline codec example; no transport"
+sides = ["client", "server"]
+
+[dependencies]
+core = "*"
+
+[script]
+client = "scripts/client.ts"
+server = "scripts/server.ts"

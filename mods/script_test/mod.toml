@@ -1,9 +1,0 @@
-[mod]
-sides = ["client"]
-id          = "script_test"
-name        = "Script Test"
-version     = "0.1.0"
-description = "Integration tests for the scripting API"
-
-[script]
-entry = "scripts/index.ts"
