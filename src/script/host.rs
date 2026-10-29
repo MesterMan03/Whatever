@@ -4,9 +4,8 @@ use crate::debug::DebugLogger;
 use crate::sandbox::{SandboxConfig, SandboxGuard};
 use anyhow::Context;
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::Path;
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -14,7 +13,7 @@ use std::time::Duration;
 pub struct ScriptProcess {
     pub mod_id: String,
     child: Child,
-    stdin: ChildStdin,
+    writer: super::writer::PipeWriter,
     ready: bool,
     _sandbox_guard: SandboxGuard,
 }
@@ -23,8 +22,7 @@ impl ScriptProcess {
     pub fn send(&mut self, msg: &EngineMessage, debug: &mut DebugLogger) -> anyhow::Result<()> {
         let line = serde_json::to_string(msg)?;
         debug.ipc(&self.mod_id, "←", &line);
-        writeln!(self.stdin, "{line}")?;
-        Ok(())
+        self.writer.send(line)
     }
 }
 
@@ -108,6 +106,13 @@ impl ScriptHost {
         let sandbox_guard = crate::sandbox::apply_post_spawn(&child, sandbox_cfg)?;
 
         let stdin = child.stdin.take().context("take stdin")?;
+        let writer = match super::writer::PipeWriter::new(stdin, mod_id.to_owned()) {
+            Ok(writer) => writer,
+            Err(error) => {
+                let _ = child.kill();
+                return Err(error);
+            }
+        };
         let stdout = child.stdout.take().context("take stdout")?;
         let stderr = child.stderr.take().context("take stderr")?;
 
@@ -155,7 +160,7 @@ impl ScriptHost {
             ScriptProcess {
                 mod_id: mod_id.to_owned(),
                 child,
-                stdin,
+                writer,
                 ready: false,
                 _sandbox_guard: sandbox_guard,
             },
@@ -194,6 +199,8 @@ impl ScriptHost {
                 Ok(()) => true,
                 Err(e) => {
                     tracing::warn!(mod_id, "send error: {e}");
+                    // Prevent unresolved RPCs after backpressure or a broken pipe.
+                    let _ = proc.child.kill();
                     false
                 }
             },

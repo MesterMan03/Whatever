@@ -93,7 +93,7 @@ test("native network registration and offline codecs work through the bundled se
     'if(bytes.join(",")!=="0,1,0,0,0,42,0")throw new Error("incorrect wire bytes: "+bytes);'+
     'const decoded=await server.decodePacket(bytes);if(decoded.packet!=="login.welcome"||decoded.data.id!==42||decoded.data.maybe!==undefined)throw new Error("decode mismatch");'+
     'const data=await server.validateClientData({tags:["ok"]});if(data.tags[0]!=="ok"||server.clients.length)throw new Error("client defaults");'+
-    'try{await server.broadcast("login.welcome",{id:1});throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("transport is not implemented"))throw e;}'+
+    'try{await server.broadcast("login.welcome",{id:1});throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("server is not listening"))throw e;}'+
     'await server.close();try{await server.encodePacket("login.welcome",{id:1});throw new Error("UNEXPECTED");}catch(e){if(!String(e).includes("closed"))throw e;}'+
     'Engine.log("info","FIXTURE_DONE");}catch(e){Engine.log("error","NETWORK_FAILURE "+e);}});';
   const result=await runServer(source,{mode:"server"});

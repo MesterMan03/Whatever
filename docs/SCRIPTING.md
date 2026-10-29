@@ -1035,7 +1035,7 @@ register it as `mod_id:name` instead and log a warning.
 
 ## `Network`
 
-This phase implements engine registration and offline binary codecs. Registration opens no sockets. Client lists remain empty and no packet/connection events are generated until transport is added. `send` and `broadcast` reject rather than silently discarding packets.
+The engine owns QUIC transport, TLS, schema validation and binary codecs. Registration validates a specification without opening sockets; explicit `listen` or `connect` starts transport. Mod code uses the bundled API broker and receives no raw sockets or direct network globals.
 
 ```ts
 const Hello = Network.Packet({name: Network.Type.String.with({maxLength: 64})});
@@ -1068,9 +1068,9 @@ Optional object fields can be omitted. Undefined is represented as null only ins
 
 Native limits: 1 MiB per encoded packet including its two-byte ID, up to 65,536 array elements, 32 schema nesting levels, 100,000 schema/value nodes and 1,024 states. A protocol may contain 65,536 packets. IDs increment across states and both directions, in state declaration order, serverbound then clientbound within each state. Mod load order has no effect. States group packets as metadata; no connection state machine is imposed.
 
-Registration checks the runtime side, ownership, names, schema constraints and server defaults before returning an engine handle. Conflicting/repeated registrations fail; `close()` releases the registration, and mod process exit removes its registrations. The fingerprint is a deterministic FNV-1a diagnostic digest; native identity/conflict checks compare the full manifest, and transport compatibility negotiation is deferred.
+Registration checks the runtime side, ownership, names, schema constraints and server defaults before returning an engine handle. Conflicting/repeated registrations fail; `close()` releases the registration, and mod process exit removes its registrations. The fingerprint is SHA-256 of the ordered canonical specification; native conflict checks also compare the full manifest, and QUIC negotiation checks the digest before delivering mod events.
 
-Both registration handles expose `id`, `specificationId`, `fingerprint`, readonly `packets` (ID/path/state/direction), `decodePacket(bytes)` and `close()`. Client `encodePacket/send/on` and server equivalents infer names/payloads from direction. A client sends serverbound and receives clientbound packets; a server does the reverse. `decodePacket` is an offline inspection method for either direction and does not dispatch receive handlers. Its bytes contain `[u16 packet ID][payload]`; stream framing is a later transport concern.
+Both registration handles expose `id`, `specificationId`, `fingerprint`, readonly `packets` (ID/path/state/direction), `decodePacket(bytes)` and `close()`. Client `encodePacket/send/on` and server equivalents infer names/payloads from direction. A client sends serverbound and receives clientbound packets; a server does the reverse. `decodePacket` is an offline inspection method for either direction and does not dispatch receive handlers. Its bytes contain `[u16 packet ID][payload]`, independent of stream framing. The fingerprint is SHA-256 of the ordered canonical specification; client-data definitions are excluded.
 
 Server registration also declares per-client data:
 
@@ -1091,25 +1091,62 @@ server.on("login.hello", async (packet, client) => {
 });
 ```
 
-Required client-data fields need initial values. Native connection allocation will copy defaults independently for each peer; data remains server/mod-local and is excluded from the wire fingerprint. The prepared SDK proxy validates assignments, nested edits and array mutations before submitting ordered snapshots to native storage. `flushData()` awaits outstanding writes and reports rejected updates. Disconnect makes the data view read-only for cleanup; reconnect gets fresh defaults. `server.validateClientData(value)` validates and copies data offline without inventing a connected peer.
+Required client-data fields need initial values. Native connection allocation copies defaults independently for each peer; data remains server/mod-local and is excluded from the wire fingerprint. The SDK proxy validates assignments, nested edits and array mutations before submitting ordered snapshots to native storage. `flushData()` awaits outstanding writes and reports rejected updates. Disconnect makes the data view read-only for cleanup; reconnect gets fresh defaults. `server.validateClientData(value)` validates and copies data offline without inventing a connected peer.
 
-`on(packet, handler)` returns unsubscribe; client handlers receive data, server handlers receive data and `Network.Client<D>`. `server.onConnect/onDisconnect` likewise return unsubscribe. `server.clients` and `getClient(id)` return typed handles. Server `send(client, packet, data)` requires a client belonging to that registration. `broadcast(packet, data)` is explicit. Callback failures and asynchronous data-update failures are logged. These lifecycle hooks are prepared for trusted engine events; this phase does not create connections.
+`on(packet, handler)` returns unsubscribe; client handlers receive data, server handlers receive data and `Network.Client<D>`. `server.onConnect/onDisconnect` likewise return unsubscribe. `server.clients` and `getClient(id)` return typed handles. Server `send(client, packet, data)` requires a client belonging to that registration. `broadcast(packet, data)` is explicit. Callback failures and asynchronous data-update failures are logged. Server handlers additionally receive a `Network.PacketContext` as their third argument; client packet handlers receive it as their second argument. Its `transport` is `"stream"` or `"datagram"`.
+
+### QUIC connections and delivery
+
+Install handlers before starting transport:
+
+```typescript
+// Server entry; both sides have already registered the shared Game specification.
+server.onConnect(async client => {
+  // Defaults are independent per connection. These callbacks gate incoming packets.
+  client.data.playerId = nextPlayerId++;
+  await client.flushData();
+});
+const listener = await server.listen({address: "0.0.0.0:4444", maxClients: 128});
+
+// Client entry. Strict certificate validation is the API default.
+// This local development example explicitly enables TOFU fallback:
+await client.connect({address: "localhost:4444", trust: "tofu"});
+await client.send("login.hello", {name: "Alex"});
+```
+
+`listen` requires a numeric IP and port; port zero chooses a free port. It returns `Network.ListenerInfo {address}`; `server.listener` and `server.listening` expose listener state. `maxClients` defaults to 128 and accepts 1–65536, counting pending TLS handshakes as well as connected clients. `server.stop()` stops the listener and disconnects peers while preserving registration. `server.disconnect(client, reason?)` disconnects one owned client.
+
+`connect` accepts `host:port` or `[IPv6]:port`, resolves DNS in native code, and completes after TLS and specification negotiation. It returns `Network.ConnectionInfo {address, maxDatagramSize}`; the datagram limit is the initial negotiated limit and is checked again against the current limit on every send. `client.connected` and `client.connection` expose state. `client.disconnect()` permits reconnecting the same registration. Both sides provide `onConnect` and `onDisconnect` subscriptions; the client connect callback receives connection info, the client disconnect callback a reason, and the server disconnect callback receives the peer and reason. Reconnection creates fresh native peer handles/defaults. Old handles fail sends and writes.
+
+`send` and `broadcast` accept optional `Network.SendOptions {transport?: "stream" | "datagram"}`. The default is one reliable, ordered application stream per connection; independent application streams are not yet exposed. Stream frames are `[unsigned ULEB128 length][u16 big-endian packet ID][payload]`, where length counts ID and payload and excludes its own prefix. Datagram frames are just `[u16 packet ID][payload]`. Datagrams are unordered, may be lost, and must fit the current QUIC limit; oversized datagrams fail without automatic fragmentation or fallback. Reliable frames are capped at 1 MiB including the ID. Strings/arrays use unsigned ULEB128 lengths; standalone VarInt remains ZigZag + ULEB128.
+
+Each connection binds one specification. A reserved control stream exchanges `WHATEVER/1\0` plus its 32-byte SHA-256 digest before mod events are emitted. The server opens one application stream with a one-time one-byte kind marker with value `0`; subsequent bytes are the frames above. Protocol states remain metadata, with IDs unique across every state and direction within the specification. Unknown IDs, wrong directions, invalid payloads, noncanonical/oversized framing, and schema mismatches terminate the connection.
+
+Successful sends mean validation and acceptance into a bounded local queue; they do not acknowledge remote application delivery. Each peer has 64 outgoing packet slots and a 4 MiB byte budget. Broadcast reserves capacity for every current peer before enqueueing, or fails without partial enqueue. The service uses bounded command/event queues. Connect callbacks finish before incoming packets are dispatched, and packet callbacks are acknowledged/serialized per peer; other peers continue independently. Awaiting a reply to an incoming packet inside its own handler would hold that peer's receive queue: send the request and return, then handle the reply separately. Callback errors are logged; failed connect callbacks close the peer. Disconnect/close is immediate and does not flush queued messages. Closing registrations, stopping the engine or reaping a mod closes its network resources.
+
+### Certificates and TOFU
+
+`trust: "strict"` validates the certificate chain, validity and server name against native OS roots. `trust: "tofu"` first attempts the same validation. If this is a new untrusted server, it accepts and remembers the server's SHA-256 public-key identity after TLS proves key possession and the specification handshake succeeds. Future connections must match that key. Servers previously CA-validated while using TOFU policy continue requiring valid CA authentication; they never silently downgrade to TOFU. Certificate renewal with the same pinned key works. The first TOFU connection has no independent protection against server impersonation.
+
+The native engine stores server identities and trust records under the OS local-data directory `WhateverNetwork/<game_id>`, outside every mod's broker-accessible directory. Mods cannot choose certificate/key paths or rewrite the trust database. Development servers generate a persistent self-signed identity automatically. Operators can provide `--tls-cert <chain.pem> --tls-key <key.pem>` and optional client `--tls-ca <authority.pem>`. `--network-data <directory>` selects a separate native identity/trust directory. Trust entries are scoped to the normalized server host and port, independent of specification changes. An unexpected key change fails the connection; explicit trust-management UI is a later addition. No certificate fingerprint is required in the ordinary client API or commands.
 
 ## IPC protocol reference
 
 This section documents the raw wire format. Normal mod code should use the API
 namespaces above rather than speaking the protocol directly.
 
-Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Send and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 3.
+Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 4. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
 
 **Transport:** NDJSON (one JSON object per line) on stdin/stdout per process.
-Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
+Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine-to-mod pipe writes run on a dedicated bounded writer thread (256 queued messages, 64 MiB including the in-flight write). A full/broken writer terminates the affected mod rather than blocking the simulation or silently losing RPCs.
 
 ### Engine → Script
 
 | Message | Key fields |
 |---|---|
-| `Init` | `mod_id`, `engine_version` |
+| `NetworkResponse` | `request_id`, `result`, `error` |
+| `NetworkEvent` | `event`, `registration_id`, `client_id`, `event_id` when acknowledged, event-specific data |
+| `Init` | `mod_id`, `engine_version`, `mode` |
 | `Tick` | `tick_number`, `delta_seconds`, `keys_pressed`, `mouse_delta` |
 | `FileResponse` | `request_id`, `data_base64`, `error` |
 | `ModListResponse` | `request_id`, `mods` |
@@ -1130,6 +1167,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix.
 
 | Message | Key fields |
 |---|---|
+| `NetworkRequest` | `request_id`, `request` (operation DTO) |
 | `Subscribe` | `events` |
 | `TickDone` | `tick_number` |
 | `Log` | `level`, `message` |

@@ -307,15 +307,11 @@ impl Specification {
         }
         ensure!(!packets.is_empty(), "specification must contain packets");
         let canonical = serde_json::to_string(self)?;
-        // Diagnostic compatibility fingerprint. Registry identity uses the full manifest,
-        // never this non-cryptographic digest; transport negotiation is not implemented.
-        let hash = canonical.bytes().fold(0xcbf29ce484222325u64, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
-        });
+        let hash = super::security::digest(canonical.as_bytes());
         Ok(CompiledSpecification {
             packets,
             canonical,
-            fingerprint: format!("fnv1a64:{hash:016x}"),
+            fingerprint: format!("sha256:{hash}"),
         })
     }
 }

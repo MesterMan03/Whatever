@@ -1063,6 +1063,7 @@ mod argument_tests {
             &LaunchOptions {
                 mode: Some(RuntimeMode::Server),
                 mods: Some(fixture.0.clone()),
+                ..Default::default()
             },
             &crate::debug::DebugConfig::from_args(&[]),
             &fixture.0,

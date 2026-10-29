@@ -16,7 +16,7 @@ The engine is a barebones backend. Every game is just a mod. The engine owns win
 | `src/vfs/` | VFS trait, layered VFS, disk-backed layer |
 | `src/mods/` | Mod manifest, discovery, toposort, registry |
 | `src/renderer/` | wgpu context, camera, texture loading, scene |
-| `src/network/` | Native network schemas, registration, offline codecs and client-data storage (no transport yet) |
+| `src/network/` | Native schemas/codecs, QUIC transport, TLS trust and per-client data |
 | `src/script/` | Bun subprocess host, NDJSON IPC, message dispatch |
 | `runtime/` | `@whatever-engine/api` npm package — TypeScript scripting API for mods |
 
@@ -35,7 +35,7 @@ Mods live in `mods/` (engine-shipped) and `mods_user/` (user-installed, git-igno
 
 ## IPC Protocol
 
-One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. `vendor/patches/bun-whatever.patch` reproduces the fork on the submodule's pinned upstream revision. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`. Host protocol 3 passes the runtime side before mod evaluation; `Init` includes `mode`. Simulation ticking and IPC run on the runtime worker independently of window redraws.
+One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. `vendor/patches/bun-whatever.patch` reproduces the fork on the submodule's pinned upstream revision. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`. Host protocol 4 passes the runtime side before mod evaluation; `Init` includes `mode`. Simulation ticking and IPC run on the runtime worker independently of window redraws.
 
 The native module allowlist starts with only `@whatever-engine/api` and local JS/TS/JSON source inside the mod root. Node/Bun built-ins, npm packages and non-allowlisted globals are denied. Never add an unrestricted fallback or mod-controlled permission grants. See `docs/SANDBOX.md`.
 

@@ -201,11 +201,17 @@ Inter-mod communication. Payloads must be JSON-serializable.
 - `registration.packets` / `id` / `specificationId` / `fingerprint` — engine-assigned metadata
 - `registration.encodePacket(name, payload)` / `decodePacket(bytes)` — native offline codecs; packet ID and payload, no stream length prefix
 - `registration.on(name, handler)` — typed receive subscription; returns unsubscribe
-- `registration.send(...)` / `server.broadcast(...)` — typed API; rejects until transport is implemented
-- `server.onConnect(handler)` / `onDisconnect(handler)` / `clients` / `getClient(id)` — connection hooks; clients remain empty in this phase
+- `registration.send(...)` / `server.broadcast(...)` — validated bounded-queue sends; optional `{transport: "stream" | "datagram"}`
+- `server.onConnect(handler)` / `onDisconnect(handler)` / `clients` / `getClient(id)` — typed connection lifecycle and owned clients
 - `server.validateClientData(data)` — offline native validation/copy
-- `client.data` / `client.flushData()` — typed mutation proxy and native update acknowledgement for future connections
-- `registration.close()` — release native registration
+- `client.data` / `client.flushData()` — typed per-peer mutation proxy and native update acknowledgement
+- `client.connect({address, trust?: "strict" | "tofu"})` / `disconnect()` / `connected` / `connection` — QUIC lifecycle; strict by default
+- `client.onConnect(handler)` / `onDisconnect(handler)` — lifecycle subscriptions
+- `server.listen({address, maxClients?})` / `stop()` / `listening` / `listener` — native QUIC listener
+- `server.disconnect(client, reason?)` — disconnect an owned peer
+- `Network.PacketContext` — receive transport metadata (client second argument, server third)
+- `Network.ConnectOptions` / `ListenOptions` / `SendOptions` / `TrustPolicy` — public option types
+- `registration.close()` — disconnect peers and release native registration
 
 ## Development
 

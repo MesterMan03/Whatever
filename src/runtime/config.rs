@@ -14,6 +14,7 @@ use std::{
 pub struct LaunchOptions {
     pub mode: Option<RuntimeMode>,
     pub mods: Option<PathBuf>,
+    pub network: crate::network::NetworkSettings,
 }
 impl LaunchOptions {
     pub fn parse(args: &[String]) -> anyhow::Result<Self> {
@@ -29,6 +30,19 @@ impl LaunchOptions {
                 if result.mode.replace(value.parse()?).is_some() {
                     bail!("--mode may only be specified once");
                 }
+            } else if ["--tls-cert", "--tls-key", "--tls-ca", "--network-data"]
+                .contains(&arg.as_str())
+            {
+                let path = PathBuf::from(
+                    args.next()
+                        .with_context(|| format!("{arg} requires a path"))?,
+                );
+                match arg.as_str() {
+                    "--tls-cert" => result.network.certificate = Some(path),
+                    "--tls-key" => result.network.private_key = Some(path),
+                    "--tls-ca" => result.network.authority = Some(path),
+                    _ => result.network.directory = path,
+                }
             } else if arg == "--mods" || arg.starts_with("--mods=") {
                 let value = if let Some(value) = arg.strip_prefix("--mods=") {
                     value
@@ -41,11 +55,16 @@ impl LaunchOptions {
                 result.mods = Some(PathBuf::from(value));
             }
         }
+        anyhow::ensure!(
+            result.network.certificate.is_some() == result.network.private_key.is_some(),
+            "--tls-cert and --tls-key must be supplied together"
+        );
         Ok(result)
     }
 }
 pub struct LoadedGame {
     pub mode: RuntimeMode,
+    pub network: crate::network::NetworkSettings,
     pub meta: GameMeta,
     pub registry: Arc<ModRegistry>,
     pub vfs: VfsHandle,
@@ -88,8 +107,13 @@ impl LoadedGame {
         let mut registry = ModRegistry::new();
         let roots: Vec<&Path> = directories.iter().map(PathBuf::as_path).collect();
         discover_and_load(&roots, mode, &mut vfs, &mut registry, &mut debug)?;
+        let mut network = options.network.clone();
+        if network.directory.as_os_str().is_empty() {
+            network.directory = crate::network::NetworkSettings::for_game(&meta.game.id)?.directory;
+        }
         Ok(Self {
             mode,
+            network,
             meta,
             registry: Arc::new(registry),
             vfs: Arc::new(vfs),
@@ -153,6 +177,7 @@ mod tests {
                 &LaunchOptions {
                     mode,
                     mods: Some(self.0.clone()),
+                    ..Default::default()
                 },
                 &DebugConfig::from_args(&[]),
                 &self.0,

@@ -1,20 +1,32 @@
 import { Network } from "@whatever-engine/api";
-const Position = Network.Struct({ x: Network.Type.F64, y: Network.Type.F64, z: Network.Type.F64 });
+
+const T = Network.Type;
+
+const PlayerId = T.VarInt.with({ min: 1 });
+const Text = T.String.with({ maxLength: 1024 });
+export const ClientData = Network.Struct({ playerId: T.Optional(PlayerId) });
 export const Game = Network.Specification("network_example:game", {
-  login: {
-    serverbound: { hello: Network.Packet({ name: Network.Type.String.with({ maxLength: 64 }) }) },
-    clientbound: { welcome: Network.Packet({ playerId: Network.Type.I32.with({ min: 0 }) }) },
+  session: {
+    serverbound: { list: Network.Packet({}) },
+    clientbound: {
+      welcome: Network.Packet({ playerId: PlayerId }),
+      roster: Network.Packet({ players: T.Array(PlayerId) }),
+    },
   },
-  play: {
+  chat: {
     serverbound: {
-      move: Network.Packet({
-        tick: Network.Type.VarInt.with({ min: 0 }),
-        position: Position,
-        sprinting: Network.Type.Optional(Network.Type.Bool),
-      }),
+      tell: Network.Packet({ recipientId: PlayerId, text: Text }),
+      say: Network.Packet({ text: Text }),
+      ping: Network.Packet({ sequence: T.VarInt.with({ min: 0 }) }),
     },
     clientbound: {
-      players: Network.Packet({ positions: Network.Type.Array(Position, { maxLength: 256 }) }),
+      message: Network.Packet({
+        senderId: PlayerId,
+        recipientId: T.Optional(PlayerId),
+        text: Text,
+      }),
+      error: Network.Packet({ message: Text }),
+      pong: Network.Packet({ sequence: T.VarInt.with({ min: 0 }) }),
     },
   },
 });

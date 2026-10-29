@@ -78,9 +78,16 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             request_id,
             request,
         } => {
-            let result = serde_json::from_value::<crate::network::NetworkRequest>(request)
-                .map_err(anyhow::Error::from)
-                .and_then(|request| network.request(mod_id, mode, request));
+            let result = match serde_json::from_value::<crate::network::NetworkRequest>(request) {
+                Ok(request) => network.dispatch(mod_id, mode, request, &request_id),
+                Err(error) => Some(Err(error.into())),
+            };
+            for (owner, message) in network.poll() {
+                script_host.send(&owner, &message, debug);
+            }
+            let Some(result) = result else {
+                return DispatchResult::default();
+            };
             script_host.send(
                 mod_id,
                 &EngineMessage::NetworkResponse {

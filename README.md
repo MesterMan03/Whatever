@@ -55,11 +55,12 @@ cargo test
 ```
 .gitattributes          LF rules for native fork patches and mod source files
 .editorconfig           Two-space editor defaults for mod sources
+AGENTS.md               Project architecture and contributor instructions
 biome.json              Shared mod-source formatter configuration
 mods/                   Engine-shipped mods (tracked in git)
   core/                 Game metadata and shared shaders/fonts; no test scripts
   debug/                First-party debug suite: dev commands, camera, rendering and sandbox probes
-  network_example/      Shared network.ts with separate client/server registration examples
+  network_example/      Shared protocol and a multi-client QUIC messenger demo
 mods_user/              User-installed mods (gitignored)
 vendor/
   bun/                  Pinned Bun source submodule
@@ -86,7 +87,7 @@ src/
     types.rs            Shared types (CommandNode, ArgSpec, …)
     widget.rs           DevConsole render + execute
   script/               Bundled runtime discovery + subprocess host + NDJSON IPC
-  network/              Native schema registration, packet codecs and client-data validation
+  network/              Native schemas/codecs, QUIC service, TLS trust and per-client data
   sandbox/              Native-host OS restrictions and broker path containment
   audio/                Audio playback and handle management
   watchdog.rs           Slow-tick diagnostics
@@ -193,7 +194,11 @@ bun run build:runtime
 
 The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`mods/debug`](mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. The Mandelbrot benchmark now measures the mod's Bun thread through `dev benchmark`.
 
-[`mods/network_example`](mods/network_example/README.md) registers the same shared specification on either side and logs an offline codec roundtrip. `netdemo spec` lists engine-assigned IDs and `netdemo codec` repeats the check. No sockets are opened. See [Network API](docs/SCRIPTING.md#network) for schemas, registration and client-data types. `send`/`broadcast` report that transport is unavailable.
+[`mods/network_example`](mods/network_example/README.md) is a QUIC messenger with separate client/server entries and a shared typed specification. Start a headless server and run `netdemo host 4444`; in each client (F2), run `netdemo connect localhost:4444`. Clients receive increasing player IDs and can use `netdemo tell 2 "hello"`, `netdemo say "hello everyone"`, `netdemo players` and `netdemo ping` (QUIC datagram). The demo defaults to TOFU; add `strict` after the address to require a trusted certificate. See [Network API](docs/SCRIPTING.md#network) for transport, trust and client-data details.
+
+TLS keys and saved trust live in the engine-owned local-data directory `WhateverNetwork/<game_id>`, outside mod file access. Servers generate a persistent development identity automatically, or operators can supply `--tls-cert <chain.pem> --tls-key <key.pem>`. Clients use the OS trust roots, optionally extended with `--tls-ca <authority.pem>`. `--network-data <directory>` selects an isolated identity/trust directory, useful for tests and separate server instances. Players provide only a server address.
+
+The integration demo can run without windows or audio devices after building the bundled host: `cargo test --locked network_messenger -- --ignored`. Native QUIC/TLS tests also run under WSL with a separate Linux Cargo target directory.
 
 `bun run test:network` runs schema/proxy tests and compiler checks against the generated public declarations. Native codec and registration tests run with `cargo test`. `bun run test:server` also exercises native network IPC and stdin mod commands through the bundled host.
 

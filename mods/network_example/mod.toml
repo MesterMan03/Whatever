@@ -1,8 +1,8 @@
 [mod]
 id = "network_example"
-name = "Network API Example"
+name = "Network Messenger"
 version = "0.1.0"
-description = "Shared protocol registration and offline codec example; no transport"
+description = "Typed QUIC messenger with player IDs, private messages and broadcasts"
 sides = ["client", "server"]
 
 [dependencies]

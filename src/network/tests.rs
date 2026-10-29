@@ -179,12 +179,13 @@ fn native_registration_enforces_role_owner_direction_and_lifetime() {
             NetworkRequest::Send {
                 registration_id: id.into(),
                 client_id: None,
+                delivery: Default::default(),
                 packet: "login.hello".into(),
                 data: json!({"name":"Alex"}),
             },
         )
         .expect_err("no transport");
-    assert!(error.to_string().contains("transport is not implemented"));
+    assert!(error.to_string().contains("not connected"));
     registry.remove_mod("fixture");
     assert!(
         registry

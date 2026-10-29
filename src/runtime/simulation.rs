@@ -22,6 +22,9 @@ use std::{
     sync::{Arc, atomic::Ordering, mpsc},
     time::{Duration, Instant},
 };
+#[cfg(test)]
+#[path = "network_demo_tests.rs"]
+mod network_demo_tests;
 pub struct Simulation {
     mode: RuntimeMode,
     meta: GameMeta,
@@ -68,6 +71,7 @@ impl Simulation {
     ) -> anyhow::Result<Self> {
         let LoadedGame {
             mode,
+            network,
             meta,
             registry,
             vfs,
@@ -115,7 +119,7 @@ impl Simulation {
             vfs,
             debug,
             script_host,
-            network: crate::network::NetworkRegistry::default(),
+            network: crate::network::NetworkRegistry::new(network),
             server_console: (mode == RuntimeMode::Server).then(crate::console::DevConsole::new),
             world: World::new(),
             audio,
@@ -133,6 +137,13 @@ impl Simulation {
             main_camera: None,
             changed: true,
         })
+    }
+    fn network_events(&mut self) {
+        for (owner, message) in self.network.poll() {
+            if !self.script_host.send(&owner, &message, &mut self.debug) {
+                self.network.remove_mod(&owner);
+            }
+        }
     }
     fn stopped(&self) -> bool {
         self.shared.stop.load(Ordering::Relaxed)
@@ -164,6 +175,7 @@ impl Simulation {
     pub fn run(mut self) -> anyhow::Result<()> {
         while !self.stopped() {
             self.controls();
+            self.network_events();
             let messages = self.script_host.drain_messages(&mut self.debug);
             for (id, message) in messages {
                 self.message(id, message);
@@ -197,6 +209,8 @@ impl Simulation {
                 std::thread::sleep(wait);
             }
         }
+        self.network.shutdown();
+        self.network_events();
         let messages = self.script_host.shutdown_all(0, &mut self.debug);
         for (id, message) in messages {
             if let ScriptMessage::Log { .. } = message {
@@ -372,6 +386,7 @@ impl Simulation {
             }
             for id in self.script_host.reap_exited() {
                 pending.remove(&id);
+                self.network.remove_mod(&id);
                 self.subscribers.remove(&id);
             }
         }
@@ -453,6 +468,7 @@ Engine.on("tick",({tick_number})=>{
             &LaunchOptions {
                 mode: Some(RuntimeMode::Client),
                 mods: Some(directory.clone()),
+                ..Default::default()
             },
             &DebugConfig::from_args(&[]),
             &directory,

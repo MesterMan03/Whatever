@@ -64,6 +64,10 @@ impl From<&ModManifest> for ModManifestDto {
 #[serde(tag = "type")]
 #[allow(dead_code)]
 pub enum EngineMessage {
+    NetworkEvent {
+        #[serde(flatten)]
+        payload: serde_json::Value,
+    },
     NetworkResponse {
         request_id: String,
         result: Option<serde_json::Value>,

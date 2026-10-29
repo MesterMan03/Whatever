@@ -13,7 +13,7 @@ test("shipped server suite registers the shared protocol and runs consolidated d
   const read=(async()=>{for await(const bytes of child.stdout){
     stdout+=new TextDecoder().decode(bytes);
     if(stage===0&&stdout.includes("Server codec:")&&stdout.includes("Debug suite ready in server mode")){stage=1;child.stdin.write("netdemo spec\n");}
-    if(stage===1&&stdout.includes("clientbound play.players")){stage=2;child.stdin.write("dev file\n");}
+    if(stage===1&&stdout.includes("clientbound chat.message")){stage=2;child.stdin.write("dev file\n");}
     if(stage===2&&stdout.includes("File broker roundtrip passed")){stage=3;child.stdin.write("dev sandbox\n");}
     if(stage===3&&stdout.includes("runtime policy checks passed")){stage=4;child.stdin.write("dev message debug\n");}
     if(stage===4&&stdout.includes('"suite":"debug"')){stage=5;child.stdin.write("quit\n");}
