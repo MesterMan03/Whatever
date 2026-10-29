@@ -43,7 +43,13 @@ fn main() -> anyhow::Result<()> {
     let log_mirror = Arc::new(Mutex::new(Vec::new()));
     let log_writer = logging::init(&cwd, Arc::clone(&log_mirror))?;
 
-    let mut engine = Engine::new(&debug_config, &cwd, mods_override.as_deref(), log_mirror, log_writer)?;
+    let mut engine = Engine::new(
+        &debug_config,
+        &cwd,
+        mods_override.as_deref(),
+        log_mirror,
+        log_writer,
+    )?;
 
     let event_loop = EventLoop::new().context("create event loop")?;
     event_loop.run_app(&mut engine).context("event loop")?;

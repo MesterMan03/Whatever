@@ -1,3 +1,6 @@
+mod paths;
+pub use paths::{resolve_contained, valid_storage_id};
+
 use std::path::PathBuf;
 use std::process::{Child, Command};
 
@@ -12,10 +15,8 @@ pub struct SandboxConfig {
     pub mod_id: String,
     /// Mod's directory tree — read-only inside the sandbox.
     pub mod_root: PathBuf,
-    /// Mod's persistent data dir — the only path with write access.
-    pub mod_data_dir: PathBuf,
-    /// Engine working directory (contains node_modules/@whatever-engine/api).
-    pub engine_root: PathBuf,
+    /// The exact bundled executable granted read/execute access.
+    pub runtime_executable: PathBuf,
 }
 
 /// Opaque handle that must live as long as the ScriptProcess it protects.
@@ -30,6 +31,9 @@ pub struct SandboxGuard;
 /// Must be called before `Command::spawn`. Runs entirely in the parent process
 /// but installs hooks that execute in the forked child before exec.
 pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result<()> {
+    if !cfg.runtime_executable.is_file() {
+        anyhow::bail!("bundled runtime executable is missing");
+    }
     do_apply_pre_spawn(cmd, cfg)
 }
 

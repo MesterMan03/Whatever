@@ -60,6 +60,18 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         audio,
     } = ctx;
     match msg {
+        ScriptMessage::RuntimeReady { protocol } => {
+            if protocol == super::runtime::HOST_PROTOCOL && script_host.mark_ready(mod_id) {
+                script_host.send(
+                    mod_id,
+                    &EngineMessage::Init {
+                        mod_id: mod_id.to_owned(),
+                        engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    },
+                    debug,
+                );
+            }
+        }
         // --- Logging ---------------------------------------------------------
         ScriptMessage::Log { level, message } => {
             let name = registry
@@ -778,6 +790,11 @@ fn audio_state_error(request_id: String, audio_id: String, error: String) -> Eng
 
 /// Returns the root of a mod's persistent data directory.
 pub fn mod_data_root(game_id: &str, mod_id: &str) -> anyhow::Result<std::path::PathBuf> {
+    if !crate::sandbox::valid_storage_id(game_id) || !crate::sandbox::valid_storage_id(mod_id) {
+        anyhow::bail!(
+            "game and mod IDs must contain only lowercase letters, digits, underscores or hyphens"
+        );
+    }
     let base = dirs::data_local_dir()
         .ok_or_else(|| anyhow::anyhow!("could not determine local data directory"))?;
     Ok(base.join("Whatever").join(game_id).join(mod_id))
@@ -788,8 +805,5 @@ fn resolve_mod_data_path(
     mod_id: &str,
     path: &str,
 ) -> anyhow::Result<std::path::PathBuf> {
-    if path.split('/').any(|c| c == "..") {
-        anyhow::bail!("path traversal rejected: {path}");
-    }
-    Ok(mod_data_root(game_id, mod_id)?.join(path))
+    crate::sandbox::resolve_contained(&mod_data_root(game_id, mod_id)?, path)
 }

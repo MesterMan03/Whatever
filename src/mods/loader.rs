@@ -4,7 +4,7 @@ use crate::debug::DebugLogger;
 use crate::vfs::{DiskLayer, LayeredVfs, VfsPath};
 use anyhow::{Context, bail};
 use semver::{Version, VersionReq};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 type ModOrder = HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>;
 use std::path::Path;
@@ -43,6 +43,16 @@ pub fn discover_and_load(
                 mod_root.display()
             ));
             manifests.push((manifest, mod_root));
+        }
+    }
+
+    let mut ids = HashSet::new();
+    for (manifest, _) in &manifests {
+        if !crate::sandbox::valid_storage_id(&manifest.meta.id) {
+            bail!("invalid mod ID: {}", manifest.meta.id);
+        }
+        if !ids.insert(&manifest.meta.id) {
+            bail!("duplicate mod ID: {}", manifest.meta.id);
         }
     }
 
@@ -87,8 +97,16 @@ pub fn discover_and_load(
     // asset root per mod — used for dangling override validation
     let mod_assets: HashMap<String, std::path::PathBuf> = sorted
         .iter()
-        .map(|(m, root)| (m.meta.id.clone(), root.join(&m.assets.root)))
-        .collect();
+        .map(|(m, root)| {
+            let assets = if m.assets.root == "." {
+                root.canonicalize().context("resolve mod root")?
+            } else {
+                crate::sandbox::resolve_contained(root, &m.assets.root)
+                    .with_context(|| format!("invalid asset root for mod '{}'", m.meta.id))?
+            };
+            Ok((m.meta.id.clone(), assets))
+        })
+        .collect::<anyhow::Result<_>>()?;
 
     // (after, before, dep_ids) per mod — used to check if conflicting override order is deterministic
     let mod_order: ModOrder = sorted
@@ -110,7 +128,10 @@ pub fn discover_and_load(
     let mut first_overriders: HashMap<String, String> = HashMap::new();
 
     for (manifest, mod_root) in sorted {
-        let assets_root = mod_root.join(&manifest.assets.root);
+        let assets_root = mod_assets
+            .get(&manifest.meta.id)
+            .context("validated asset root is missing")?
+            .clone();
         let mod_id = manifest.meta.id.clone();
         debug.modloader(&format!(
             "loading mod '{}' from {}",

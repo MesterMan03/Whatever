@@ -1,0 +1,675 @@
+diff --git a/scripts/build/download.ts b/scripts/build/download.ts
+index 42d81846..39c1c27b 100644
+--- a/scripts/build/download.ts
++++ b/scripts/build/download.ts
+@@ -261,6 +261,11 @@ export async function downloadWithRetry(
+  */
+ export async function extractTarGz(tarball: string, dest: string, stripComponents = 1): Promise<void> {
+   const args = ["-xzmf", tarball, "-C", dest];
++  // zstd's CLI-test links target an unbuilt executable; only its library is built here.
++  // Windows bsdtar cannot create these dangling links without symlink privileges.
++  if (process.platform === "win32" && /[\\/]zstd$/.test(dest)) {
++    args.push("--exclude=*/tests/cli-tests/bin/unzstd", "--exclude=*/tests/cli-tests/bin/zstdcat");
++  }
+   if (stripComponents > 0) args.push(`--strip-components=${stripComponents}`);
+ 
+   const result = spawnSync(tarExe, args, {
+diff --git a/src/jsc/bindings/ImportMetaObject.cpp b/src/jsc/bindings/ImportMetaObject.cpp
+index cb4be748..fc77e026 100644
+--- a/src/jsc/bindings/ImportMetaObject.cpp
++++ b/src/jsc/bindings/ImportMetaObject.cpp
+@@ -3,6 +3,7 @@
+ #include "headers.h"
+ 
+ #include "ImportMetaObject.h"
++#include "WhateverModulePolicy.h"
+ #include "ZigGlobalObject.h"
+ #include "ExtendedDOMClientIsoSubspaces.h"
+ #include "ExtendedDOMIsoSubspaces.h"
+@@ -213,6 +214,28 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
+     JSValue parentModule = callFrame->argument(5);
+     JSValue resolveFilenameOptions = callFrame->argument(6);
+ 
++    if (Bun__whateverIsLocked()) {
++        auto name = moduleName.toWTFString(lexicalGlobalObject);
++        RETURN_IF_EXCEPTION(scope, {});
++        if (!Bun::checkWhateverModule(lexicalGlobalObject, name))
++            return {};
++        if (name == "@whatever-engine/api"_s)
++            return JSValue::encode(jsString(vm, name));
++        auto result = Bun__resolveSync(lexicalGlobalObject, JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
++        RETURN_IF_EXCEPTION(scope, {});
++        auto value = JSValue::decode(result);
++        if (!value.isString()) {
++            JSC::throwException(lexicalGlobalObject, scope, value);
++            return {};
++        }
++        auto resolved = value.toWTFString(lexicalGlobalObject);
++        RETURN_IF_EXCEPTION(scope, {});
++        if (!Bun::checkWhateverModule(lexicalGlobalObject, resolved, true))
++            return {};
++        return result;
++    }
++
++
+     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
+     if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
+         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
+@@ -363,6 +386,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
+     // 1. Set specifier to ? ToString(specifier).
+     auto specifier = specifierValue.toWTFString(globalObject);
+     RETURN_IF_EXCEPTION(scope, {});
++    if (!Bun::checkWhateverModule(globalObject, specifier))
++        return {};
+ 
+     // Node.js allows a second argument for parent
+     JSValue from = {};
+diff --git a/src/jsc/bindings/JSCommonJSModule.cpp b/src/jsc/bindings/JSCommonJSModule.cpp
+index aed824b8..446d331a 100644
+--- a/src/jsc/bindings/JSCommonJSModule.cpp
++++ b/src/jsc/bindings/JSCommonJSModule.cpp
+@@ -37,6 +37,7 @@
+ #include "JavaScriptCore/JSCast.h"
+ #include <JavaScriptCore/JSMapInlines.h>
+ #include "root.h"
++#include "WhateverModulePolicy.h"
+ #include "JavaScriptCore/SourceCode.h"
+ #include "headers-handwritten.h"
+ #include "ZigGlobalObject.h"
+@@ -584,6 +585,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
+ 
+ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+ {
++    if (Bun__whateverIsLocked())
++        return JSValue::encode(jsNull());
+     auto& vm = JSC::getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+diff --git a/src/jsc/bindings/ModuleLoader.cpp b/src/jsc/bindings/ModuleLoader.cpp
+index 7b7335b0..c935678e 100644
+--- a/src/jsc/bindings/ModuleLoader.cpp
++++ b/src/jsc/bindings/ModuleLoader.cpp
+@@ -1,4 +1,5 @@
+ #include "root.h"
++#include "WhateverModulePolicy.h"
+ 
+ #include "headers-handwritten.h"
+ #include "JavaScriptCore/JSGlobalObject.h"
+@@ -536,6 +537,8 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
+     ErrorableResolvedSource* res)
+ {
+     using Kind = BuiltinModule::Kind;
++    if (!Bun::checkWhateverModule(globalObject, specifier->toWTFString(), true))
++        return { Kind::None };
+     void* bunVM = globalObject->bunVM();
+     auto& vm = JSC::getVM(globalObject);
+     auto scope = DECLARE_THROW_SCOPE(vm);
+diff --git a/src/jsc/bindings/WhateverModulePolicy.h b/src/jsc/bindings/WhateverModulePolicy.h
+new file mode 100644
+index 00000000..e2604a7f
+--- /dev/null
++++ b/src/jsc/bindings/WhateverModulePolicy.h
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include "BunString.h"
++#include <JavaScriptCore/Error.h>
++#include <JavaScriptCore/JSGlobalObject.h>
++#include <JavaScriptCore/ExceptionScope.h>
++#include <wtf/URL.h>
++
++extern "C" bool Bun__whateverIsLocked();
++extern "C" bool Bun__whateverLock(const BunString*);
++extern "C" bool Bun__whateverAllowsSpecifier(const BunString*);
++extern "C" bool Bun__whateverAllowsResolved(const BunString*);
++
++namespace Bun {
++
++inline bool checkWhateverModule(JSC::JSGlobalObject* global, const WTF::String& name, bool resolved = false)
++{
++    if (!Bun__whateverIsLocked())
++        return true;
++    auto path = name;
++    if (path.startsWith("file://"_s)) {
++        WTF::URL url(path);
++        if (url.isValid() && url.host().isEmpty())
++            path = url.fileSystemPath();
++    }
++    auto specifier = Bun::toString(path);
++    if (resolved ? Bun__whateverAllowsResolved(&specifier) : Bun__whateverAllowsSpecifier(&specifier))
++        return true;
++    auto scope = DECLARE_THROW_SCOPE(global->vm());
++    JSC::throwTypeError(global, scope, makeString("Whatever module policy denied: "_s, name));
++    return false;
++}
++
++} // namespace Bun
+\ No newline at end of file
+diff --git a/src/jsc/bindings/ZigGlobalObject.cpp b/src/jsc/bindings/ZigGlobalObject.cpp
+index 7f4ae0c3..dedaa13a 100644
+--- a/src/jsc/bindings/ZigGlobalObject.cpp
++++ b/src/jsc/bindings/ZigGlobalObject.cpp
+@@ -1,6 +1,7 @@
+ #include "root.h"
+ 
+ #include "ZigGlobalObject.h"
++#include "WhateverModulePolicy.h"
+ #include "CodeGenerationFromStrings.h"
+ #include "BunModuleRegistry.h"
+ #include "BuiltinModuleKeys.h"
+@@ -2163,6 +2164,63 @@ void initLazyClassStructures(GlobalObject* globalObject)
+ 
+ } // namespace
+ 
++static bool whateverGlobalAllowed(const Identifier& name)
++{
++    static constexpr ASCIILiteral allowed[] = {
++        "globalThis"_s, "global"_s, "self"_s, "undefined"_s, "NaN"_s, "Infinity"_s,
++        "Object"_s, "Function"_s, "Boolean"_s, "Symbol"_s, "Number"_s, "BigInt"_s,
++        "Math"_s, "Date"_s, "String"_s, "RegExp"_s, "Array"_s, "JSON"_s,
++        "Map"_s, "Set"_s, "WeakMap"_s, "WeakSet"_s, "WeakRef"_s, "FinalizationRegistry"_s,
++        "Promise"_s, "Reflect"_s, "Proxy"_s, "Intl"_s, "Temporal"_s, "Iterator"_s, "AsyncIterator"_s,
++        "Error"_s, "AggregateError"_s, "EvalError"_s, "RangeError"_s, "ReferenceError"_s,
++        "SyntaxError"_s, "TypeError"_s, "URIError"_s, "SuppressedError"_s,
++        "ArrayBuffer"_s, "SharedArrayBuffer"_s, "DataView"_s, "Atomics"_s,
++        "Int8Array"_s, "Uint8Array"_s, "Uint8ClampedArray"_s, "Int16Array"_s, "Uint16Array"_s,
++        "Int32Array"_s, "Uint32Array"_s, "Float16Array"_s, "Float32Array"_s, "Float64Array"_s,
++        "BigInt64Array"_s, "BigUint64Array"_s, "Buffer"_s,
++        "eval"_s, "parseInt"_s, "parseFloat"_s, "isNaN"_s, "isFinite"_s,
++        "encodeURI"_s, "decodeURI"_s, "encodeURIComponent"_s, "decodeURIComponent"_s,
++        "escape"_s, "unescape"_s, "atob"_s, "btoa"_s,
++        "TextEncoder"_s, "TextDecoder"_s, "URL"_s, "URLSearchParams"_s,
++        "setTimeout"_s, "clearTimeout"_s, "setInterval"_s, "clearInterval"_s,
++        "setImmediate"_s, "clearImmediate"_s, "queueMicrotask"_s, "structuredClone"_s,
++        "console"_s, "DisposableStack"_s, "AsyncDisposableStack"_s,
++    };
++    if (name.isSymbol())
++        return false;
++    for (auto candidate : allowed) {
++        if (name.string() == candidate)
++            return true;
++    }
++    return false;
++}
++
++JSC_DEFINE_HOST_FUNCTION(whateverLockdown, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
++{
++    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
++    auto& vm = globalObject->vm();
++    auto scope = DECLARE_THROW_SCOPE(vm);
++    if (!callFrame->argument(0).isString())
++        return throwVMTypeError(globalObject, scope, "Whatever lockdown requires a mod root"_s);
++    auto root = callFrame->argument(0).toWTFString(globalObject);
++    RETURN_IF_EXCEPTION(scope, {});
++    auto rootString = Bun::toString(root);
++    if (!Bun__whateverLock(&rootString))
++        return throwVMTypeError(globalObject, scope, "Whatever lockdown requires an existing directory and cannot be changed"_s);
++
++    // Trusted bootstrap modules must not be reachable through require.cache.
++    globalObject->requireMap()->clear(globalObject);
++    RETURN_IF_EXCEPTION(scope, {});
++    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
++    globalObject->methodTable()->getOwnPropertyNames(globalObject, globalObject, names, DontEnumPropertiesMode::Include);
++    RETURN_IF_EXCEPTION(scope, {});
++    for (auto& name : names) {
++        if (!whateverGlobalAllowed(name))
++            globalObject->putDirect(vm, name, jsUndefined(), PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
++    }
++    return JSValue::encode(jsNumber(1));
++}
++
+ void GlobalObject::finishCreation(VM& vm)
+ {
+     Base::finishCreation(vm);
+@@ -2607,7 +2665,9 @@ void GlobalObject::finishCreation(VM& vm)
+              init.set(obj);
+          } },
+         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+-             init.set(Bun::createBunObject(init.vm, init.owner));
++             auto* object = Bun::createBunObject(init.vm, init.owner);
++             object->putDirectNativeFunction(init.vm, init.owner, Identifier::fromString(init.vm, "__whateverLockdown"_s), 1, whateverLockdown, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
++             init.set(object);
+          } },
+         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+@@ -3623,7 +3683,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+     if (key.isString()) {
+         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
+         RETURN_IF_EXCEPTION(scope, {});
+-        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(globalObject)) {
++        if (!Bun__whateverIsLocked() && !globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(globalObject)) {
+             Latin1CString narrowed;
+             std::span<const Latin1Character> chars;
+             if (moduleName->is8Bit())
+@@ -3651,6 +3711,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+         keyString = key.toWTFString(globalObject);
+         RETURN_IF_EXCEPTION(scope, {});
+     }
++    if (!Bun::checkWhateverModule(globalObject, keyString))
++        return {};
+     WTF::String referrerString;
+     if (referrer && referrer.isString()) {
+         referrerString = referrer.toWTFString(globalObject);
+@@ -3677,6 +3739,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+     }
+     auto resolved = res.result.value.transferToWTFString();
+     auto query = queryZ.transferToWTFString();
++    if (!Bun::checkWhateverModule(globalObject, resolved, true))
++        return {};
+ 
+     if (!query.isEmpty()) {
+         return Identifier::fromString(vm, makeString(resolved, query));
+@@ -3688,7 +3752,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
+ {
+     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
+     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
+-    if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject)) {
++    if (!Bun__whateverIsLocked() && key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject)) {
+         auto* string = uncheckedDowncast<JSString>(key);
+         if (!string->isRope()) {
+             auto view = string->tryGetValue();
+@@ -3804,6 +3868,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
+     if (scope.exception()) [[unlikely]]
+         return rejectedInternalPromise(globalObject, scope.exception()->value());
+ 
++    if (!Bun::checkWhateverModule(globalObject, moduleKey, true))
++        return rejectedInternalPromise(globalObject, scope.exception()->value());
++
+     if (moduleKey.endsWith(".node"_s)) {
+         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
+     }
+@@ -4245,7 +4312,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
+     auto scope = DECLARE_THROW_SCOPE(vm);
+ 
+     bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
+-    if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPlugins(globalObject))
++    if (Bun__whateverIsLocked() || !plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPlugins(globalObject))
+         RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
+ 
+     JSString* keyJS = key.toString(globalObject);
+diff --git a/src/jsc/lib.rs b/src/jsc/lib.rs
+index fe0994cf..77999d8d 100644
+--- a/src/jsc/lib.rs
++++ b/src/jsc/lib.rs
+@@ -45,6 +45,8 @@ pub use bun_jsc_macros::{JsAffine, JsClass, codegen_cached_accessors, host_call,
+ // .rs file.
+ // ──────────────────────────────────────────────────────────────────────────
+ pub mod error;
++pub mod whatever;
++mod whatever_policy;
+ pub use error::{Error as CrateError, Result as CrateResult};
+ #[path = "CommonAbortReason.rs"]
+ pub mod common_abort_reason;
+diff --git a/src/jsc/whatever.rs b/src/jsc/whatever.rs
+new file mode 100644
+index 00000000..69aa670b
+--- /dev/null
++++ b/src/jsc/whatever.rs
+@@ -0,0 +1,54 @@
++use std::sync::OnceLock;
++
++use bun_core::String as BunString;
++
++use crate::whatever_policy::ModulePolicy;
++
++// Process-wide and irreversible: a second realm must not widen the mod's policy.
++static POLICY: OnceLock<ModulePolicy> = OnceLock::new();
++
++pub fn is_locked() -> bool {
++    POLICY.get().is_some()
++}
++
++pub fn allows_import(name: &[u8]) -> bool {
++    let Some(policy) = POLICY.get() else {
++        return true;
++    };
++    std::str::from_utf8(name).is_ok_and(|name| policy.allows_specifier(name))
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn Bun__whateverIsLocked() -> bool {
++    is_locked()
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn Bun__whateverLock(root: &BunString) -> bool {
++    let bytes = root.to_utf8();
++    let Ok(root) = std::str::from_utf8(bytes.slice()) else {
++        return false;
++    };
++    let Ok(policy) = ModulePolicy::new(std::path::Path::new(root)) else {
++        return false;
++    };
++    POLICY.set(policy).is_ok()
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn Bun__whateverAllowsSpecifier(name: &BunString) -> bool {
++    let Some(policy) = POLICY.get() else {
++        return true;
++    };
++    let bytes = name.to_utf8();
++    std::str::from_utf8(bytes.slice()).is_ok_and(|name| policy.allows_specifier(name))
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn Bun__whateverAllowsResolved(name: &BunString) -> bool {
++    let Some(policy) = POLICY.get() else {
++        return true;
++    };
++    let bytes = name.to_utf8();
++    std::str::from_utf8(bytes.slice()).is_ok_and(|name| policy.allows_resolved(name))
++}
+diff --git a/src/jsc/whatever_policy.rs b/src/jsc/whatever_policy.rs
+new file mode 100644
+index 00000000..a26e2b25
+--- /dev/null
++++ b/src/jsc/whatever_policy.rs
+@@ -0,0 +1,175 @@
++use std::path::{Component, Path, PathBuf};
++
++pub(crate) const API_MODULE: &str = "@whatever-engine/api";
++
++pub(crate) struct ModulePolicy {
++    root: PathBuf,
++}
++
++impl ModulePolicy {
++    pub(crate) fn new(root: &Path) -> std::io::Result<Self> {
++        let root = root.canonicalize()?;
++        if !root.is_dir() {
++            return Err(std::io::Error::other("mod root must be a directory"));
++        }
++        Ok(Self { root })
++    }
++
++    pub(crate) fn allows_specifier(&self, specifier: &str) -> bool {
++        if specifier == API_MODULE {
++            return true;
++        }
++        if specifier.contains(['\0', '?', '#']) || has_node_modules(Path::new(specifier)) {
++            return false;
++        }
++        specifier.starts_with("./")
++            || specifier.starts_with("../")
++            || (cfg!(windows) && (specifier.starts_with(".\\") || specifier.starts_with("..\\")))
++            || self.allows_resolved(specifier)
++    }
++
++    pub(crate) fn allows_resolved(&self, specifier: &str) -> bool {
++        if specifier == API_MODULE {
++            return true;
++        }
++        if specifier.contains(['\0', '?', '#']) {
++            return false;
++        }
++        let path = Path::new(specifier);
++        if !path.is_absolute() || has_node_modules(path) {
++            return false;
++        }
++        let Ok(resolved) = path.canonicalize() else {
++            return false;
++        };
++        resolved.starts_with(&self.root)
++            && resolved.is_file()
++            && !has_node_modules(&resolved)
++            && matches!(
++                resolved.extension().and_then(|ext| ext.to_str()),
++                Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json")
++            )
++    }
++}
++
++fn has_node_modules(path: &Path) -> bool {
++    path.components().any(|component| {
++        matches!(component, Component::Normal(name) if name.to_str().is_some_and(|name| name.eq_ignore_ascii_case("node_modules")))
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::atomic::{AtomicUsize, Ordering};
++
++    struct Fixture(PathBuf);
++
++    impl Fixture {
++        fn new() -> Self {
++            static NEXT: AtomicUsize = AtomicUsize::new(0);
++            let path = std::env::temp_dir().join(format!(
++                "whatever-policy-{}-{}",
++                std::process::id(),
++                NEXT.fetch_add(1, Ordering::Relaxed)
++            ));
++            std::fs::create_dir_all(path.join("mod/node_modules/package")).expect("fixture");
++            std::fs::create_dir_all(path.join("mod-other")).expect("fixture");
++            for name in [
++                "mod/main.ts",
++                "mod/data.json",
++                "mod/addon.node",
++                "mod/node_modules/package/index.js",
++                "mod-other/secret.js",
++            ] {
++                std::fs::write(path.join(name), "").expect("fixture");
++            }
++            Self(path)
++        }
++    }
++
++    impl Drop for Fixture {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++
++    #[test]
++    fn packages_and_other_namespaces_are_denied() {
++        let fixture = Fixture::new();
++        let policy = ModulePolicy::new(&fixture.0.join("mod")).expect("policy");
++        for name in [
++            "fs",
++            "node:fs",
++            "bun",
++            "bun:ffi",
++            "lodash",
++            "@scope/package",
++            "#alias",
++            "data:text/javascript,export default 1",
++            "blob:uuid",
++            "https://example.invalid/mod.js",
++            "@whatever-engine/api/internal",
++            "./node_modules/package/index.js",
++        ] {
++            assert!(!policy.allows_specifier(name), "{name}");
++        }
++        assert!(policy.allows_specifier(API_MODULE));
++        assert!(policy.allows_specifier("./main.ts"));
++        assert!(policy.allows_specifier("../sibling.ts"));
++    }
++
++    #[test]
++    fn resolved_modules_must_be_source_files_inside_the_mod() {
++        let fixture = Fixture::new();
++        let policy = ModulePolicy::new(&fixture.0.join("mod")).expect("policy");
++        for name in ["mod/main.ts", "mod/data.json"] {
++            assert!(policy.allows_resolved(fixture.0.join(name).to_str().expect("path")));
++        }
++        for name in [
++            "mod/addon.node",
++            "mod/missing.ts",
++            "mod/node_modules/package/index.js",
++            "mod-other/secret.js",
++            "mod/../mod-other/secret.js",
++        ] {
++            assert!(
++                !policy.allows_resolved(fixture.0.join(name).to_str().expect("path")),
++                "{name}"
++            );
++        }
++        assert!(!policy.allows_resolved("./main.ts"));
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn symlinks_cannot_escape_the_mod_or_hide_node_modules() {
++        let fixture = Fixture::new();
++        std::os::unix::fs::symlink(fixture.0.join("mod-other"), fixture.0.join("mod/escape"))
++            .expect("symlink");
++        std::os::unix::fs::symlink(
++            fixture.0.join("mod/node_modules"),
++            fixture.0.join("mod/packages"),
++        )
++        .expect("symlink");
++        let policy = ModulePolicy::new(&fixture.0.join("mod")).expect("policy");
++        assert!(
++            !policy.allows_resolved(
++                fixture
++                    .0
++                    .join("mod/escape/secret.js")
++                    .to_str()
++                    .expect("path")
++            )
++        );
++        assert!(
++            !policy.allows_resolved(
++                fixture
++                    .0
++                    .join("mod/packages/package/index.js")
++                    .to_str()
++                    .expect("path")
++            )
++        );
++    }
++}
+diff --git a/src/runtime/jsc_hooks.rs b/src/runtime/jsc_hooks.rs
+index 920f9c46..65383f7d 100644
+--- a/src/runtime/jsc_hooks.rs
++++ b/src/runtime/jsc_hooks.rs
+@@ -2220,6 +2220,13 @@ fn transpile_source_code_of_any_provenance(
+     let (loader, module_type): (Loader, ModuleType) =
+         unsafe { ((*extra).loader, (*extra).module_type) };
+ 
++    if bun_jsc::whatever::is_locked()
++        && !matches!(loader, L::Js | L::Jsx | L::Ts | L::Tsx | L::Json)
++    {
++        return Err(args.global_object
++            .throw_type_error(format_args!("Whatever module policy denied loader: {loader:?}"))
++            .into());
++    }
+     let disable_transpilying = args.flags.disable_transpiling();
+     let specifier = args.specifier;
+     let referrer = args.referrer;
+@@ -2655,9 +2662,10 @@ fn transpile_source_code_of_any_provenance(
+                         (*jsc_vm).transpiler.options.rewrite_jest_for_tests
+                     },
+                     keep_json_and_toml_as_one_statement: true,
+-                    allow_bytecode_cache: true,
++                    allow_bytecode_cache: !bun_jsc::whatever::is_locked(),
+                     set_breakpoint_on_first_line,
+-                    runtime_transpiler_cache: if !disable_transpilying
++                    runtime_transpiler_cache: if !bun_jsc::whatever::is_locked()
++                        && !disable_transpilying
+                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
+                     {
+                         Some(&mut cache)
+@@ -2715,6 +2723,27 @@ fn transpile_source_code_of_any_provenance(
+                     return Err(crate::Error::ParseError);
+                 };
+ 
++                if bun_jsc::whatever::is_locked() {
++                    for record in parse_result.ast.import_records.as_slice() {
++                        if record.kind != ImportKind::Stmt || record.tag.is_internal() {
++                            continue;
++                        }
++                        let name = if record.original_path.is_empty() {
++                            record.path.text
++                        } else {
++                            record.original_path
++                        };
++                        if !bun_jsc::whatever::allows_import(name) {
++                            return Err(global_object
++                                .throw_type_error(format_args!(
++                                    "Whatever module policy denied: {}",
++                                    bstr::BStr::new(name)
++                                ))
++                                .into());
++                        }
++                    }
++                }
++
+                 // `.wasm` discovered post-parse: recurse with
+                 // the parsed source as virtual.
+                 if parse_result.loader == L::Wasm {
+@@ -3012,6 +3041,16 @@ fn transpile_source_code_of_any_provenance(
+                     )?;
+                 }
+ 
++                // Bun imports normally become globalThis.Bun without reaching a
++                // module loader. Locked mods must use the checked resolution path.
++                if bun_jsc::whatever::is_locked() {
++                    for record in parse_result.ast.import_records.as_mut_slice() {
++                        if record.tag == bun_ast::ImportRecordTag::Bun {
++                            record.tag = bun_ast::ImportRecordTag::None;
++                            record.flags.remove(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
++                        }
++                    }
++                }
+                 // Pending imports → AsyncModule queue.
+                 if parse_result.pending_imports.len() > 0 {
+                     // SAFETY: per fn contract — `extra` is live for the call.
+@@ -4316,6 +4355,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
+             )
+         };
+         if !had_blob
++            && !bun_jsc::whatever::is_locked()
+             && allow_promise
+             && (has_loaded || is_in_preload)
+             && concurrent_loader.is_java_script_like()
+diff --git a/test/js/bun/resolve/resolve.test.ts b/test/js/bun/resolve/resolve.test.ts
+index 2172327b..d5b3f03b 100644
+--- a/test/js/bun/resolve/resolve.test.ts
++++ b/test/js/bun/resolve/resolve.test.ts
+@@ -2249,3 +2249,42 @@ test.concurrent.each(["import", "require"])(
+     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
+   },
+ );
++
++describe("Whatever native module policy", () => {
++  test("allows local modules after irreversible lockdown", async () => {
++    using directory = tempDir("whatever-local", {
++      "entry.js": 'import value from "./local.js"; export default value;',
++      "local.js": "export default 42;",
++    });
++    const source = 'const write = process.stdout.write.bind(process.stdout);' +
++      'Bun.__whateverLockdown(' + JSON.stringify(String(directory)) + ');' +
++      'const value = await import(' + JSON.stringify(pathToFileURL(join(String(directory), "entry.js")).href) + ');' +
++      'write(JSON.stringify(value.default));';
++    await using child = Bun.spawn({
++      cmd: [bunExe(), "--no-env-file", "--no-install", "-e", source],
++      env: bunEnv,
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
++    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "42", stderr: "", exitCode: 0 });
++  });
++
++  test.each(["node:fs", "fs", "bun", "bun:ffi", "some-package"])("denies importing %s", async name => {
++    using directory = tempDir("whatever-denied", {
++      "entry.js": "import " + JSON.stringify(name) + ";",
++    });
++    const source = 'Bun.__whateverLockdown(' + JSON.stringify(String(directory)) + ');' +
++      'await import(' + JSON.stringify(pathToFileURL(join(String(directory), "entry.js")).href) + ');';
++    await using child = Bun.spawn({
++      cmd: [bunExe(), "--no-env-file", "--no-install", "-e", source],
++      env: bunEnv,
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
++    expect(stdout).toBe("");
++    expect(stderr).toMatch(new RegExp("Whatever module policy denied: " + (name === "fs" ? "(?:node:)?fs" : name)));
++    expect(exitCode).toBe(1);
++  });
++});
+\ No newline at end of file

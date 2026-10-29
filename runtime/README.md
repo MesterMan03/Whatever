@@ -16,7 +16,9 @@ Engine.on("tick", async ({ delta_seconds }) => {
 });
 ```
 
-No install step needed — Bun resolves the package automatically for any script running within the engine directory tree.
+The engine-owned mod host contains this API and resolves `@whatever-engine/api` before loading the mod. No runtime install or workspace ancestry is required. Leave this import external when bundling mods. The npm package remains available for editor types.
+
+Other package imports, including `node:` and `bun:` modules, are denied initially. Mods may import local JS/TS/JSON source inside their own directory. Direct Bun/process/network globals are unavailable; use the engine API for file I/O and logging. See [`docs/SANDBOX.md`](../docs/SANDBOX.md) for the native allowlists and build instructions.
 
 ## API
 
@@ -195,3 +197,5 @@ bun run build:types
 ```
 
 Full API documentation is in [`docs/SCRIPTING.md`](../docs/SCRIPTING.md) at the repo root.
+
+The host captures private native pipe handles before lockdown; mods do not receive stdin, stdout or process objects. The public TypeScript declarations remain independent of Bun internals.

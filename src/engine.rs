@@ -105,7 +105,7 @@ impl Engine {
 
         let vfs: VfsHandle = Arc::new(vfs);
 
-        let mut script_host = ScriptHost::new();
+        let mut script_host = ScriptHost::new()?;
         for loaded_mod in registry.iter() {
             let Some(ref script_cfg) = loaded_mod.manifest.script else {
                 continue;
@@ -128,8 +128,7 @@ impl Engine {
             let sandbox_cfg = SandboxConfig {
                 mod_id: mod_id.clone(),
                 mod_root: loaded_mod.root.clone(),
-                mod_data_dir,
-                engine_root: cwd.to_path_buf(),
+                runtime_executable: script_host.runtime_path().to_path_buf(),
             };
 
             if let Err(e) = script_host.spawn(mod_id, &entry, &sandbox_cfg, &mut debug) {
@@ -866,16 +865,6 @@ impl ApplicationHandler for Engine {
 
         self.renderer = Some(renderer);
         self.window = Some(Arc::clone(&window));
-
-        let engine_version = env!("CARGO_PKG_VERSION").to_owned();
-        let mod_ids: Vec<String> = self.script_host.mod_ids().map(str::to_owned).collect();
-        for mod_id in mod_ids {
-            let init_msg = EngineMessage::Init {
-                mod_id: mod_id.clone(),
-                engine_version: engine_version.clone(),
-            };
-            self.script_host.send(&mod_id, &init_msg, &mut self.debug);
-        }
 
         window.request_redraw();
     }

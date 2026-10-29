@@ -18,12 +18,19 @@ This enables the core philosophy of "you can do whatever": both developers and p
 | Tool | Purpose |
 |---|---|
 | [Rust + Cargo](https://rustup.rs) | Building the engine |
-| [Bun](https://bun.sh) | Running mod scripts |
+| [Bun](https://bun.sh) | Development/build tooling; shipped games use the bundled mod host |
 
 ## Build & Run
 
 ```sh
-# Build
+# Prepare and build the engine-owned runtime (native Bun build prerequisites required)
+bun install --frozen-lockfile
+bun run prepare:bun
+bun run build:bun
+bun run build:runtime
+bun run build:host
+
+# Build the engine
 cargo build
 
 # Run
@@ -43,6 +50,7 @@ cargo test
 ## Project Layout
 
 ```
+.gitattributes          Keep native fork patches in LF format
 mods/                   Engine-shipped mods (tracked in git)
   core/                 Built-in core mod (shaders, base assets, dev commands)
     src/                TypeScript source for the core script
@@ -50,7 +58,12 @@ mods/                   Engine-shipped mods (tracked in git)
   script_test/          Scripting API integration test
   shader_test/          Custom shader and mesh renderer verification mod
 mods_user/              User-installed mods (gitignored)
+vendor/
+  bun/                  Pinned Bun source submodule
+  patches/              Reproducible native runtime fork patch
+tools/                  Fork preparation, host builds and end-to-end security tests
 runtime/                @whatever-engine/api — TypeScript scripting API package
+  host/                 Trusted bootstrap compiled with the API into whatever-mod-host
   src/                  Source
   dist/
     index.js            Compiled API bundle (built from src/ via bun build:runtime)
@@ -68,13 +81,16 @@ src/
     registry.rs         CommandRegistry + script-to-node conversion
     types.rs            Shared types (CommandNode, ArgSpec, …)
     widget.rs           DevConsole render + execute
-  script/               Bun subprocess host + NDJSON IPC
+  script/               Bundled runtime discovery + subprocess host + NDJSON IPC
+  sandbox/              Native-host OS restrictions and broker path containment
+  audio/                Audio playback and handle management
+  watchdog.rs           Slow-tick diagnostics
   renderer/             wgpu context, camera, sprites
   vfs/                  Layered virtual filesystem
   mods/                 Mod manifest, discovery, toposort, registry
   ecs/                  Entity-component system
 docs/
-  scripting-api.md      Full scripting API reference
+  SCRIPTING.md          Full scripting API reference
   SHADER.md             Custom shader contract, mesh formats, and patterns
   SANDBOX.md            Security sandbox design and implementation details
 ```
@@ -119,16 +135,16 @@ my_game://textures/player.png
 
 ## Scripting
 
-Scripted mods run as a Bun subprocess per mod. The engine communicates over NDJSON on stdin/stdout.
+Scripted mods run in a bundled `whatever-mod-host` process per mod. The engine communicates over NDJSON on stdin/stdout. Shipped games do not need Bun in PATH or a runtime npm installation.
 
-The `@whatever-engine/api` package is provided by the engine's workspace — no install step needed for mods running within the engine directory. 
+The host contains `@whatever-engine/api` and resolves that exact package for every mod, including mods outside the engine directory. Leave it external when bundling a mod; the npm package is optional for editor types. Other package imports are denied by default. See [`docs/SANDBOX.md`](docs/SANDBOX.md) for the initial module and global allowlists.
 It contains all the necessary abstractions for the IPC messaging so that devs can work with properly typed structures without extra boilerplate.
 
 See [`docs/SCRIPTING.md`](docs/SCRIPTING.md) for the full reference.
 
 ### Regenerating type declarations
 
-After editing `runtime/index.ts`, regenerate `index.d.ts`:
+After editing `runtime/src/`, regenerate `index.d.ts`:
 
 ```sh
 bun run build:runtime

@@ -1,5 +1,8 @@
 import type { EventName, JsonValue, ModManifest } from "./types.ts";
 
+import { _write } from "./transport.ts";
+const _stringify = JSON.stringify;
+
 // --- Shared mutable IPC state ---
 
 export const _handlers = new Map<EventName, Set<(payload: any) => void | Promise<void>>>();
@@ -23,7 +26,7 @@ export function nextReqId(): string {
 /** Serialise a message to stdout as NDJSON. Typed as `any` to avoid a circular
  *  dependency between this shared module and the ipc.ts type definitions. */
 export function _send(msg: any): void {
-  process.stdout.write(JSON.stringify(msg) + "\n");
+  _write(_stringify(msg) + "\n");
 }
 
 /** Maps public event names to the Rust IPC message type that triggers them.

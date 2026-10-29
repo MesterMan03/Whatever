@@ -33,7 +33,9 @@ Mods live in `mods/` (engine-shipped) and `mods_user/` (user-installed, git-igno
 
 ## IPC Protocol
 
-One Bun process per scripted mod. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix.
+One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. `vendor/patches/bun-whatever.patch` reproduces the fork on the submodule's pinned upstream revision. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`.
+
+The native module allowlist starts with only `@whatever-engine/api` and local JS/TS/JSON source inside the mod root. Node/Bun built-ins, npm packages and non-allowlisted globals are denied. Never add an unrestricted fallback or mod-controlled permission grants. See `docs/SANDBOX.md`.
 
 Engine → Script: `Init`, `Frame`, `Input`, `AssetResponse`, `Shutdown`
 Script → Engine: `Subscribe`, `AssetRequest`, `SpawnSprite`, `MoveEntity`, `DestroyEntity`, `Log`, `SetWindowTitle`
@@ -41,6 +43,11 @@ Script → Engine: `Subscribe`, `AssetRequest`, `SpawnSprite`, `MoveEntity`, `De
 ## Commands
 
 ```sh
+bun run prepare:bun
+bun run build:bun
+bun run build:runtime
+bun run build:host
+bun run test:host
 cargo build
 cargo run
 cargo run -- --debug=all

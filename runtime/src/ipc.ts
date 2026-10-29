@@ -1,16 +1,18 @@
-import { createInterface } from "node:readline";
 import type { JsonValue, ModManifest, EventName, EventPayloads } from "./types.ts";
 import {
   _handlers, _fileCallbacks, _modListCallbacks, _modGetCallbacks, _msgCallbacks,
   _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
   _entityParentCallbacks, _entityChildrenCallbacks,
-  _EVENT_SUBSCRIBE,
+  _EVENT_SUBSCRIBE, _send,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
 import {
   _audioLoadCallbacks, _audioStateCallbacks, _audioHandles, AudioHandle,
   type AudioMetadata,
 } from "./components/audio.ts";
+
+import { _exit, _stdin } from "./transport.ts";
+const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
@@ -58,7 +60,7 @@ function _dispatch(msg: _EngineMsg): void {
       }
     }
     Promise.all(promises).then(() =>
-      process.stdout.write(JSON.stringify({ type: "TickDone", tick_number: msg.tick_number }) + "\n")
+      _send({ type: "TickDone", tick_number: msg.tick_number })
     );
     return;
   }
@@ -217,18 +219,24 @@ function _dispatch(msg: _EngineMsg): void {
       for (const fn_ of handlers) fn_(msg);
     }
     if (event === "exit") {
-      process.exit((msg as Extract<_EngineMsg, { type: "Shutdown" }>).exit_code);
+      _exit((msg as Extract<_EngineMsg, { type: "Shutdown" }>).exit_code);
     }
   }
 }
 
-// Start reading from stdin — side-effect only, no exports needed.
-const _rl = createInterface({ input: process.stdin, terminal: false });
-_rl.on("line", (line) => {
-  try {
-    _dispatch(JSON.parse(line) as _EngineMsg);
-  } catch {
-    // ignore malformed messages
+// Acquire the pipe before lockdown; retain no public handle to it.
+void (async () => {
+  let remaining = "";
+  for (;;) {
+    const { value, done } = await _stdin.read();
+    if (done) { _exit(0); }
+    remaining += _decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = remaining.indexOf("\n")) >= 0) {
+      const line = remaining.slice(0, newline);
+      remaining = remaining.slice(newline + 1);
+      try { _dispatch(JSON.parse(line) as _EngineMsg); }
+      catch { /* Ignore malformed messages. */ }
+    }
   }
-});
-_rl.on("close", () => process.exit(0));
+})();

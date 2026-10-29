@@ -11,9 +11,11 @@ permissions:
 jobs:
   build-linux:
     name: Build (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install system dependencies
         run: |
@@ -28,6 +30,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: ./.github/actions/build-mod-host
+
       - name: Build release binary
         run: cargo build --release
 
@@ -35,10 +39,10 @@ jobs:
         run: |
           mkdir -p stage/Whatever-linux-x86_64
           cp target/release/Whatever stage/Whatever-linux-x86_64/
-          cp package.json stage/Whatever-linux-x86_64/
+          cp runtime/dist/whatever-mod-host stage/Whatever-linux-x86_64/
+          cp LICENSE stage/Whatever-linux-x86_64/
+          cp vendor/bun/LICENSE.md stage/Whatever-linux-x86_64/BUN-LICENSE.md
           cp -r mods stage/Whatever-linux-x86_64/
-          cp -r runtime stage/Whatever-linux-x86_64/
-          rm -rf stage/Whatever-linux-x86_64/runtime/node_modules
           tar -czf Whatever-linux-x86_64.tar.gz -C stage Whatever-linux-x86_64
 
       - uses: actions/upload-artifact@v4
@@ -51,11 +55,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - uses: ./.github/actions/build-mod-host
 
       - name: Build release binary
         run: cargo build --release
@@ -65,10 +73,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path stage\Whatever-windows-x86_64 -Force
           Copy-Item target\release\Whatever.exe stage\Whatever-windows-x86_64\
-          Copy-Item package.json stage\Whatever-windows-x86_64\
+          Copy-Item runtime\dist\whatever-mod-host.exe stage\Whatever-windows-x86_64\
+          Copy-Item LICENSE stage\Whatever-windows-x86_64\
+          Copy-Item vendor\bun\LICENSE.md stage\Whatever-windows-x86_64\BUN-LICENSE.md
           Copy-Item -Recurse mods stage\Whatever-windows-x86_64\
-          Copy-Item -Recurse runtime stage\Whatever-windows-x86_64\
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue stage\Whatever-windows-x86_64\runtime\node_modules
           Compress-Archive -Path stage\Whatever-windows-x86_64 -DestinationPath Whatever-windows-x86_64.zip
 
       - uses: actions/upload-artifact@v4

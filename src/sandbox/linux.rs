@@ -8,7 +8,7 @@ use seccompiler::{
 };
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 // prctl constants not always exported by libc on every distro
@@ -21,35 +21,19 @@ const SECBIT_NO_SETUID_FIXUP: u64 = 4;
 const SECBIT_NO_SETUID_FIXUP_LOCKED: u64 = 8;
 
 pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result<()> {
-    let bun_bin = match detect_bun_binary() {
-        Some(p) => p,
-        None => {
-            tracing::warn!(
-                mod_id = %cfg.mod_id,
-                "sandbox: could not detect bun binary; Landlock will not be applied"
-            );
-            return Ok(());
-        }
-    };
-
-    // Derive the bun home directory from the binary path:
-    // ~/.bun/bin/bun → ~/.bun   or   /usr/local/bin/bun → /usr/local
-    let bun_dir = bun_bin
-        .parent() // .../bin/
-        .and_then(|p| p.parent()) // install root
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"));
-
+    let bun_dir = cfg
+        .runtime_executable
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("runtime has no parent"))?
+        .to_path_buf();
     let mod_root = cfg.mod_root.clone();
-    let mod_data_dir = cfg.mod_data_dir.clone();
-    let engine_root = cfg.engine_root.clone();
     let mod_id = cfg.mod_id.clone();
 
     // Safety: the closure runs in the forked child before exec. Landlock, seccomp,
     // and prctl are all syscall-based and safe in a post-fork pre-exec context.
     unsafe {
         cmd.pre_exec(move || {
-            apply_landlock(&bun_dir, &mod_root, &mod_data_dir, &engine_root);
+            apply_landlock(&bun_dir, &mod_root);
             apply_seccomp();
             drop_capabilities(&mod_id);
             Ok(())
@@ -58,7 +42,7 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
     Ok(())
 }
 
-fn apply_landlock(bun_dir: &Path, mod_root: &Path, mod_data_dir: &Path, engine_root: &Path) {
+fn apply_landlock(bun_dir: &Path, mod_root: &Path) {
     // Ruleset::default() already uses BestEffort compatibility mode in landlock 0.4 —
     // unsupported rules are silently skipped rather than causing an error.
     let abi = ABI::V4;
@@ -102,19 +86,9 @@ fn apply_landlock(bun_dir: &Path, mod_root: &Path, mod_data_dir: &Path, engine_r
             created = created.add_rule(PathBeneath::new(PathFd::new(bun_dir)?, exec_sys))?;
         }
 
-        // Engine root: read-only (node_modules/@whatever-engine/api lives here)
-        if engine_root.exists() {
-            created = created.add_rule(PathBeneath::new(PathFd::new(engine_root)?, read_only))?;
-        }
-
         // Mod root: read-only (script entry + sibling .ts/.js imports)
         if mod_root.exists() {
             created = created.add_rule(PathBeneath::new(PathFd::new(mod_root)?, read_only))?;
-        }
-
-        // Mod data dir: full read-write (the only place a mod can persist data)
-        if mod_data_dir.exists() {
-            created = created.add_rule(PathBeneath::new(PathFd::new(mod_data_dir)?, read_write))?;
         }
 
         // /tmp: read-write (Bun needs this for its transpilation cache)
@@ -211,33 +185,63 @@ fn drop_capabilities(mod_id: &str) {
     }
 }
 
-fn detect_bun_binary() -> Option<PathBuf> {
-    // 1. Check $BUN_INSTALL env var (set by the official bun installer)
-    if let Ok(bun_install) = std::env::var("BUN_INSTALL") {
-        let p = PathBuf::from(bun_install).join("bin").join("bun");
-        if p.exists() {
-            return std::fs::canonicalize(&p).ok().or(Some(p));
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_restrictions_block_engine_files_and_network_sockets() {
+        // Landlock cannot reliably identify Windows-mounted 9p files under WSL.
+        // Keep both the allowed and forbidden fixtures on the Linux filesystem.
+        let cache = dirs::cache_dir().expect("cache directory");
+        let root = cache.join(format!("whatever-policy-test-{}", std::process::id()));
+        let mod_root = root.join("mod");
+        std::fs::create_dir_all(&mod_root).expect("mod fixture");
+        std::fs::write(mod_root.join("mod.toml"), "[mod]\nid = 'fixture'\n")
+            .expect("allowed fixture");
+        std::fs::write(root.join("Cargo.toml"), "secret").expect("forbidden fixture");
+        assert!(std::fs::read_to_string(root.join("Cargo.toml")).is_ok());
+        let cfg = SandboxConfig {
+            mod_id: "linux_policy_test".to_owned(),
+            mod_root: mod_root.canonicalize().expect("mod root"),
+            runtime_executable: std::path::PathBuf::from("/usr/bin/python3"),
+        };
+        let source = r#"
+import socket, sys
+assert open(sys.argv[1]).read().startswith("[mod]")
+try:
+    open(sys.argv[2]).read()
+except PermissionError:
+    pass
+else:
+    raise AssertionError("engine files were exposed")
+try:
+    socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+except PermissionError:
+    pass
+else:
+    raise AssertionError("network sockets were exposed")
+print("file and network denied")
+"#;
+        let mut command = Command::new(&cfg.runtime_executable);
+        command
+            .arg("-c")
+            .arg(source)
+            .arg(cfg.mod_root.join("mod.toml"))
+            .arg(root.join("Cargo.toml"));
+        apply_pre_spawn(&mut command, &cfg).expect("install restrictions");
+        let output = command.output().expect("spawn restricted fixture");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "file and network denied",
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(&root).expect("remove kernel fixtures");
     }
-    // 2. Default user-install path: ~/.bun/bin/bun
-    if let Some(home) = dirs::home_dir() {
-        let p = home.join(".bun").join("bin").join("bun");
-        if p.exists() {
-            return std::fs::canonicalize(&p).ok().or(Some(p));
-        }
-    }
-    // 3. Fall back to PATH lookup via shell
-    let output = std::process::Command::new("sh")
-        .args(["-c", "which bun 2>/dev/null"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = std::str::from_utf8(&output.stdout).ok()?.trim().to_owned();
-    if s.is_empty() {
-        return None;
-    }
-    let p = PathBuf::from(s);
-    Some(std::fs::canonicalize(&p).unwrap_or(p))
 }

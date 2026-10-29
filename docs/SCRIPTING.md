@@ -8,9 +8,12 @@ package abstracts the wire protocol.
 import { Engine, Window, File, Scene, Mods, Message, Console, Audio } from "@whatever-engine/api";
 ```
 
-The package is provided by the engine's workspace (`runtime/`). No install step
-needed — Bun resolves it automatically for any script running within the engine
-directory tree.
+The engine-owned mod host embeds the API and registers `@whatever-engine/api` before
+loading mod code. It resolves independently of the mod's directory or node_modules.
+Leave this import external in mod bundles; install the npm package only if needed
+for editor types. Other packages and all Node/Bun built-in modules are denied by
+default. Local JS/TS/JSON modules must resolve inside the current mod directory.
+See [the runtime policy](SANDBOX.md) for the module and global allowlists.
 
 ---
 
@@ -37,10 +40,9 @@ Engine.on("tick", async ({ tick_number, delta_seconds, keys_pressed }) => {
 });
 ```
 
-**Why there is no chicken-and-egg problem:** Bun runs the script's top-level code
-synchronously before blocking on stdin. Any `Engine.on(...)` calls are registered
-while the script is starting up. The engine only sends `Init` after the renderer
-is ready — by which point the script is already listening.
+The host sends an internal `RuntimeReady` message after mod evaluation completes.
+The engine sends `Init` once both this handshake and window initialization have
+completed, so top-level event registration is in place before `init` fires.
 
 ### Events
 

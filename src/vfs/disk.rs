@@ -20,7 +20,8 @@ impl Vfs for DiskLayer {
         if path.mod_id != self.mod_id {
             return Err(VfsError::NotFound(path.as_string()));
         }
-        let full = self.root.join(&path.path);
+        let full = crate::sandbox::resolve_contained(&self.root, &path.path)
+            .map_err(|_| VfsError::InvalidPath(path.as_string()))?;
         std::fs::read(&full).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 VfsError::NotFound(path.as_string())
@@ -34,19 +35,29 @@ impl Vfs for DiskLayer {
         if path.mod_id != self.mod_id {
             return false;
         }
-        self.root.join(&path.path).exists()
+        crate::sandbox::resolve_contained(&self.root, &path.path).is_ok_and(|path| path.is_file())
     }
 
     fn list(&self, mod_id: &str, prefix: &str) -> Result<Vec<String>, VfsError> {
         if mod_id != self.mod_id {
             return Ok(vec![]);
         }
-        let search_root = self.root.join(prefix);
+        let root = match self.root.canonicalize() {
+            Ok(root) => root,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(error) => return Err(VfsError::Io(error)),
+        };
+        let search_root = if prefix.is_empty() {
+            root.clone()
+        } else {
+            crate::sandbox::resolve_contained(&root, prefix)
+                .map_err(|_| VfsError::InvalidPath(prefix.to_owned()))?
+        };
         if !search_root.exists() {
             return Ok(vec![]);
         }
         let mut results = Vec::new();
-        collect_files(&search_root, &self.root, &mut results)?;
+        collect_files(&search_root, &root, &mut results)?;
         Ok(results)
     }
 }
@@ -59,6 +70,9 @@ fn collect_files(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
+        if entry.file_type()?.is_symlink() {
+            continue;
+        }
         if path.is_dir() {
             collect_files(&path, root, out)?;
         } else {

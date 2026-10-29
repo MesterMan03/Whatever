@@ -184,6 +184,9 @@ pub struct QueryResultDto {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum ScriptMessage {
+    RuntimeReady {
+        protocol: u32,
+    },
     Subscribe {
         events: Vec<String>,
     },

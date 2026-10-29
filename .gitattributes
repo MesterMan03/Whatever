@@ -1,0 +1,2 @@
+# Native fork patches need LF endings; blank context markers contain a required space.
+vendor/patches/*.patch text eol=lf whitespace=-blank-at-eol

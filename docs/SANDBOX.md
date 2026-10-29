@@ -1,140 +1,74 @@
-# Mod Sandboxing
+# Mod runtime policy
 
-Each scripted mod runs in a dedicated Bun subprocess. The sandbox limits what that process can do — which files it can read or write, whether it can open network connections, and which syscalls it can invoke. Restrictions are applied around `spawn`: some hooks run in the forked child before `exec` (pre-spawn), others configure OS objects after the process is created (post-spawn).
+Each scripted mod runs in an engine-owned `whatever-mod-host` subprocess. The executable contains the pinned Whatever Bun fork, the trusted bootstrap, and `@whatever-engine/api`. The engine never searches PATH for Bun and never falls back to stock Bun.
 
----
+The fork is pinned to Bun v1.4.4 at `38afee6c84fcf48c0edb2466aa4b27d287a59c30` in `vendor/bun`. Local changes are also stored in `vendor/patches/bun-whatever.patch` so a fresh upstream submodule checkout can reproduce the fork without an unpublished Git commit. Run `bun run prepare:bun` to apply that patch. The preparation command refuses a different base revision or conflicting edits.
 
-## Linux
+## Imports
 
-**Security status: strong**
+The policy starts with one public package on the allowlist:
 
-Three independent layers are applied in the forked child before `exec`:
+- `@whatever-engine/api`, supplied by the host before mod evaluation.
 
-### 1. Landlock (filesystem + network)
+Local JavaScript, TypeScript and JSON imports are allowed inside the current mod directory. Supported extensions are `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts` and `.json`. Paths are canonicalized before loading. A path outside the mod root, a symlink to an outside file, any `node_modules` component, and a native addon are denied. Non-source loader overrides, including SQLite, file and text loaders, are also denied.
 
-[Landlock](https://landlock.io/) is a Linux kernel access-control mechanism available since kernel 5.13. The engine uses `ABI::V4` in best-effort mode, so on older kernels rules that are not supported are silently skipped rather than failing.
+All other package names, `node:` and `bun:` modules, package subpaths, package import aliases, and network/data/blob module URLs are denied. Checks cover static import records before optimization, ESM resolution and fetching, dynamic imports, and CommonJS resolution before consulting its cache. A mod's package.json, tsconfig aliases or bundled dependencies cannot grant runtime privileges. Pure JavaScript copied into a mod's own local source is still mod code and runs under the same restrictions.
 
-| Path | Access |
-|---|---|
-| `/usr`, `/lib`, `/lib64`, `/lib32`, `/etc`, `/dev`, `/proc/self`, `/run`, `/sys` | read + execute (needed by the dynamic linker and libc) |
-| Bun install directory (`~/.bun` or `$BUN_INSTALL`) | read + execute |
-| Engine root (contains `node_modules/@whatever-engine/api`) | read-only |
-| Mod root (script entry and sibling imports) | read-only |
-| Mod data directory | full read-write (the only persistent storage a mod has) |
-| `/tmp` | read-write (Bun's transpilation cache) |
-| Everything else | denied |
+The trusted bootstrap registers the engine API before enabling the native policy. A mod-local copy of that package cannot replace it. Mod bundlers should leave this package external.
 
-No `AccessNet` allow-rules are added, so all TCP bind and connect calls are blocked at the Landlock layer.
+There are no elevated permissions or mod-configurable grants yet. Future allowed modules and permissions must be added explicitly; an unknown module stays denied.
 
-### 2. seccomp-BPF (syscall denylist)
+## Globals
 
-A BPF filter runs in the child and blocks the following syscalls with `EPERM`:
+The native transition retains an explicit allowlist of ordinary JavaScript language globals, typed arrays and Buffer, text encoding, URL parsing, timers, microtasks, structured cloning and the host's restricted console. The complete list is `whateverGlobalAllowed` in the fork's `src/jsc/bindings/ZigGlobalObject.cpp`.
 
-| Syscall | Reason |
-|---|---|
-| `ptrace` | prevent process inspection / code injection |
-| `mount` / `umount2` | prevent filesystem manipulation |
-| `pivot_root` / `chroot` | prevent namespace escapes |
-| `kexec_load` / `kexec_file_load` | prevent kernel replacement |
-| `reboot` | prevent host reboot |
-| `socket(AF_INET, ...)` | block IPv4 (belt-and-suspenders over Landlock) |
-| `socket(AF_INET6, ...)` | block IPv6 (belt-and-suspenders over Landlock) |
+Other globals are replaced with immutable undefined values. In particular, mods receive no `Bun`, `process`, `fetch`, `WebSocket`, `Worker` or `ShadowRealm`. Unknown globals added by future Bun releases are denied unless reviewed and added to the list.
 
-All other syscalls are allowed. `AF_UNIX` sockets are not blocked because Bun uses them for internal IPC between its main thread and worker threads.
+The bootstrap captures native stdin/stdout pipe handles for its private IPC transport before this transition, clears the CommonJS cache of trusted bootstrap modules, and hides CommonJS parent references. Policy activation is irreversible for the process. Scripts cannot widen or reset it.
 
-The filter uses a denylist rather than an allowlist to avoid breaking Bun's internal runtime while still blocking the most dangerous privilege-escalation vectors.
+## Host startup
 
-### 3. Capability drop (prctl)
+1. The engine locates the host beside its executable. Debug builds may also use `runtime/dist/whatever-mod-host` from the source checkout.
+2. It checks the host identity, pinned Bun version, native policy version, IPC protocol and API version.
+3. The host runs with a cleared environment, retaining only Windows system-directory and temporary-directory variables when present, plus a fixed `BUN_DEBUG_QUIET_LOGS=1` to keep native debug diagnostics off IPC stdout. It receives no inherited PATH, Bun/Node options or application secrets.
+4. Compiled hosts disable automatic dotenv, bunfig, package.json and tsconfig loading. Runtime package installation, macros and native addons are disabled.
+5. The bootstrap registers the embedded API, installs its console, activates the native policy, and loads the mod.
+6. After evaluation, it sends `RuntimeReady`. The engine sends `Init` once the window is ready and this handshake has arrived.
 
-`PR_SET_SECUREBITS` is called with:
+A missing or incompatible host is an engine startup error. A host built with stock Bun refuses to load any mod.
 
-- `SECBIT_NOROOT` + `SECBIT_NOROOT_LOCKED` — effective root inside the process no longer grants extra capabilities.
-- `SECBIT_NO_SETUID_FIXUP` + `SECBIT_NO_SETUID_FIXUP_LOCKED` — setuid/setgid execution inside the sandbox cannot re-elevate capabilities.
+## Files and assets
 
-`PR_CAP_AMBIENT_CLEAR_ALL` removes all ambient capabilities so they cannot be inherited by child processes.
+Persistent files go through the Rust `File` broker, under the OS local-data directory at `Whatever/<game_id>/<mod_id>/`. IDs are restricted to lowercase letters, digits, underscores and hyphens to avoid case aliases between data directories. Relative paths reject parent traversal, absolute paths, drive prefixes, backslashes and alternate-stream syntax. Existing path ancestors are canonicalized to reject symlink escapes, including dangling symlinks.
 
-### Known limitations
+Mod IDs must be unique, and asset roots must remain inside their mod directory. VFS disk reads apply the same containment check to each mod's asset root. Recursive asset listing skips symlinks. These checks protect operations performed by the engine on behalf of a script; hiding Bun's filesystem APIs alone would not protect that broker.
 
-- Landlock and seccomp failures are non-fatal — the engine logs a warning and the mod continues with weaker (or no) isolation. This is intentional so that mods remain runnable on kernel versions that predate these features.
-- The seccomp filter is a denylist. A sufficiently creative exploit could use an unblocked syscall to escape. A future allowlist-based filter would be stronger but risks breaking Bun updates.
-- If the Bun binary cannot be located (none of `$BUN_INSTALL`, `~/.bun/bin/bun`, or `PATH` resolve), Landlock is skipped entirely for that mod. Check the `[sandbox]` lines on stderr if isolation seems absent.
-- Mods that spawn child processes inherit the same Landlock and seccomp restrictions, so they cannot escape by exec-ing another binary.
+## OS restrictions
 
----
+The existing OS restrictions remain a second layer.
 
-## macOS
+- Linux applies Landlock for filesystem/network access, seccomp for sensitive syscalls and network sockets, and capability reduction. It grants the bundled host directory read/execute access, the mod directory read access and temporary storage for runtime caches. It no longer searches for a user Bun installation or grants access to the engine source tree or persistent save directories.
+- macOS installs a Seatbelt profile around the exact host executable and mod root. It denies networking and restricts writes to temporary storage.
+- Windows uses a Job Object for process limits and cleanup. It does not provide filesystem or network isolation by itself.
 
-**Security status: partial / best-effort**
+OS setup currently degrades with diagnostics when a facility is unavailable. The native policy remains mandatory. Runtime policy is not a replacement for kernel isolation against native-code vulnerabilities. CPU, memory and IPC resource quotas and a permission-grant system remain future work.
 
-The engine uses Apple's **Seatbelt** (`sandbox_init`) to apply a Scheme-like profile in the forked child before `exec`. Seatbelt is a private Apple API that has been formally deprecated but remains functional on current macOS releases.
+## Build and verification
 
-### Profile summary
+Install the native prerequisites described in the Bun checkout's build documentation, including its pinned Rust toolchain, LLVM 23.1.x, CMake, Ninja, Perl and NASM where applicable. Windows also needs Visual Studio C++ tools with ATL; the build helper initializes the Visual Studio environment automatically. Portable LLVM/CMake/NASM tools under `target/build-tools` are recognized.
 
-```
-(deny default)                       ; deny everything not explicitly allowed
-(allow file-read* /usr /System /Library /private/etc /private/tmp /private/var/folders)
-(allow file-read* <bun_dir>)         ; Bun install directory
-(allow file-read* <engine_root>)     ; node_modules/@whatever-engine/api
-(allow file-read* <mod_root>)        ; mod script files
-(allow file-write* <mod_data_dir>)   ; mod persistent storage
-(allow file-write* /private/tmp)     ; Bun transpilation cache
-(deny network*)                      ; no network access
-(deny process-exec*)                 ; no exec of other binaries
-(allow ipc-posix-shm)                ; Bun shared memory
-(allow mach-lookup)                  ; macOS system services
-(allow process-info* (target self))
-(allow signal (target self))
+```sh
+bun install --frozen-lockfile
+bun run prepare:bun
+bun run build:bun
+bun run build:runtime
+bun run build:host
+bun run test:host
+cargo test --workspace --locked
 ```
 
-Bun detection tries `$BUN_INSTALL`, `~/.bun`, `/opt/homebrew/bin/bun`, and `/usr/local/bin/bun` in that order; if none is found, `/usr/local` is used as a fallback.
+For a debug fork use `bun run build:bun --debug`. The host builder also accepts `--bun <path-to-built-fork>` and verifies its native hook before compiling. It does not accept stock Bun.
 
-### Known limitations
+The native resolver regression cases are in `vendor/bun/test/js/bun/resolve/resolve.test.ts` under `Whatever native module policy`. Run them with `bun bd test test/js/bun/resolve/resolve.test.ts -t Whatever` inside that checkout. Background transpilation, bytecode caches and transpilation caches are disabled for locked mod sources so cached transforms cannot skip the policy. The end-to-end host suite runs the compiled host outside the engine tree with an empty PATH.
 
-- `sandbox_init` is deprecated. Apple may remove it in a future macOS version without notice, at which point the sandbox would silently be skipped and the mod would run unrestricted.
-- There is no syscall filter layer on macOS (no seccomp equivalent exposed to userspace). The Seatbelt profile is the only enforcement mechanism.
-- Profile paths containing `"` or `\` are stripped before insertion into the profile string. Paths with those characters will not be accessible inside the sandbox.
-- `sandbox_init` failure is non-fatal: the engine logs a warning and the mod continues without Seatbelt.
-
----
-
-## Windows
-
-**Security status: partial**
-
-Windows does not expose a pre-exec hook for applying restrictions before process creation (there is no `fork`/`exec` split). Sandbox restrictions are applied **post-spawn** via a **Windows Job Object**.
-
-### What the Job Object does
-
-A new anonymous Job Object is created and the child process is immediately assigned to it. The Job Object is configured with:
-
-| Limit | Value |
-|---|---|
-| `KILL_ON_JOB_CLOSE` | when the engine drops the `SandboxGuard`, all processes in the job are killed |
-| `ACTIVE_PROCESS_LIMIT` | 4 (enough for Bun's internal worker threads) |
-
-The `SandboxGuard` RAII wrapper holds the Job Object `HANDLE`. It is stored in `ScriptProcess` and dropped when the script process is cleaned up, ensuring the mod process tree is always terminated.
-
-### Known limitations
-
-- **No filesystem isolation.** The mod process can read and write arbitrary paths on the filesystem, limited only by the OS user's ACLs. Landlock and Seatbelt have no Windows equivalent that can be applied from a parent process.
-- **No network isolation.** The mod can open network connections without restriction.
-- **No syscall filter.** There is no seccomp equivalent available in this configuration.
-- The Job Object `KILL_ON_JOB_CLOSE` limit only prevents the process tree from outliving the engine; it does not constrain what the process can do while it runs.
-- If `CreateJobObjectW` or `AssignProcessToJobObject` fail, the guard is returned with an invalid handle and no enforcement is applied. A warning is logged but the mod continues running.
-- `ACTIVE_PROCESS_LIMIT: 4` is a rough heuristic for Bun's internal thread count. Bun updates that spawn more worker threads could hit this limit and fail to start.
-
----
-
-## Comparison
-
-| Feature | Linux | macOS | Windows |
-|---|---|---|---|
-| Filesystem read restriction | Landlock | Seatbelt | none |
-| Filesystem write restriction | Landlock | Seatbelt | none |
-| Network block | Landlock + seccomp | Seatbelt (`deny network*`) | none |
-| Syscall filter | seccomp-BPF | none | none |
-| Capability drop | prctl | n/a | n/a |
-| Process-tree cleanup | n/a | n/a | Job Object `KILL_ON_JOB_CLOSE` |
-| Graceful degradation | yes (warns, continues) | yes (warns, continues) | yes (warns, continues) |
-
-**Bottom line:** Linux provides the strongest isolation. macOS provides meaningful filesystem and network restrictions through Seatbelt but no syscall layer, and depends on a deprecated API. Windows provides only process-tree lifetime management; filesystem and network access are fully unrestricted. Do not run untrusted mods on Windows.
+Linux checks can be run under WSL. Keep Linux Cargo outputs in a separate target directory so Windows and Linux never share compiled artifacts. Run sandboxed Linux game/mod files from WSL's Linux filesystem: the tested WSL kernel denied even allowlisted files on the Windows-mounted `/mnt/c` filesystem under Landlock. The kernel probe uses Linux-filesystem fixtures and verifies an allowed read plus denied engine-file and network access.

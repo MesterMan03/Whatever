@@ -1,0 +1,36 @@
+name: Mod runtime
+on:
+  pull_request:
+    paths:
+      - ".gitattributes"
+      - ".gitmodules"
+      - "vendor/**"
+      - "runtime/**"
+      - "tools/**"
+      - ".github/actions/build-mod-host/**"
+      - ".github/workflows/mod-runtime.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".gitattributes"
+      - ".gitmodules"
+      - "vendor/**"
+      - "runtime/**"
+      - "tools/**"
+      - ".github/actions/build-mod-host/**"
+      - ".github/workflows/mod-runtime.yml"
+  workflow_dispatch:
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/build-mod-host

@@ -1,4 +1,5 @@
 use super::ipc::{EngineMessage, ScriptMessage};
+use super::runtime::{find_host, host_command};
 use crate::debug::DebugLogger;
 use crate::sandbox::{SandboxConfig, SandboxGuard};
 use anyhow::Context;
@@ -14,6 +15,7 @@ pub struct ScriptProcess {
     pub mod_id: String,
     child: Child,
     stdin: ChildStdin,
+    ready: bool,
     _sandbox_guard: SandboxGuard,
 }
 
@@ -44,6 +46,7 @@ pub struct PendingReply {
 }
 
 pub struct ScriptHost {
+    runtime: std::path::PathBuf,
     processes: HashMap<String, ScriptProcess>,
     /// Maps "<sender_mod_id>-<original_request_id>" → PendingReply.
     pending_replies: HashMap<String, PendingReply>,
@@ -52,14 +55,15 @@ pub struct ScriptHost {
 }
 
 impl ScriptHost {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         let (shared_tx, shared_rx) = mpsc::sync_channel(4096);
-        ScriptHost {
+        Ok(ScriptHost {
+            runtime: find_host()?,
             processes: HashMap::new(),
             pending_replies: HashMap::new(),
             shared_rx,
             shared_tx,
-        }
+        })
     }
 
     pub fn spawn(
@@ -69,15 +73,23 @@ impl ScriptHost {
         sandbox_cfg: &SandboxConfig,
         debug: &mut DebugLogger,
     ) -> anyhow::Result<()> {
-        tracing::info!(mod_id, entry = %entry.display(), "spawning script process");
+        tracing::info!(mod_id, entry = %entry.display(), "spawning bundled mod host");
 
         if !entry.exists() {
             anyhow::bail!("script entry not found: {}", entry.display());
         }
 
-        let mut cmd = std::process::Command::new("bun");
-        cmd.arg("run")
-            .arg(entry)
+        let entry = entry.canonicalize().context("resolve mod script entry")?;
+        let mod_root = sandbox_cfg
+            .mod_root
+            .canonicalize()
+            .context("resolve mod root")?;
+        if !entry.starts_with(&mod_root) {
+            anyhow::bail!("script entry escapes mod root: {}", entry.display());
+        }
+        let mut cmd = host_command(&self.runtime);
+        cmd.arg(&entry)
+            .arg(&mod_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -86,8 +98,7 @@ impl ScriptHost {
 
         let mut child = cmd.spawn().with_context(|| {
             format!(
-                "failed to spawn bun for mod '{mod_id}' (entry: {}). \
-                 Is bun installed and in PATH?",
+                "failed to spawn bundled mod host for mod '{mod_id}' (entry: {})",
                 entry.display()
             )
         })?;
@@ -132,21 +143,26 @@ impl ScriptHost {
         });
 
         tracing::info!(mod_id, "script process ready");
-        debug.ipc(mod_id, "←", &format!("spawned bun: {}", entry.display()));
+        debug.ipc(
+            mod_id,
+            "←",
+            &format!("spawned bundled mod host: {}", entry.display()),
+        );
         self.processes.insert(
             mod_id.to_owned(),
             ScriptProcess {
                 mod_id: mod_id.to_owned(),
                 child,
                 stdin,
+                ready: false,
                 _sandbox_guard: sandbox_guard,
             },
         );
         Ok(())
     }
 
-    pub fn mod_ids(&self) -> impl Iterator<Item = &str> {
-        self.processes.keys().map(String::as_str)
+    pub fn runtime_path(&self) -> &Path {
+        &self.runtime
     }
 
     /// Send a message to a script process.  Returns `true` if the write
@@ -194,6 +210,17 @@ impl ScriptHost {
             Err(mpsc::RecvTimeoutError::Timeout) => RecvOutcome::Timeout,
             Err(mpsc::RecvTimeoutError::Disconnected) => RecvOutcome::Disconnected,
         }
+    }
+
+    pub fn mark_ready(&mut self, mod_id: &str) -> bool {
+        let Some(process) = self.processes.get_mut(mod_id) else {
+            return false;
+        };
+        if process.ready {
+            return false;
+        }
+        process.ready = true;
+        true
     }
 
     pub fn has_process(&self, mod_id: &str) -> bool {
