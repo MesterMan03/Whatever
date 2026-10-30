@@ -35,12 +35,13 @@ Mods live in `mods/` (engine-shipped) and `mods_user/` (user-installed, git-igno
 
 ## IPC Protocol
 
-One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. `vendor/patches/bun-whatever.patch` reproduces the fork on the submodule's pinned upstream revision. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`. Host protocol 4 passes the runtime side before mod evaluation; `Init` includes `mode`. Simulation ticking and IPC run on the runtime worker independently of window redraws.
+One bundled `whatever-mod-host` process per scripted mod. The host embeds the engine API and runs the pinned Bun fork in `vendor/bun`; do not launch system Bun for mods. The submodule commit includes the native policy; `vendor/patches/bun-whatever.patch` exports its changes from the documented upstream base. `prepare:bun` verifies the committed fork and normalizes manifest line endings. Transport: NDJSON on stdin/stdout. Stderr → engine logger with mod_id prefix. `RuntimeReady` gates `Init`. Host protocol 5 passes the runtime side before mod evaluation; `Init` includes `mode`. Simulation ticking and IPC run on the runtime worker independently of window redraws.
 
 The native module allowlist starts with only `@whatever-engine/api` and local JS/TS/JSON source inside the mod root. Node/Bun built-ins, npm packages and non-allowlisted globals are denied. Never add an unrestricted fallback or mod-controlled permission grants. See `docs/SANDBOX.md`.
 
-Engine → Script: `Init`, `Frame`, `Input`, `AssetResponse`, `Shutdown`
-Script → Engine: `Subscribe`, `AssetRequest`, `SpawnSprite`, `MoveEntity`, `DestroyEntity`, `Log`, `SetWindowTitle`
+Engine → Script: `Init`, `Tick`, `CommandResults`, notifications/responses, `Shutdown`.
+Script → Engine: startup `RuntimeReady`/`RuntimeFailed`, then one `CommandBatch` per tick.
+Application commands execute only from batches, in dependency/load order across mods and recorded order within each mod. Physics belongs after command execution and before snapshot/result publication. See `docs/SCRIPTING.md` for the complete protocol and pending-result API.
 
 ## Commands
 
@@ -51,6 +52,7 @@ bun run build:runtime
 bun run build:host
 bun run test:host
 bun run test:network
+bun run test:runtime
 cargo build
 cargo run
 cargo run -- --mode server

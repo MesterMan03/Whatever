@@ -8,7 +8,8 @@ export const Engine = {
   get mode() { return _getMode(); },
   /**
    * Subscribe to an engine event. The handler is called each time the event fires.
-   * For `tick`, async handlers are awaited before the engine advances the simulation.
+   * Tick commands are submitted automatically before awaiting user promises.
+   * A handler still awaiting a result is skipped on later ticks until it finishes.
    * Registering a handler also sends a `Subscribe` message to the engine automatically
    * (except `mod_message`, which the engine routes unconditionally).
    */
@@ -24,7 +25,7 @@ export const Engine = {
     _send({ type: "Log", level, message });
   },
 
-  /** Override the game tick rate. Takes effect immediately. */
+  /** Override the game tick rate. Takes effect after this tick's command phase. */
   setTickRate(ticks_per_second: number): void {
     _send({ type: "SetTickRate", ticks_per_second });
   },

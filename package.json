@@ -13,6 +13,7 @@
     "build:host": "bun tools/build-mod-host.ts",
     "test:mods": "bun test tools/tests/shipped-mods.test.ts --timeout 30000",
     "test:network": "bun test tools/tests/network.test.ts && bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.network.json",
+    "test:runtime": "bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.runtime.json",
     "test:server": "bun test tools/tests/server.test.ts --timeout 30000",
     "test:host": "bun test tools/tests/mod-host.test.ts --timeout 30000"
   },

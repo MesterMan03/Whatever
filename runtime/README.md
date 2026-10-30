@@ -12,7 +12,7 @@ Engine.on("init", ({ mod_id }) => {
 });
 
 Engine.on("tick", async ({ delta_seconds }) => {
-  // game logic — engine waits for this Promise before advancing
+  // Record commands. Awaiting results does not stop automatic batch submission.
 });
 ```
 
@@ -47,41 +47,48 @@ Sandboxed per-mod file I/O. Paths must not contain `..`.
 - `File.read(path)` → `Promise<string>`
 - `File.delete(path)` → `Promise<void>`
 
+### `Pending<T>` / `PendingEntity`
+
+- `pending.get()` → `Promise<T>` — wait for the recorded result; never flushes or repeats work
+- `PendingEntity` — an entity reference with chainable mutations before its native ID exists; queries return their own `Pending<T>`
+
+All API commands are submitted automatically once per tick. See [tick timing and migration](../docs/SCRIPTING.md#tick-order-and-command-batches).
+
 ### `Entity`
 
 A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntities`, `Scene.query`, and `Scene.spawnSprite`. For built-in component types the data parameter/return is automatically typed; for custom component types a generic `T` can be supplied.
 
 - `entity.id` — opaque entity ID string
 - `entity.destroy()` — fire-and-forget
-- `entity.setComponent(component_type, data)` / `entity.setComponent(component)` — fire-and-forget; typed for built-in components; single-argument form reads `id` from the component object
-- `entity.removeComponent(component_type)` — fire-and-forget
-- `entity.getComponent(component_type)` → `Promise<T | null>` — typed for built-in components
-- `entity.move(position)` → `Promise<void>` — update `core:transform` position, preserve rotation/scale
-- `entity.setParent(parent | null)` — attach to a parent entity or detach; fire-and-forget; transform becomes local-space relative to parent
-- `entity.getParent()` → `Promise<Entity | null>` — return the parent entity
-- `entity.getChildren()` → `Promise<Entity[]>` — return all direct children
+- `entity.setComponent(component_type, data)` / `entity.setComponent(component)` → `this` — typed for built-in components
+- `entity.removeComponent(component_type)` → `this`
+- `entity.getComponent(component_type)` → `Pending<T | null>` — typed for built-in components
+- `entity.move(position)` → `this` — update `core:transform` position, preserve rotation/scale
+- `entity.setParent(parent | null)` → `this` — accepts live or pending entities
+- `entity.getParent()` → `Pending<Entity | null>` — return the parent entity
+- `entity.getChildren()` → `Pending<Entity[]>` — return all direct children
 
 ### `Scene`
 
 Entity and component management. Methods that accept a raw `entity_id` string are provided for cases where only an ID is available; prefer `Entity` methods when possible.
 
-- `Scene.createEntity()` → `Promise<Entity>`
+- `Scene.createEntity()` → `PendingEntity`
 - `Scene.destroyEntity(entity_id)` — fire-and-forget
-- `Scene.listEntities()` → `Promise<Entity[]>`
+- `Scene.listEntities()` → `Pending<Entity[]>`
 - `Scene.setComponent(entity_id, component_type, data)` — fire-and-forget; typed for built-in components
 - `Scene.removeComponent(entity_id, component_type)` — fire-and-forget
-- `Scene.getComponent(entity_id, component_type)` → `Promise<T | null>` — typed for built-in components
-- `Scene.query(component_types)` → `Promise<QueryResult[]>` — each row has `entity: Entity` and `components`
-- `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>` — convenience
-- `Scene.spawnMesh(mesh, shader, position, options?)` → `Promise<Entity>` — convenience
-- `Scene.spawnText(text, position, options?)` → `Promise<Entity>` — convenience
-- `Scene.moveEntity(entity_id, position)` → `Promise<void>` — convenience
-- `Scene.addAmbientLight(color?, intensity?)` → `Promise<Entity>` — convenience
-- `Scene.addDirectionalLight(direction, color?, intensity?)` → `Promise<Entity>` — convenience
-- `Scene.addPointLight(position, color?, intensity?, range?)` → `Promise<Entity>` — convenience
+- `Scene.getComponent(entity_id, component_type)` → `Pending<T | null>` — typed for built-in components
+- `Scene.query(component_types)` → `Pending<QueryResult<Entity>[]>` — each row has `entity: Entity` and `components`
+- `Scene.spawnSprite(texture, shader, position, scale?)` → `PendingEntity` — convenience
+- `Scene.spawnMesh(mesh, shader, position, options?)` → `PendingEntity` — convenience
+- `Scene.spawnText(text, position, options)` → `PendingEntity` — convenience
+- `Scene.moveEntity(entity_id, position)` → `void` — convenience
+- `Scene.addAmbientLight(color?, intensity?)` → `PendingEntity` — convenience
+- `Scene.addDirectionalLight(direction, color?, intensity?)` → `PendingEntity` — convenience
+- `Scene.addPointLight(position, color?, intensity?, range?)` → `PendingEntity` — convenience
 - `Scene.setParent(entity_id, parent_id | null)` — fire-and-forget
-- `Scene.getParent(entity_id)` → `Promise<string | null>`
-- `Scene.getChildren(entity_id)` → `Promise<string[]>`
+- `Scene.getParent(entity_id)` → `Pending<string | null>`
+- `Scene.getChildren(entity_id)` → `Pending<string[]>`
 
 Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
 
@@ -228,4 +235,4 @@ The host captures private native pipe handles before lockdown; mods do not recei
 Init payloads include `mode`. Simulation ticks run independently of rendering. Window/audio operations and presentation settings reject server use. Mod manifests expose supported `sides` and optional shared/client/server script entries; only mods active on the current side appear in `Mods.list()` and `Mods.get()`.
 
 
-Tick handler failures are logged and stop the faulty mod; they do not leave the engine waiting forever for its tick acknowledgement.
+Tick handler failures are logged and stop the faulty mod; exited processes are removed from the command-submission barrier. Host protocol 5 uses `CommandBatch` and `CommandResults` envelopes.

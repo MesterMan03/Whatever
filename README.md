@@ -63,12 +63,13 @@ mods/                   Engine-shipped mods (tracked in git)
   network_example/      Shared protocol and a multi-client QUIC messenger demo
 mods_user/              User-installed mods (gitignored)
 vendor/
-  bun/                  Pinned Bun source submodule
+  bun/                  Pinned Whatever-mod-runtime fork of Bun
   patches/              Reproducible native runtime fork patch
 tools/                  Fork preparation, host builds and end-to-end security tests
 runtime/                @whatever-engine/api — TypeScript scripting API package
   host/                 Trusted bootstrap compiled with the API into whatever-mod-host
   src/                  Source (components/ public namespaces, network/ schema and registration helpers)
+    pending.ts          Pending operation result handles
   dist/
     index.js            Compiled API bundle (built from src/ via bun build:runtime)
     index.d.ts          Type declarations for the API
@@ -108,6 +109,7 @@ Biome formats JavaScript, TypeScript and JSON source under `mods/`, `mods_user/`
 ```sh
 bun run format        # Format mod sources
 bun run format:check  # Check formatting without writing (also runs in CI)
+bun run test:runtime  # Check pending-result API types and shipped debug scripts
 ```
 
 Biome is a pinned development dependency. Run `bun install --frozen-lockfile` after pulling the setup. Formatting does not enable lint fixes or import organization.
@@ -138,7 +140,9 @@ Mods are loaded in topological dependency order. `core` always loads first.
 
 Set `default_mode = "client"` or `"server"` in the `[game]` section of core's `meta.toml`. The CLI `--mode client|server` overrides it; old metadata defaults to client mode.
 
-The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Rendering runs on the window thread and consumes the latest world snapshot. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
+The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Its fixed phase order is input/external events → mod ticks and buffer submission → command execution in dependency/load order → native simulation (reserved for future physics) → snapshots and results. Each mod submits one batch, including mods without public tick listeners. Commands preserve call order within their mod; independent mods use alphabetical ID tie-breaking. Async handlers may span ticks without blocking submission or overlapping their own invocations. See [tick semantics](docs/SCRIPTING.md#tick-order-and-command-batches).
+
+Rendering runs on the window thread and consumes the latest world snapshot. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
 
 Server mode creates no window, graphics context, egui context or audio output device. It uses the same simulation worker with empty input. Enter built-in or mod console commands on stdin (`help`, `help dev`, `netdemo codec`). Stop it with Ctrl+C, SIGTERM on Unix, or `quit` / `stop`. The executable still links desktop libraries; a smaller server-only build is separate future work.
 

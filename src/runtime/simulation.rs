@@ -11,14 +11,14 @@ use crate::{
     sandbox::SandboxConfig,
     script::{
         EngineContext, RecvOutcome, ScriptHost, dispatch,
-        ipc::{EngineMessage, ScriptMessage},
+        ipc::{EngineMessage, ScriptMessage, ScriptPacket},
         mod_data_root,
     },
     vfs::VfsHandle,
     watchdog::Watchdog,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, atomic::Ordering, mpsc},
     time::{Duration, Instant},
 };
@@ -38,8 +38,9 @@ pub struct Simulation {
     audio: AudioManager,
     clock: TickClock,
     tick_number: u64,
-    subscribers: HashSet<String>,
-    pending_ready: HashSet<String>,
+    startup_packets: Vec<(String, ScriptPacket)>,
+    scripts_initialized: bool,
+    pending_controls: Vec<RuntimeCommand>,
     ready: bool,
     watchdog: Watchdog,
     shared: Arc<Shared>,
@@ -125,8 +126,9 @@ impl Simulation {
             audio,
             clock,
             tick_number: 0,
-            subscribers: HashSet::new(),
-            pending_ready: HashSet::new(),
+            startup_packets: vec![],
+            scripts_initialized: false,
+            pending_controls: vec![],
             ready: false,
             watchdog: Watchdog::new(Duration::from_millis(500)),
             shared,
@@ -151,52 +153,23 @@ impl Simulation {
     fn controls(&mut self) {
         while let Ok(command) = self.commands.try_recv() {
             match command {
-                RuntimeCommand::ConsoleInput(input) => self.server_command(&input),
                 RuntimeCommand::Ready => {
                     if !self.ready {
                         self.ready = true;
                         self.clock.next = Instant::now() + self.clock.interval;
-                        for id in std::mem::take(&mut self.pending_ready) {
-                            self.message(
-                                id,
-                                ScriptMessage::RuntimeReady {
-                                    protocol: crate::script::HOST_PROTOCOL,
-                                },
-                            );
-                        }
                     }
                 }
-                RuntimeCommand::Ipc { mod_id, message } => {
-                    self.script_host.send(&mod_id, &message, &mut self.debug);
-                }
+                command => self.pending_controls.push(command),
             }
         }
     }
     pub fn run(mut self) -> anyhow::Result<()> {
         while !self.stopped() {
             self.controls();
-            self.network_events();
-            let messages = self.script_host.drain_messages(&mut self.debug);
-            for (id, message) in messages {
-                self.message(id, message);
-            }
-            for id in self.script_host.reap_exited() {
-                self.network.remove_mod(&id);
-                self.subscribers.remove(&id);
-                self.pending_ready.remove(&id);
-            }
-            for (mod_id, audio_id) in self.audio.poll_finished() {
-                self.script_host.send(
-                    &mod_id,
-                    &EngineMessage::AudioClose { audio_id },
-                    &mut self.debug,
-                );
-            }
             if self.ready && Instant::now() >= self.clock.next {
                 self.tick();
                 self.clock.complete(Instant::now());
             }
-            self.publish();
             let wait = if self.ready {
                 self.clock
                     .next
@@ -212,9 +185,13 @@ impl Simulation {
         self.network.shutdown();
         self.network_events();
         let messages = self.script_host.shutdown_all(0, &mut self.debug);
-        for (id, message) in messages {
-            if let ScriptMessage::Log { .. } = message {
-                self.message(id, message);
+        for (id, packet) in messages {
+            if let ScriptPacket::CommandBatch { commands, .. } = packet {
+                for message in commands {
+                    if let ScriptMessage::Log { .. } = message {
+                        self.message(id.clone(), message, &mut HashMap::new());
+                    }
+                }
             }
         }
         tracing::info!(ticks = self.tick_number, "simulation stopped");
@@ -287,22 +264,13 @@ impl Simulation {
             _ => {}
         }
     }
-    fn message(&mut self, id: String, message: ScriptMessage) {
+    fn message(
+        &mut self,
+        id: String,
+        message: ScriptMessage,
+        batch_entities: &mut HashMap<String, EntityId>,
+    ) {
         match &message {
-            ScriptMessage::Subscribe { events } => {
-                if events.iter().any(|event| event == "Tick") {
-                    self.subscribers.insert(id);
-                }
-                return;
-            }
-            ScriptMessage::RuntimeReady { protocol } if !self.ready => {
-                if *protocol != crate::script::HOST_PROTOCOL {
-                    tracing::warn!(mod_id=%id,"incompatible mod host protocol");
-                    return;
-                }
-                self.pending_ready.insert(id);
-                return;
-            }
             ScriptMessage::RegisterCommand { .. }
             | ScriptMessage::CommandResponse { .. }
             | ScriptMessage::ArgSuggestResponse { .. } => {
@@ -314,7 +282,6 @@ impl Simulation {
                 }
                 return;
             }
-            ScriptMessage::TickDone { .. } => return,
             _ => {}
         }
         let result = dispatch(
@@ -330,6 +297,7 @@ impl Simulation {
                 world: &mut self.world,
                 vfs: self.vfs.as_ref(),
                 audio: &mut self.audio,
+                batch_entities,
             },
         );
         if let Some(rate) = result.new_tick_rate
@@ -354,7 +322,54 @@ impl Simulation {
         self.changed = true;
     }
     fn tick(&mut self) {
+        self.watchdog.start_tick();
+        let batches = self.tick_commands();
+        self.finish_tick(batches);
+        self.watchdog.end_tick();
+    }
+
+    /// Gather external state, then request exactly one buffer from each initialized mod.
+    fn tick_commands(&mut self) -> Vec<(String, Vec<ScriptMessage>)> {
+        self.initialize_scripts();
         self.tick_number += 1;
+        let mut packets = std::mem::take(&mut self.startup_packets);
+        packets.extend(self.script_host.drain_messages(&mut self.debug));
+        for (id, packet) in packets {
+            match packet {
+                ScriptPacket::RuntimeReady { protocol } => {
+                    if protocol != crate::script::HOST_PROTOCOL {
+                        tracing::warn!(mod_id=%id, "incompatible mod host protocol");
+                        self.script_host.terminate(&id);
+                    }
+                }
+                ScriptPacket::RuntimeFailed { message } => tracing::error!(mod_id=%id, "{message}"),
+                ScriptPacket::CommandBatch { .. } => {
+                    tracing::warn!(mod_id=%id, "unsolicited tick batch");
+                    self.script_host.terminate(&id);
+                }
+            }
+        }
+        // Reap even if no process can accept a Tick: the receive barrier may be empty.
+        for id in self.script_host.reap_exited() {
+            self.network.remove_mod(&id);
+        }
+        for command in std::mem::take(&mut self.pending_controls) {
+            match command {
+                RuntimeCommand::ConsoleInput(input) => self.server_command(&input),
+                RuntimeCommand::Ipc { mod_id, message } => {
+                    self.script_host.send(&mod_id, &message, &mut self.debug);
+                }
+                RuntimeCommand::Ready => {}
+            }
+        }
+        self.network_events();
+        for (mod_id, audio_id) in self.audio.poll_finished() {
+            self.script_host.send(
+                &mod_id,
+                &EngineMessage::AudioClose { audio_id },
+                &mut self.debug,
+            );
+        }
         let (keys_pressed, mouse_delta) = if let Ok(mut input) = self.shared.input.lock() {
             (input.keys.clone(), std::mem::take(&mut input.mouse))
         } else {
@@ -366,32 +381,130 @@ impl Simulation {
             keys_pressed,
             mouse_delta: [mouse_delta.0, mouse_delta.1],
         };
-        let mut pending = self.subscribers.clone();
-        pending.retain(|id| self.script_host.send(id, &tick, &mut self.debug));
-        self.watchdog.start_tick();
+        // Registry iteration is dependency/load order, independent of pipe scheduling.
+        let order: Vec<String> = self
+            .registry
+            .iter()
+            .map(|loaded| loaded.manifest.meta.id.clone())
+            .filter(|id| self.script_host.is_ready(id))
+            .collect();
+        let mut pending: HashSet<String> = HashSet::new();
+        let mut batches = HashMap::new();
+        for id in &order {
+            if self.script_host.send(id, &tick, &mut self.debug) {
+                pending.insert(id.clone());
+            }
+        }
         while !pending.is_empty() && !self.stopped() {
             self.controls();
             match self
                 .script_host
                 .recv_blocking(Duration::from_millis(5), &mut self.debug)
             {
-                RecvOutcome::Message(id, ScriptMessage::TickDone { tick_number })
-                    if tick_number == self.tick_number =>
-                {
-                    pending.remove(&id);
+                RecvOutcome::Message(
+                    id,
+                    ScriptPacket::CommandBatch {
+                        tick_number,
+                        commands,
+                    },
+                ) => {
+                    if tick_number == self.tick_number && pending.remove(&id) {
+                        batches.insert(id, commands);
+                    } else {
+                        tracing::warn!(mod_id=%id, tick_number, "duplicate or mismatched tick batch");
+                        self.script_host.terminate(&id);
+                    }
                 }
-                RecvOutcome::Message(id, message) => self.message(id, message),
+                RecvOutcome::Message(id, packet) => self.startup_packets.push((id, packet)),
                 RecvOutcome::Disconnected => break,
                 RecvOutcome::Timeout => {}
             }
             for id in self.script_host.reap_exited() {
                 pending.remove(&id);
                 self.network.remove_mod(&id);
-                self.subscribers.remove(&id);
             }
         }
-        self.watchdog.end_tick();
+        order
+            .into_iter()
+            .filter_map(|id| batches.remove(&id).map(|commands| (id, commands)))
+            .collect()
+    }
+
+    fn initialize_scripts(&mut self) {
+        if self.scripts_initialized {
+            return;
+        }
+        let order: Vec<String> = self
+            .registry
+            .iter()
+            .map(|loaded| loaded.manifest.meta.id.clone())
+            .collect();
+        let mut pending: HashSet<String> = order
+            .iter()
+            .filter(|id| self.script_host.has_process(id))
+            .cloned()
+            .collect();
+        while !pending.is_empty() && !self.stopped() {
+            self.controls();
+            match self
+                .script_host
+                .recv_blocking(Duration::from_millis(5), &mut self.debug)
+            {
+                RecvOutcome::Message(id, ScriptPacket::RuntimeReady { protocol })
+                    if protocol == crate::script::HOST_PROTOCOL && pending.remove(&id) =>
+                {
+                    self.script_host.mark_ready(&id);
+                }
+                RecvOutcome::Message(id, ScriptPacket::RuntimeFailed { message }) => {
+                    tracing::error!(mod_id=%id, "{message}");
+                    self.script_host.terminate(&id);
+                    pending.remove(&id);
+                }
+                RecvOutcome::Message(id, _) => {
+                    tracing::warn!(mod_id=%id, "invalid mod startup handshake");
+                    self.script_host.terminate(&id);
+                    pending.remove(&id);
+                }
+                RecvOutcome::Disconnected => break,
+                RecvOutcome::Timeout => {}
+            }
+            for id in self.script_host.reap_exited() {
+                pending.remove(&id);
+            }
+        }
+        for id in order {
+            if self.script_host.is_ready(&id) {
+                self.script_host.send(
+                    &id,
+                    &EngineMessage::Init {
+                        mod_id: id.clone(),
+                        engine_version: env!("CARGO_PKG_VERSION").to_owned(),
+                        mode: self.mode,
+                    },
+                    &mut self.debug,
+                );
+            }
+        }
+        self.scripts_initialized = true;
+    }
+
+    /// Execute once, reserve the next phase for physics, then publish all results.
+    fn finish_tick(&mut self, batches: Vec<(String, Vec<ScriptMessage>)>) {
+        if self.stopped() {
+            return;
+        }
+        self.script_host.begin_responses();
+        for (id, commands) in batches {
+            let mut batch_entities = HashMap::new();
+            for message in commands {
+                self.message(id.clone(), message, &mut batch_entities);
+            }
+        }
+        // Physics advances here, after every mod's commands and before publication.
         self.changed = true;
+        self.publish();
+        self.script_host
+            .flush_responses(self.tick_number, &mut self.debug);
     }
     fn publish(&mut self) {
         if !self.changed {
@@ -456,7 +569,7 @@ import {Engine,Scene} from "@whatever-engine/api";
 let entity;
 Engine.setFpsCap(1);
 Engine.on("init",async()=>{
-    entity=await Scene.createEntity();
+    entity=await Scene.createEntity().get();
     entity.setComponent("core:sprite_renderer",{texture:"core://unused.png",shader:"core://unused.wgsl"});
 });
 Engine.on("tick",({tick_number})=>{

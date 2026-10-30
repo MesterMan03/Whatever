@@ -4,7 +4,7 @@ import {
   _handlers, _fileCallbacks, _modListCallbacks, _modGetCallbacks, _msgCallbacks,
   _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
   _entityParentCallbacks, _entityChildrenCallbacks,
-  _EVENT_SUBSCRIBE, _send,
+  _EVENT_SUBSCRIBE, _send, _flush,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
 import {
@@ -17,6 +17,7 @@ const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
+  | { type: "CommandResults"; tick_number: number; messages: _EngineMsg[] }
   | ({type: "NetworkEvent"} & NetworkEvent)
   | {type: "NetworkResponse"; request_id: string; result: unknown; error: string | null}
   | { type: "CommandInvoke"; request_id: string; command_path: string[]; args: JsonValue[] }
@@ -42,7 +43,18 @@ type _EngineMsg =
   | { type: "AudioClose"; audio_id: string }
   | { type: "Shutdown"; exit_code: number };
 
+const tickStates = new Map<(payload: any) => void | Promise<void>, {
+  busy: boolean; delta: number; mouse: [number, number];
+}>();
+let lastTick = 0;
+let initialized = false;
+let failed = false;
+
 function _dispatch(msg: _EngineMsg): void {
+  if (msg.type === "CommandResults") {
+    for (const result of msg.messages) _dispatch(result);
+    return;
+  }
   if (msg.type === "NetworkResponse") { handleNetworkResponse(msg); return; }
   if (msg.type === "NetworkEvent") { handleNetworkEvent(msg); return; }
   if (msg.type === "CommandInvoke") {
@@ -56,21 +68,38 @@ function _dispatch(msg: _EngineMsg): void {
   }
 
   if (msg.type === "Tick") {
-    const fail = (error: unknown): never => {
-      try { _send({type: "Log", level: "error", message: "Tick handler failed: " + String(error)}); }
-      finally { return _exit(1); }
+    lastTick = msg.tick_number;
+    const fail = (error: unknown): void => {
+      _send({type: "Log", level: "error", message: "Tick handler failed: " + String(error)});
+      failed = true;
     };
-    const promises: Promise<void>[] = [];
-    try {
+    if (initialized && !failed) {
       for (const handler of _handlers.get("tick") ?? []) {
-        const result = handler(msg);
-        if (result instanceof Promise) promises.push(result);
+        const state = tickStates.get(handler) ?? { busy: false, delta: 0, mouse: [0, 0] as [number, number] };
+        tickStates.set(handler, state);
+        state.delta += msg.delta_seconds;
+        state.mouse[0] += msg.mouse_delta[0];
+        state.mouse[1] += msg.mouse_delta[1];
+        if (state.busy) continue;
+        const payload = { ...msg, delta_seconds: state.delta, mouse_delta: [...state.mouse] };
+        state.delta = 0;
+        state.mouse = [0, 0];
+        try {
+          const result = handler(payload);
+          if (result && typeof result.then === "function") {
+            state.busy = true;
+            void Promise.resolve(result).then(
+              () => { state.busy = false; },
+              error => { state.busy = false; fail(error); },
+            );
+          }
+        } catch (error) { fail(error); break; }
       }
-    } catch (error) { fail(error); }
-    void Promise.all(promises).then(
-      () => _send({ type: "TickDone", tick_number: msg.tick_number }),
-      fail,
-    );
+    }
+    // Submission acknowledges this tick, independent of user promises. Continuations
+    // and result callbacks record into the next buffer, never the submitted one.
+    _flush(msg.tick_number);
+    if (failed) _exit(1);
     return;
   }
 
@@ -220,6 +249,7 @@ function _dispatch(msg: _EngineMsg): void {
     return;
   }
 
+  if (msg.type === "Init") initialized = true;
   // Init / Shutdown / any future broadcast-style messages.
   for (const [event, msgType] of Object.entries(_EVENT_SUBSCRIBE) as [EventName, string][]) {
     if (msg.type !== msgType) continue;
@@ -228,6 +258,7 @@ function _dispatch(msg: _EngineMsg): void {
       for (const fn_ of handlers) fn_(msg);
     }
     if (event === "exit") {
+      _flush(lastTick);
       _exit((msg as Extract<_EngineMsg, { type: "Shutdown" }>).exit_code);
     }
   }

@@ -1,4 +1,5 @@
 import type { Component, JsonValue, QueryResult } from "../types.ts";
+import { _pending, type Pending } from "../pending.ts";
 import {
   _send, nextReqId,
   _entityCallbacks, _entityListCallbacks,
@@ -406,17 +407,17 @@ const _componentHydrators: Record<string, (data: any) => any> = {
 };
 
 function _setComponentImpl<K extends keyof _ComponentSetRegistry>(entity_id: string, component_type: K, data: _ComponentSetRegistry[K]): void;
-function _setComponentImpl(entity_id: string, component_type: string, data: JsonValue): void;
+function _setComponentImpl<K extends string>(entity_id: string, component_type: K, data: K extends keyof _ComponentSetRegistry ? _ComponentSetRegistry[K] : JsonValue): void;
 function _setComponentImpl(entity_id: string, component_type: string, data: any): void {
   // Destructure to exclude `id` without mutating the caller's object.
   const { id: _id, ...rest } = data;
   _send({ type: "ComponentSet", entity_id, component_type, data: rest });
 }
 
-function _getComponentImpl<K extends keyof _ComponentRegistry>(entity_id: string, component_type: K): Promise<_ComponentRegistry[K] | null>;
-function _getComponentImpl<T extends Component = Component>(entity_id: string, component_type: string): Promise<T | null>;
-function _getComponentImpl(entity_id: string, component_type: string): Promise<any> {
-  return new Promise((resolve, reject) => {
+function _getComponentImpl<K extends keyof _ComponentRegistry>(entity_id: string, component_type: K): Pending<_ComponentRegistry[K] | null>;
+function _getComponentImpl<T extends Component = Component>(entity_id: string, component_type: string): Pending<T | null>;
+function _getComponentImpl(entity_id: string, component_type: string): Pending<any> {
+  return _pending(new Promise((resolve, reject) => {
     const request_id = nextReqId();
     _componentGetCallbacks.set(request_id, { resolve, reject });
     _send({ type: "ComponentGet", request_id, entity_id, component_type });
@@ -424,53 +425,52 @@ function _getComponentImpl(entity_id: string, component_type: string): Promise<a
     if (data === null) return null;
     const hydrator = _componentHydrators[component_type];
     return hydrator ? hydrator(data) : data;
-  });
+  }));
 }
 
 /** A live entity in the scene. Wraps an entity ID and provides component access. */
 export class Entity {
-  constructor(public readonly id: string) {}
+  constructor(protected _entityId: string) {}
+  get id(): string { return this._entityId; }
 
   /** Destroy this entity and all its components. Fire-and-forget. */
   destroy(): void {
-    _send({ type: "EntityDestroy", entity_id: this.id });
+    _send({ type: "EntityDestroy", entity_id: this._entityId });
   }
 
   /** Set a component on this entity. Fire-and-forget. */
-  setComponent<K extends keyof _ComponentSetRegistry>(component_type: K, data: _ComponentSetRegistry[K]): void;
-  setComponent(component: Component): void;
-  setComponent(component_type: string, data: JsonValue): void;
-  setComponent(component_type_or_component: string | Component, data?: any): void {
+  setComponent<K extends keyof _ComponentSetRegistry>(component_type: K, data: _ComponentSetRegistry[K]): this;
+  setComponent(component: Component): this;
+  setComponent<K extends string>(component_type: K, data: K extends keyof _ComponentSetRegistry ? _ComponentSetRegistry[K] : JsonValue): this;
+  setComponent(component_type_or_component: string | Component, data?: any): this {
     if (typeof component_type_or_component === "object") {
-      _setComponentImpl(this.id, component_type_or_component.id, component_type_or_component as any);
+      _setComponentImpl(this._entityId, component_type_or_component.id, component_type_or_component as any);
     } else {
-      _setComponentImpl(this.id, component_type_or_component, data);
+      _setComponentImpl(this._entityId, component_type_or_component, data);
     }
+    return this;
   }
 
   /** Remove a component from this entity. Fire-and-forget. */
-  removeComponent(component_type: string): void {
-    _send({ type: "ComponentRemove", entity_id: this.id, component_type });
+  removeComponent(component_type: string): this {
+    _send({ type: "ComponentRemove", entity_id: this._entityId, component_type });
+    return this;
   }
 
   /** Get a component's data. Returns `null` if the component is not set. */
-  getComponent<K extends keyof _ComponentRegistry>(component_type: K): Promise<_ComponentRegistry[K] | null>;
-  getComponent<T extends Component = Component>(component_type: string): Promise<T | null>;
-  getComponent(component_type: string): Promise<any> {
-    return _getComponentImpl(this.id, component_type);
+  getComponent<K extends keyof _ComponentRegistry>(component_type: K): Pending<_ComponentRegistry[K] | null>;
+  getComponent<T extends Component = Component>(component_type: string): Pending<T | null>;
+  getComponent(component_type: string): Pending<any> {
+    return _getComponentImpl(this._entityId, component_type);
   }
 
   /**
    * Convenience: update the `position` field of this entity's `core:transform`
    * while preserving existing rotation and scale.
    */
-  async move(position: [number, number, number]): Promise<void> {
-    const existing = await this.getComponent("core:transform");
-    this.setComponent("core:transform", {
-      position,
-      rotation: existing?.rotation ?? [0, 0, 0, 1],
-      scale: existing?.scale ?? [1, 1, 1],
-    });
+  move(position: [number, number, number]): this {
+    _send({ type: "EntityMove", entity_id: this._entityId, position });
+    return this;
   }
 
   /**
@@ -481,45 +481,65 @@ export class Entity {
    * parent's world-space transform. If the entity has no parent its local
    * transform equals its world-space transform.
    */
-  setParent(parent: Entity | string | null): void {
-    const parent_id = parent === null ? null : (typeof parent === "string" ? parent : parent.id);
-    _send({ type: "EntitySetParent", entity_id: this.id, parent_id });
+  setParent(parent: Entity | string | null): this {
+    const parent_id = parent === null ? null : (typeof parent === "string" ? parent : parent._entityId);
+    _send({ type: "EntitySetParent", entity_id: this._entityId, parent_id });
+    return this;
   }
 
   /** Return the parent `Entity`, or `null` if this entity has no parent. */
-  getParent(): Promise<Entity | null> {
-    return new Promise((resolve, reject) => {
+  getParent(): Pending<Entity | null> {
+    return _pending(new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _entityParentCallbacks.set(request_id, {
         resolve: (id) => resolve(id !== null ? new Entity(id) : null),
         reject,
       });
-      _send({ type: "EntityGetParent", request_id, entity_id: this.id });
-    });
+      _send({ type: "EntityGetParent", request_id, entity_id: this._entityId });
+    }));
   }
 
   /** Return all direct children of this entity. */
-  getChildren(): Promise<Entity[]> {
-    return new Promise((resolve, reject) => {
+  getChildren(): Pending<Entity[]> {
+    return _pending(new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _entityChildrenCallbacks.set(request_id, {
         resolve: (ids) => resolve(ids.map((id) => new Entity(id))),
         reject,
       });
-      _send({ type: "EntityGetChildren", request_id, entity_id: this.id });
-    });
+      _send({ type: "EntityGetChildren", request_id, entity_id: this._entityId });
+    }));
   }
+}
+
+/** An entity reference usable immediately in recorded commands, before its ID exists. */
+export class PendingEntity extends Entity {
+  private readonly result: Pending<Entity>;
+
+  constructor() {
+    const request_id = nextReqId();
+    super("pending:" + request_id);
+    this.result = _pending(new Promise((resolve, reject) => {
+      _entityCallbacks.set(request_id, {
+        resolve: id => { this._entityId = id; resolve(new Entity(id)); }, reject,
+      });
+      _send({ type: "EntityCreate", request_id });
+    }));
+  }
+
+  override get id(): string {
+    if (this._entityId.startsWith("pending:")) throw new Error("Entity ID is pending; await get() first");
+    return this._entityId;
+  }
+
+  get(): Promise<Entity> { return this.result.get(); }
 }
 
 /** Entity and component management. */
 export const Scene = {
   /** Create a new entity and return it. */
-  createEntity(): Promise<Entity> {
-    return new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _entityCallbacks.set(request_id, { resolve: (id) => resolve(new Entity(id)), reject });
-      _send({ type: "EntityCreate", request_id });
-    });
+  createEntity(): PendingEntity {
+    return new PendingEntity();
   },
 
   /** Destroy an entity and all its components. Fire-and-forget. */
@@ -528,12 +548,12 @@ export const Scene = {
   },
 
   /** Return all living entities. */
-  listEntities(): Promise<Entity[]> {
-    return new Promise((resolve, reject) => {
+  listEntities(): Pending<Entity[]> {
+    return _pending(new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _entityListCallbacks.set(request_id, { resolve: (ids) => resolve(ids.map((id) => new Entity(id))), reject });
       _send({ type: "EntityListRequest", request_id });
-    });
+    }));
   },
 
   /** Set a component on an entity by ID. Fire-and-forget. */
@@ -548,8 +568,8 @@ export const Scene = {
   getComponent: _getComponentImpl,
 
   /** Query all entities that have every listed component type. */
-  query(component_types: string[]): Promise<QueryResult<Entity>[]> {
-    return new Promise((resolve, reject) => {
+  query(component_types: string[]): Pending<QueryResult<Entity>[]> {
+    return _pending(new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _componentQueryCallbacks.set(request_id, {
         resolve: (results) => resolve(results.map((r) => ({
@@ -564,81 +584,73 @@ export const Scene = {
         reject,
       });
       _send({ type: "ComponentQuery", request_id, component_types });
-    });
+    }));
   },
 
   /**
    * Convenience: create an entity and attach `core:transform` + `core:sprite_renderer`.
    * The sprite becomes visible as soon as both components are set.
    */
-  async spawnSprite(
+  spawnSprite(
     texture: string,
     shader: string,
     position: [number, number, number],
     scale: [number, number, number] = [1, 1, 1],
-  ): Promise<Entity> {
-    const entity = await Scene.createEntity();
-    entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale });
-    entity.setComponent("core:sprite_renderer", { texture, shader });
-    return entity;
+  ): PendingEntity {
+    return Scene.createEntity()
+      .setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale })
+      .setComponent("core:sprite_renderer", { texture, shader });
   },
 
   /**
    * Convenience: create an entity and attach `core:transform` + `core:text_renderer`.
    * The text becomes visible as soon as both components are set.
    */
-  async spawnText(
+  spawnText(
     text: string,
     position: [number, number, number],
     options: { shader: string; font: string; font_size?: number; color?: [number, number, number, number]; },
-  ): Promise<Entity> {
-    const entity = await Scene.createEntity();
-    entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
-    entity.setComponent("core:text_renderer", {
-      text,
-      shader: options.shader,
-      font: options.font,
-      font_size: options.font_size ?? 24,
-      color: options.color ?? [1, 1, 1, 1]
-    });
-    return entity;
+  ): PendingEntity {
+    return Scene.createEntity()
+      .setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] })
+      .setComponent("core:text_renderer", {
+        text,
+        shader: options.shader,
+        font: options.font,
+        font_size: options.font_size ?? 24,
+        color: options.color ?? [1, 1, 1, 1]
+      });
   },
 
   /**
    * Convenience: create an entity and attach `core:transform` + `core:mesh_renderer`.
    * The mesh becomes visible as soon as both components are set.
    */
-  async spawnMesh(
+  spawnMesh(
     mesh: string,
     shader: string,
     position: [number, number, number],
     options: { texture?: string | null; scale?: [number, number, number] } = {},
-  ): Promise<Entity> {
-    const entity = await Scene.createEntity();
-    entity.setComponent("core:transform", {
-      position,
-      rotation: [0, 0, 0, 1],
-      scale: options.scale ?? [1, 1, 1],
-    });
-    entity.setComponent("core:mesh_renderer", {
-      mesh,
-      shader,
-      texture: options.texture ?? null,
-    });
-    return entity;
+  ): PendingEntity {
+    return Scene.createEntity()
+      .setComponent("core:transform", {
+        position,
+        rotation: [0, 0, 0, 1],
+        scale: options.scale ?? [1, 1, 1],
+      })
+      .setComponent("core:mesh_renderer", {
+        mesh,
+        shader,
+        texture: options.texture ?? null,
+      });
   },
 
   /**
    * Convenience: move an entity by updating the `position` field of its `core:transform`
    * while preserving existing rotation and scale.
    */
-  async moveEntity(entity_id: string, position: [number, number, number]): Promise<void> {
-    const existing = await Scene.getComponent(entity_id, "core:transform");
-    Scene.setComponent(entity_id, "core:transform", {
-      position,
-      rotation: existing?.rotation ?? [0, 0, 0, 1],
-      scale: existing?.scale ?? [1, 1, 1],
-    });
+  moveEntity(entity_id: string, position: [number, number, number]): void {
+    _send({ type: "EntityMove", entity_id, position });
   },
 
   /**
@@ -650,32 +662,32 @@ export const Scene = {
   },
 
   /** Return the parent entity ID, or `null` if the entity has no parent. */
-  getParent(entity_id: string): Promise<string | null> {
-    return new Promise((resolve, reject) => {
+  getParent(entity_id: string): Pending<string | null> {
+    return _pending(new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _entityParentCallbacks.set(request_id, { resolve, reject });
       _send({ type: "EntityGetParent", request_id, entity_id });
-    });
+    }));
   },
 
   /** Return the IDs of all direct children of the given entity. */
-  getChildren(entity_id: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
+  getChildren(entity_id: string): Pending<string[]> {
+    return _pending(new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _entityChildrenCallbacks.set(request_id, { resolve, reject });
       _send({ type: "EntityGetChildren", request_id, entity_id });
-    });
+    }));
   },
 
   /**
    * Convenience: create an entity and attach `core:ambient_light`.
    * Multiple ambient lights are additive.
    */
-  async addAmbientLight(
+  addAmbientLight(
     color: [number, number, number] = [1, 1, 1],
     intensity: number = 0.1,
-  ): Promise<Entity> {
-    const entity = await Scene.createEntity();
+  ): PendingEntity {
+    const entity = Scene.createEntity();
     entity.setComponent("core:ambient_light", { color, intensity });
     return entity;
   },
@@ -684,12 +696,12 @@ export const Scene = {
    * Convenience: create an entity and attach `core:directional_light`.
    * @param direction Normalised direction the light travels towards (world space).
    */
-  async addDirectionalLight(
+  addDirectionalLight(
     direction: [number, number, number],
     color: [number, number, number] = [1, 1, 1],
     intensity: number = 1.0,
-  ): Promise<Entity> {
-    const entity = await Scene.createEntity();
+  ): PendingEntity {
+    const entity = Scene.createEntity();
     entity.setComponent("core:directional_light", { direction, color, intensity });
     return entity;
   },
@@ -698,13 +710,13 @@ export const Scene = {
    * Convenience: create an entity with `core:transform` + `core:point_light`.
    * The light is emitted from `position` in all directions.
    */
-  async addPointLight(
+  addPointLight(
     position: [number, number, number],
     color: [number, number, number] = [1, 1, 1],
     intensity: number = 1.0,
     range: number = 10,
-  ): Promise<Entity> {
-    const entity = await Scene.createEntity();
+  ): PendingEntity {
+    const entity = Scene.createEntity();
     entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
     entity.setComponent("core:point_light", { color, intensity, range });
     return entity;

@@ -1,5 +1,53 @@
+diff --git a/.gitattributes b/.gitattributes
+index 810f71b3e..3dce623ba 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -33,6 +33,8 @@ src/lint/linter/deprecated.txt text eol=lf
+ src/lint/linter/schema/schemas.txt text eol=lf
+ src/lint/oxlint_help.txt text eol=lf
+ src/sema/messages.txt text eol=lf
++# The builtin-table generators parse these newline-sensitive manifests directly.
++src/codegen/builtins/data/*.txt text eol=lf
+ 
+ *.lockb binary diff=lockb
+ 
+diff --git a/scripts/build/aot.ts b/scripts/build/aot.ts
+index 086fdcfc0..3fd346319 100644
+--- a/scripts/build/aot.ts
++++ b/scripts/build/aot.ts
+@@ -1,5 +1,5 @@
+ import { readdirSync } from "node:fs";
+-import { resolve } from "node:path";
++import { relative, resolve } from "node:path";
+ import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
+ import type { CodegenFields, Config } from "./config.ts";
+ import { assert } from "./error.ts";
+@@ -285,7 +285,8 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
+         script,
+         `--codegen-path=${cfg.codegenDir}`,
+         `--target=${builtinTableTarget(cfg)}`,
+-        `--sources=${sources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
++        // The generator runs in cfg.cwd; avoid repeating that root past cmd.exe's limit.
++        `--sources=${sources.bindgen.map(src => `${crateOf(src)}=${relative(cfg.cwd, src)}`).join(",")}`,
+         `--engine-directory=${engine.directory}`,
+         ...(engine.javaScriptCore === undefined
+           ? [`--prebuilt-generated=${engine.builtinsGeneratedDirectory}`]
+diff --git a/scripts/build/codegen.ts b/scripts/build/codegen.ts
+index 24120d6ee..0a7015c38 100644
+--- a/scripts/build/codegen.ts
++++ b/scripts/build/codegen.ts
+@@ -973,7 +973,8 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
+       args: shJoin(cfg, [
+         script,
+         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
+-        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
++        // The generator runs in cfg.cwd; keep the source list below cmd.exe's limit.
++        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${relative(cfg.cwd, src)}`).join(",")}`,
+         typesOnlyFlag(cfg, sources),
+         `--codegen-path=${cfg.codegenDir}`,
+         `--types-path=${cfg.typesDir}`,
 diff --git a/scripts/build/download.ts b/scripts/build/download.ts
-index 42d81846..39c1c27b 100644
+index 42d818467..39c1c27b9 100644
 --- a/scripts/build/download.ts
 +++ b/scripts/build/download.ts
 @@ -261,6 +261,11 @@ export async function downloadWithRetry(
@@ -15,7 +63,7 @@ index 42d81846..39c1c27b 100644
  
    const result = spawnSync(tarExe, args, {
 diff --git a/src/jsc/bindings/ImportMetaObject.cpp b/src/jsc/bindings/ImportMetaObject.cpp
-index cb4be748..fc77e026 100644
+index c56527dd4..93bddd595 100644
 --- a/src/jsc/bindings/ImportMetaObject.cpp
 +++ b/src/jsc/bindings/ImportMetaObject.cpp
 @@ -3,6 +3,7 @@
@@ -26,7 +74,7 @@ index cb4be748..fc77e026 100644
  #include "ZigGlobalObject.h"
  #include "ExtendedDOMClientIsoSubspaces.h"
  #include "ExtendedDOMIsoSubspaces.h"
-@@ -213,6 +214,28 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
+@@ -235,6 +236,28 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
      JSValue parentModule = callFrame->argument(5);
      JSValue resolveFilenameOptions = callFrame->argument(6);
  
@@ -55,7 +103,7 @@ index cb4be748..fc77e026 100644
      // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
      if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
          Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
-@@ -363,6 +386,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
+@@ -403,6 +426,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
      // 1. Set specifier to ? ToString(specifier).
      auto specifier = specifierValue.toWTFString(globalObject);
      RETURN_IF_EXCEPTION(scope, {});
@@ -65,7 +113,7 @@ index cb4be748..fc77e026 100644
      // Node.js allows a second argument for parent
      JSValue from = {};
 diff --git a/src/jsc/bindings/JSCommonJSModule.cpp b/src/jsc/bindings/JSCommonJSModule.cpp
-index aed824b8..446d331a 100644
+index f0d7d5172..e8b5c176d 100644
 --- a/src/jsc/bindings/JSCommonJSModule.cpp
 +++ b/src/jsc/bindings/JSCommonJSModule.cpp
 @@ -37,6 +37,7 @@
@@ -75,8 +123,8 @@ index aed824b8..446d331a 100644
 +#include "WhateverModulePolicy.h"
  #include "JavaScriptCore/SourceCode.h"
  #include "headers-handwritten.h"
- #include "ZigGlobalObject.h"
-@@ -584,6 +585,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
+ #include "Path.h"
+@@ -632,6 +633,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
  
  JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
  {
@@ -86,7 +134,7 @@ index aed824b8..446d331a 100644
      auto scope = DECLARE_THROW_SCOPE(vm);
  
 diff --git a/src/jsc/bindings/ModuleLoader.cpp b/src/jsc/bindings/ModuleLoader.cpp
-index 7b7335b0..c935678e 100644
+index 8d72a4a79..42e3d3866 100644
 --- a/src/jsc/bindings/ModuleLoader.cpp
 +++ b/src/jsc/bindings/ModuleLoader.cpp
 @@ -1,4 +1,5 @@
@@ -95,7 +143,7 @@ index 7b7335b0..c935678e 100644
  
  #include "headers-handwritten.h"
  #include "JavaScriptCore/JSGlobalObject.h"
-@@ -536,6 +537,8 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
+@@ -554,6 +555,8 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
      ErrorableResolvedSource* res)
  {
      using Kind = BuiltinModule::Kind;
@@ -106,7 +154,7 @@ index 7b7335b0..c935678e 100644
      auto scope = DECLARE_THROW_SCOPE(vm);
 diff --git a/src/jsc/bindings/WhateverModulePolicy.h b/src/jsc/bindings/WhateverModulePolicy.h
 new file mode 100644
-index 00000000..e2604a7f
+index 000000000..e2604a7ff
 --- /dev/null
 +++ b/src/jsc/bindings/WhateverModulePolicy.h
 @@ -0,0 +1,34 @@
@@ -146,7 +194,7 @@ index 00000000..e2604a7f
 +} // namespace Bun
 \ No newline at end of file
 diff --git a/src/jsc/bindings/ZigGlobalObject.cpp b/src/jsc/bindings/ZigGlobalObject.cpp
-index 7f4ae0c3..dedaa13a 100644
+index 68e9dae42..56f60ca88 100644
 --- a/src/jsc/bindings/ZigGlobalObject.cpp
 +++ b/src/jsc/bindings/ZigGlobalObject.cpp
 @@ -1,6 +1,7 @@
@@ -157,10 +205,10 @@ index 7f4ae0c3..dedaa13a 100644
  #include "CodeGenerationFromStrings.h"
  #include "BunModuleRegistry.h"
  #include "BuiltinModuleKeys.h"
-@@ -2163,6 +2164,63 @@ void initLazyClassStructures(GlobalObject* globalObject)
- 
- } // namespace
- 
+@@ -2413,6 +2414,62 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
+     return JSValue::encode(debugIDs);
+ }
+ #endif
 +static bool whateverGlobalAllowed(const Identifier& name)
 +{
 +    static constexpr ASCIILiteral allowed[] = {
@@ -217,11 +265,10 @@ index 7f4ae0c3..dedaa13a 100644
 +    }
 +    return JSValue::encode(jsNumber(1));
 +}
-+
+ 
  void GlobalObject::finishCreation(VM& vm)
  {
-     Base::finishCreation(vm);
-@@ -2607,7 +2665,9 @@ void GlobalObject::finishCreation(VM& vm)
+@@ -2881,7 +2938,9 @@ void GlobalObject::finishCreation(VM& vm)
               init.set(obj);
           } },
          { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
@@ -232,7 +279,7 @@ index 7f4ae0c3..dedaa13a 100644
           } },
          { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
               init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-@@ -3623,7 +3683,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+@@ -3940,7 +3999,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
      if (key.isString()) {
          auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
          RETURN_IF_EXCEPTION(scope, {});
@@ -241,7 +288,7 @@ index 7f4ae0c3..dedaa13a 100644
              Latin1CString narrowed;
              std::span<const Latin1Character> chars;
              if (moduleName->is8Bit())
-@@ -3651,6 +3711,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+@@ -3968,6 +4027,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
          keyString = key.toWTFString(globalObject);
          RETURN_IF_EXCEPTION(scope, {});
      }
@@ -250,7 +297,7 @@ index 7f4ae0c3..dedaa13a 100644
      WTF::String referrerString;
      if (referrer && referrer.isString()) {
          referrerString = referrer.toWTFString(globalObject);
-@@ -3677,6 +3739,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+@@ -3997,6 +4058,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
      }
      auto resolved = res.result.value.transferToWTFString();
      auto query = queryZ.transferToWTFString();
@@ -259,7 +306,7 @@ index 7f4ae0c3..dedaa13a 100644
  
      if (!query.isEmpty()) {
          return Identifier::fromString(vm, makeString(resolved, query));
-@@ -3688,7 +3752,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
+@@ -4008,7 +4071,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
  {
      // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
      auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
@@ -268,7 +315,7 @@ index 7f4ae0c3..dedaa13a 100644
          auto* string = uncheckedDowncast<JSString>(key);
          if (!string->isRope()) {
              auto view = string->tryGetValue();
-@@ -3804,6 +3868,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
+@@ -4139,6 +4202,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
      if (scope.exception()) [[unlikely]]
          return rejectedInternalPromise(globalObject, scope.exception()->value());
  
@@ -278,7 +325,7 @@ index 7f4ae0c3..dedaa13a 100644
      if (moduleKey.endsWith(".node"_s)) {
          return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
      }
-@@ -4245,7 +4312,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
+@@ -4593,7 +4659,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
      auto scope = DECLARE_THROW_SCOPE(vm);
  
      bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
@@ -288,21 +335,21 @@ index 7f4ae0c3..dedaa13a 100644
  
      JSString* keyJS = key.toString(globalObject);
 diff --git a/src/jsc/lib.rs b/src/jsc/lib.rs
-index fe0994cf..77999d8d 100644
+index 01545c172..1bc56d13b 100644
 --- a/src/jsc/lib.rs
 +++ b/src/jsc/lib.rs
-@@ -45,6 +45,8 @@ pub use bun_jsc_macros::{JsAffine, JsClass, codegen_cached_accessors, host_call,
+@@ -42,6 +42,8 @@ pub use bun_jsc_macros::{JsAffine, host_call};
  // .rs file.
  // ──────────────────────────────────────────────────────────────────────────
  pub mod error;
 +pub mod whatever;
 +mod whatever_policy;
  pub use error::{Error as CrateError, Result as CrateResult};
- #[path = "CommonAbortReason.rs"]
- pub mod common_abort_reason;
+ #[path = "CloneSerializer.rs"]
+ pub(crate) mod clone_serializer;
 diff --git a/src/jsc/whatever.rs b/src/jsc/whatever.rs
 new file mode 100644
-index 00000000..69aa670b
+index 000000000..69aa670bf
 --- /dev/null
 +++ b/src/jsc/whatever.rs
 @@ -0,0 +1,54 @@
@@ -362,7 +409,7 @@ index 00000000..69aa670b
 +}
 diff --git a/src/jsc/whatever_policy.rs b/src/jsc/whatever_policy.rs
 new file mode 100644
-index 00000000..a26e2b25
+index 000000000..a26e2b255
 --- /dev/null
 +++ b/src/jsc/whatever_policy.rs
 @@ -0,0 +1,175 @@
@@ -542,10 +589,10 @@ index 00000000..a26e2b25
 +    }
 +}
 diff --git a/src/runtime/jsc_hooks.rs b/src/runtime/jsc_hooks.rs
-index 920f9c46..65383f7d 100644
+index e4605260e..2cb1d3854 100644
 --- a/src/runtime/jsc_hooks.rs
 +++ b/src/runtime/jsc_hooks.rs
-@@ -2220,6 +2220,13 @@ fn transpile_source_code_of_any_provenance(
+@@ -2229,6 +2229,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
      let (loader, module_type): (Loader, ModuleType) =
          unsafe { ((*extra).loader, (*extra).module_type) };
  
@@ -559,26 +606,27 @@ index 920f9c46..65383f7d 100644
      let disable_transpilying = args.flags.disable_transpiling();
      let specifier = args.specifier;
      let referrer = args.referrer;
-@@ -2655,9 +2662,10 @@ fn transpile_source_code_of_any_provenance(
+@@ -2602,9 +2609,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                          (*jsc_vm).transpiler.options.rewrite_jest_for_tests
                      },
                      keep_json_and_toml_as_one_statement: true,
 -                    allow_bytecode_cache: true,
 +                    allow_bytecode_cache: !bun_jsc::whatever::is_locked(),
                      set_breakpoint_on_first_line,
--                    runtime_transpiler_cache: if !disable_transpilying
-+                    runtime_transpiler_cache: if !bun_jsc::whatever::is_locked()
-+                        && !disable_transpilying
+                     runtime_transpiler_cache: if !DATA_ONLY
++                        && !bun_jsc::whatever::is_locked()
+                         && !disable_transpilying
                          && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                      {
-                         Some(&mut cache)
-@@ -2715,6 +2723,27 @@ fn transpile_source_code_of_any_provenance(
+@@ -2679,6 +2687,29 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                      return Err(crate::Error::ParseError);
                  };
  
 +                if bun_jsc::whatever::is_locked() {
 +                    for record in parse_result.ast.import_records.as_slice() {
-+                        if record.kind != ImportKind::Stmt || record.tag.is_internal() {
++                        if record.kind != ImportKind::Stmt
++                            || record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
++                        {
 +                            continue;
 +                        }
 +                        let name = if record.original_path.is_empty() {
@@ -600,7 +648,7 @@ index 920f9c46..65383f7d 100644
                  // `.wasm` discovered post-parse: recurse with
                  // the parsed source as virtual.
                  if parse_result.loader == L::Wasm {
-@@ -3012,6 +3041,16 @@ fn transpile_source_code_of_any_provenance(
+@@ -3003,6 +3034,16 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                      )?;
                  }
  
@@ -617,7 +665,7 @@ index 920f9c46..65383f7d 100644
                  // Pending imports → AsyncModule queue.
                  if parse_result.pending_imports.len() > 0 {
                      // SAFETY: per fn contract — `extra` is live for the call.
-@@ -4316,6 +4355,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
+@@ -4519,6 +4560,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
              )
          };
          if !had_blob
@@ -626,10 +674,10 @@ index 920f9c46..65383f7d 100644
              && (has_loaded || is_in_preload)
              && concurrent_loader.is_java_script_like()
 diff --git a/test/js/bun/resolve/resolve.test.ts b/test/js/bun/resolve/resolve.test.ts
-index 2172327b..d5b3f03b 100644
+index bee8739d8..dccda6e4a 100644
 --- a/test/js/bun/resolve/resolve.test.ts
 +++ b/test/js/bun/resolve/resolve.test.ts
-@@ -2249,3 +2249,42 @@ test.concurrent.each(["import", "require"])(
+@@ -2255,3 +2255,42 @@ test.concurrent.each(["import", "require"])(
      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
    },
  );

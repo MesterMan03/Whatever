@@ -11,10 +11,12 @@ import { sandboxCommand } from "./sandbox.ts";
 
 let traceTicks = false;
 let tickDelay = 0;
-Engine.on("tick", async ({ tick_number, delta_seconds }) => {
+Engine.on("tick", ({ tick_number, delta_seconds }) => {
   if (traceTicks)
     Engine.log("info", `Got tick event for #${tick_number}, delta ${delta_seconds} seconds`);
-  if (tickDelay) await new Promise<void>((resolve) => setTimeout(resolve, tickDelay));
+  // This diagnostic deliberately blocks submission. Async waits no longer stall ticks.
+  const deadline = Date.now() + tickDelay;
+  while (Date.now() < deadline) {}
 });
 Message.registerMessageHandler(({ message }) => ({ suite: "debug", received: message }));
 
@@ -94,9 +96,9 @@ export const spriteCommand: CommandSpec = {
       "core://shaders/sprite.wgsl",
       [0, 0, 0],
       [1, 1, 3],
-    );
+    ).get();
     for (const previous of previousSprites) {
-      const transform = await previous.getComponent("core:transform");
+      const transform = await previous.getComponent("core:transform").get();
       if (transform) {
         transform.addX(1.5).rotateY(15).rotateZ(2);
         previous.setComponent(transform);

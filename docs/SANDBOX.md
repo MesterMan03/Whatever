@@ -2,7 +2,9 @@
 
 Each scripted mod runs in an engine-owned `whatever-mod-host` subprocess. The executable contains the pinned Whatever Bun fork, the trusted bootstrap, and `@whatever-engine/api`. The engine never searches PATH for Bun and never falls back to stock Bun.
 
-The fork is pinned to Bun v1.4.4 at `38afee6c84fcf48c0edb2466aa4b27d287a59c30` in `vendor/bun`. Local changes are also stored in `vendor/patches/bun-whatever.patch` so a fresh upstream submodule checkout can reproduce the fork without an unpublished Git commit. Run `bun run prepare:bun` to apply that patch. The preparation command refuses a different base revision or conflicting edits.
+The submodule tracks the `codex/whatever-runtime` branch of [Whatever-mod-runtime](https://github.com/MesterMan03/Whatever-mod-runtime), with the upstream Bun repository retained locally as `upstream`. It is pinned to `80772ef5fb64e0fdc242881782ec625a21cf15e4` (Bun v1.4.4) in `vendor/bun`, including the committed native policy and Windows build adjustments. `vendor/patches/bun-whatever.patch` exports those changes relative to `f7607a3d350b9c9488d41eab6a18d6cac74794e6` for review and reproduction. Run `bun run prepare:bun` to initialize and verify the pinned fork. Preparation refuses a different revision or conflicting policy edits.
+
+The patch also keeps code-generation source arguments relative to the checkout to fit Windows command limits and pins builtin-table manifests to LF endings. Preparation normalizes existing CRLF copies of those manifests without changing their data.
 
 ## Imports
 
@@ -33,7 +35,7 @@ The bootstrap captures native stdin/stdout pipe handles for its private IPC tran
 3. The host runs with a cleared environment, retaining only Windows system-directory and temporary-directory variables when present, plus a fixed `BUN_DEBUG_QUIET_LOGS=1` to keep native debug diagnostics off IPC stdout. It receives no inherited PATH, Bun/Node options or application secrets.
 4. Compiled hosts disable automatic dotenv, bunfig, package.json and tsconfig loading. Runtime package installation, macros and native addons are disabled.
 5. The bootstrap registers the embedded API, installs its console, activates the native policy, and loads the mod.
-6. After evaluation, it sends `RuntimeReady`. The engine sends `Init` once the runtime is ready and this handshake has arrived; client mode also waits for its window. Host protocol 4 provides `client` or `server` before top-level mod evaluation and includes it in `Init`.
+6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 5 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
 
 A missing or incompatible host is an engine startup error. A host built with stock Bun refuses to load any mod.
 

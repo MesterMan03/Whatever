@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.network.json",
+  "files": [
+    "runtime-types.ts",
+    "../../mods/debug/scripts/client.ts",
+    "../../mods/debug/scripts/server.ts"
+  ]
+}

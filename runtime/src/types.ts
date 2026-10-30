@@ -36,7 +36,8 @@ export type EventPayloads = {
   /** Fired when the game is shutting down. The process exits after all handlers return. */
   exit: { exit_code: number };
   /**
-   * Fired every game tick. All async handlers are awaited before the engine advances.
+   * Fired on game ticks. A still-running async handler is not called again.
+   * Commands flush once per tick, independently of async handler completion.
    * Subscribe by calling `Engine.on("tick", handler)`.
    */
   tick: { tick_number: number; delta_seconds: number; keys_pressed: string[]; mouse_delta: [number, number] };

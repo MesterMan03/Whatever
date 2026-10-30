@@ -1,4 +1,4 @@
-use super::ipc::{EngineMessage, ScriptMessage};
+use super::ipc::{EngineMessage, ScriptPacket};
 use super::runtime::{find_host, host_command};
 use crate::debug::DebugLogger;
 use crate::sandbox::{SandboxConfig, SandboxGuard};
@@ -29,7 +29,7 @@ impl ScriptProcess {
 /// Outcome of a blocking receive on the shared script channel.
 pub enum RecvOutcome {
     /// A valid message was decoded from the channel.
-    Message(String, ScriptMessage),
+    Message(String, ScriptPacket),
     /// The receive timed out; try again later.
     Timeout,
     /// All stdout reader threads have exited — no more messages will ever
@@ -50,6 +50,7 @@ pub struct ScriptHost {
     pending_replies: HashMap<String, PendingReply>,
     shared_rx: mpsc::Receiver<(String, String)>,
     shared_tx: mpsc::SyncSender<(String, String)>,
+    responses: Option<Vec<(String, EngineMessage)>>,
 }
 
 impl ScriptHost {
@@ -61,6 +62,7 @@ impl ScriptHost {
             pending_replies: HashMap::new(),
             shared_rx,
             shared_tx,
+            responses: None,
         })
     }
 
@@ -193,6 +195,13 @@ impl ScriptHost {
     /// Send a message to a script process.  Returns `true` if the write
     /// succeeded, `false` if the process is dead or the pipe is broken.
     pub fn send(&mut self, mod_id: &str, msg: &EngineMessage, debug: &mut DebugLogger) -> bool {
+        if let Some(responses) = self.responses.as_mut() {
+            if !self.processes.contains_key(mod_id) {
+                return false;
+            }
+            responses.push((mod_id.to_owned(), msg.clone()));
+            return true;
+        }
         match self.processes.get_mut(mod_id) {
             None => false,
             Some(proc) => match proc.send(msg, debug) {
@@ -207,16 +216,30 @@ impl ScriptHost {
         }
     }
 
-    pub fn drain_messages(&mut self, debug: &mut DebugLogger) -> Vec<(String, ScriptMessage)> {
-        let mut out = Vec::new();
-        while let Ok((mod_id, line)) = self.shared_rx.try_recv() {
-            debug.ipc(&mod_id, "→", &line);
-            match serde_json::from_str::<ScriptMessage>(&line) {
-                Ok(msg) => out.push((mod_id, msg)),
-                Err(e) => tracing::warn!(mod_id, "bad IPC message: {e}: {line}"),
+    /// Bound collection so a continuously writing process cannot prevent a tick.
+    pub fn drain_messages(&mut self, debug: &mut DebugLogger) -> Vec<(String, ScriptPacket)> {
+        let lines: Vec<_> = self.shared_rx.try_iter().take(4096).collect();
+        lines
+            .into_iter()
+            .filter_map(|(id, line)| self.decode_packet(id, line, debug))
+            .collect()
+    }
+
+    fn decode_packet(
+        &mut self,
+        mod_id: String,
+        line: String,
+        debug: &mut DebugLogger,
+    ) -> Option<(String, ScriptPacket)> {
+        debug.ipc(&mod_id, "→", &line);
+        match serde_json::from_str::<ScriptPacket>(&line) {
+            Ok(packet) => Some((mod_id, packet)),
+            Err(error) => {
+                tracing::warn!(mod_id, "bad IPC packet: {error}");
+                self.terminate(&mod_id);
+                None
             }
         }
-        out
     }
 
     /// Blocks until a message arrives or `timeout` elapses.
@@ -224,16 +247,11 @@ impl ScriptHost {
     /// abandoning the loop (no further messages will ever arrive).
     pub fn recv_blocking(&mut self, timeout: Duration, debug: &mut DebugLogger) -> RecvOutcome {
         match self.shared_rx.recv_timeout(timeout) {
-            Ok((mod_id, line)) => {
-                debug.ipc(&mod_id, "→", &line);
-                match serde_json::from_str::<ScriptMessage>(&line) {
-                    Ok(msg) => RecvOutcome::Message(mod_id, msg),
-                    Err(e) => {
-                        tracing::warn!(mod_id, "bad IPC message: {e}: {line}");
-                        RecvOutcome::Timeout
-                    }
-                }
-            }
+            Ok((mod_id, line)) => self
+                .decode_packet(mod_id, line, debug)
+                .map_or(RecvOutcome::Timeout, |(id, packet)| {
+                    RecvOutcome::Message(id, packet)
+                }),
             Err(mpsc::RecvTimeoutError::Timeout) => RecvOutcome::Timeout,
             Err(mpsc::RecvTimeoutError::Disconnected) => RecvOutcome::Disconnected,
         }
@@ -248,6 +266,44 @@ impl ScriptHost {
         }
         process.ready = true;
         true
+    }
+
+    pub fn is_ready(&self, mod_id: &str) -> bool {
+        self.processes
+            .get(mod_id)
+            .is_some_and(|process| process.ready)
+    }
+
+    pub fn terminate(&mut self, mod_id: &str) {
+        if let Some(process) = self.processes.get_mut(mod_id) {
+            let _ = process.child.kill();
+        }
+    }
+
+    /// Hold command results until the entire command/physics phase has finished.
+    pub fn begin_responses(&mut self) {
+        self.responses = Some(Vec::new());
+    }
+
+    pub fn flush_responses(&mut self, tick_number: u64, debug: &mut DebugLogger) {
+        let mut grouped: Vec<(String, Vec<EngineMessage>)> = Vec::new();
+        for (owner, message) in self.responses.take().unwrap_or_default() {
+            if let Some((_, messages)) = grouped.iter_mut().find(|(id, _)| id == &owner) {
+                messages.push(message);
+            } else {
+                grouped.push((owner, vec![message]));
+            }
+        }
+        for (owner, messages) in grouped {
+            self.send(
+                &owner,
+                &EngineMessage::CommandResults {
+                    tick_number,
+                    messages,
+                },
+                debug,
+            );
+        }
     }
 
     pub fn has_process(&self, mod_id: &str) -> bool {
@@ -275,7 +331,7 @@ impl ScriptHost {
         &mut self,
         exit_code: i32,
         debug: &mut DebugLogger,
-    ) -> Vec<(String, ScriptMessage)> {
+    ) -> Vec<(String, ScriptPacket)> {
         let msg = EngineMessage::Shutdown { exit_code };
         for proc in self.processes.values_mut() {
             let _ = proc.send(&msg, debug);

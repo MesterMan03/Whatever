@@ -70,13 +70,17 @@ export const presentationCommands: CommandSpec[] = [
         type: "string",
         required: true,
         suggest: async () => {
-          const text = textEntity ? await textEntity.getComponent("core:text_renderer") : null;
+          const text = textEntity
+            ? await textEntity.getComponent("core:text_renderer").get()
+            : null;
           return text ? [`"${text.getText()}"`] : [];
         },
       },
     ],
     handler: async ({ text }) => {
-      const component = textEntity ? await textEntity.getComponent("core:text_renderer") : null;
+      const component = textEntity
+        ? await textEntity.getComponent("core:text_renderer").get()
+        : null;
       if (component && textEntity) {
         component.setText(text as string);
         textEntity.setComponent(component);
@@ -87,8 +91,8 @@ export const presentationCommands: CommandSpec[] = [
         font: "core://fonts/default.ttf",
         font_size: 50,
         color: [0.5, 0.2, 0.2, 0.8],
-      });
-      const transform = await textEntity.getComponent("core:transform");
+      }).get();
+      const transform = await textEntity.getComponent("core:transform").get();
       if (transform) {
         transform.rotateZ(-15);
         textEntity.setComponent(transform);

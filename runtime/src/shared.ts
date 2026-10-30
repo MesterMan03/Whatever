@@ -23,10 +23,18 @@ export function nextReqId(): string {
   return String(++_counter.n);
 }
 
-/** Serialise a message to stdout as NDJSON. Typed as `any` to avoid a circular
- *  dependency between this shared module and the ipc.ts type definitions. */
+let commands: string[] = [];
+
+/** Record immediately, including a snapshot of mutable arguments, in call order. */
 export function _send(msg: any): void {
-  _write(_stringify(msg) + "\n");
+  commands.push(_stringify(msg));
+}
+
+/** Private automatic tick listener. Even an empty buffer acknowledges submission. */
+export function _flush(tick_number: number): void {
+  const batch = commands;
+  commands = [];
+  _write('{"type":"CommandBatch","tick_number":' + tick_number + ',"commands":[' + batch.join(",") + ']}\n');
 }
 
 /** Maps public event names to the Rust IPC message type that triggers them.

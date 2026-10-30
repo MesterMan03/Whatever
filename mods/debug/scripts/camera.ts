@@ -22,9 +22,9 @@ Engine.on("init", async () => {
     "core://shaders/sprite.wgsl",
     [0, 0, 0],
     [1, 1, 1],
-  );
-  cameraEntity = await Scene.createEntity();
-  await cameraEntity.move([0, 0, 0]);
+  ).get();
+  cameraEntity = await Scene.createEntity().get();
+  cameraEntity.move([0, 0, 0]);
   cameraEntity.setComponent(new Camera());
   cameraEntity.setParent(character);
   Engine.setMainCamera(cameraEntity.id);
@@ -46,7 +46,7 @@ Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
 
   // ---- Character: movement + yaw ------------------------------------------
 
-  const charTransform = await character.getComponent("core:transform");
+  const charTransform = await character.getComponent("core:transform").get();
   if (!charTransform) return;
 
   // World-space forward/right vectors derived from yaw.
@@ -108,7 +108,7 @@ Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
   // The camera entity is a child of the character, so it already inherits
   // the yaw.  We only need to apply the vertical pitch in local space.
   const camTransform =
-    (await cameraEntity.getComponent("core:transform")) ?? new BuiltInComponents.Transform();
+    (await cameraEntity.getComponent("core:transform").get()) ?? new BuiltInComponents.Transform();
   camTransform.setEulerRadians(pitch, 0, 0);
   cameraEntity.setComponent(camTransform);
 });

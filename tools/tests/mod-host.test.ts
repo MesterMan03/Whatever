@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import runtimeManifest from "../../runtime/package.json";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const hostName = "whatever-mod-host" + (process.platform === "win32" ? ".exe" : "");
@@ -20,6 +21,7 @@ afterAll(() => rmSync(standaloneDirectory, { recursive: true, force: true }));
 
 async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean) {
   const directory = mkdtempSync(join(tmpdir(), "whatever-host-"));
+  let tickTimer: ReturnType<typeof setInterval> | undefined;
   try {
     const host = standaloneHost;
     const root = join(directory, "mod");
@@ -48,6 +50,9 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
       timeout: 10_000,
     });
     const messages: Array<Record<string, any>> = [];
+    const batches: Array<Record<string, any>> = [];
+    let tickNumber = 0;
+    const tick = () => child.stdin.write(JSON.stringify({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, keys_pressed: [], mouse_delta: [0, 0] }) + "\n");
     const output = (async () => {
       let remaining = "";
       for await (const chunk of child.stdout) {
@@ -56,26 +61,29 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
         while ((newline = remaining.indexOf("\n")) >= 0) {
           const line = remaining.slice(0, newline);
           remaining = remaining.slice(newline + 1);
-          const message = JSON.parse(line);
-          messages.push(message);
-          if (onMessage?.(message, value => child.stdin.write(JSON.stringify(value)+"\n"))) continue;
-          if (message.type === "RuntimeReady") {
-            child.stdin.write(JSON.stringify({ type: "Init", mod_id: "fixture", engine_version: "0.4.0", mode }) + "\n");
-          } else if (message.type === "EntityCreate") {
-            child.stdin.write(JSON.stringify({ type: "EntityCreated", request_id: message.request_id, entity_id: "0:0" }) + "\n");
-          } else if (message.type === "Log" && message.message === "fixture-next-tick") {
-            child.stdin.write(JSON.stringify({ type: "Tick", tick_number: 7, delta_seconds: 0.016, keys_pressed: [], mouse_delta: [0, 0] }) + "\n");
-          } else if (message.type === "TickDone") {
-            child.stdin.write(JSON.stringify({ type: "Shutdown", exit_code: 0 }) + "\n");
-          } else if (message.type === "Log" && message.message === "fixture-done") {
-            child.stdin.write(JSON.stringify({ type: "Shutdown", exit_code: 0 }) + "\n");
+          const packet = JSON.parse(line);
+          if (packet.type === "CommandBatch") batches.push(packet);
+          for (const message of packet.type === "CommandBatch" ? packet.commands : [packet]) {
+            messages.push(message);
+            if (onMessage?.(message, value => child.stdin.write(JSON.stringify(value)+"\n"))) continue;
+            if (message.type === "RuntimeReady") {
+              child.stdin.write(JSON.stringify({ type: "Init", mod_id: "fixture", engine_version: runtimeManifest.version, mode }) + "\n");
+              tick();
+              tickTimer = setInterval(tick, 10);
+            } else if (message.type === "EntityCreate") {
+              child.stdin.write(JSON.stringify({ type: "EntityCreated", request_id: message.request_id, entity_id: "0:0" }) + "\n");
+            } else if (message.type === "Log" && message.message === "fixture-done") {
+              clearInterval(tickTimer);
+              child.stdin.write(JSON.stringify({ type: "Shutdown", exit_code: 0 }) + "\n");
+            }
           }
         }
       }
     })();
     const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited, output]);
-    return { messages, stderr, exitCode, signalCode: child.signalCode };
+    return { messages, batches, stderr, exitCode, signalCode: child.signalCode };
   } finally {
+    clearInterval(tickTimer);
     rmSync(directory, { recursive: true, force: true });
   }
 }
@@ -104,19 +112,37 @@ describe("bundled mod host", () => {
   });
 
   test("runs outside the engine tree without PATH or node_modules and preserves IPC", async () => {
-    const result = await runHost(fixture('const entity = await Scene.createEntity(); console.log("entity", entity.id);'));
+    const result = await runHost(fixture('const entity = await Scene.createEntity().get(); console.log("entity", entity.id);'));
     expect(result.messages.filter(message => message.type === "Log").map(message => message.message)).toEqual(["entity 0:0", "fixture-done"]);
     expect(result.stderr).toBe("");
     expect(result.signalCode).toBeNull();
     expect(result.exitCode).toBe(0);
   });
 
-  test("waits for asynchronous tick handlers before replying", async () => {
+  test("records dependent entity commands eagerly in one implicit tick buffer", async () => {
+    const result = await runHost(fixture(
+      'const parent=Scene.createEntity();' +
+      'const child=Scene.createEntity().setComponent("fixture:value",{value:1}).setParent(parent);' +
+      'const selected=child.getComponent("fixture:value");' +
+      'if(typeof selected.then!=="undefined")throw new Error("unexpected thenable");'
+    ));
+    const batch = result.batches.find(packet => packet.commands.some((command: any) => command.type === "EntityCreate"));
+    const commands = batch!.commands.filter((command: any) => command.type !== "Subscribe");
+    expect(batch!.tick_number).toBe(1);
+    expect(commands.map((command: any) => command.type)).toEqual([
+      "EntityCreate", "EntityCreate", "ComponentSet", "EntitySetParent", "ComponentGet", "Log",
+    ]);
+    expect(commands[2].entity_id).toBe("pending:" + commands[1].request_id);
+    expect(commands[3].parent_id).toBe("pending:" + commands[0].request_id);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("flushes ticks while async handlers wait without overlapping their calls", async () => {
     const result = await runHost('import { Engine } from "@whatever-engine/api";' +
-      'Engine.on("init", () => Engine.log("info", "fixture-next-tick"));' +
-      'Engine.on("tick", async () => { await new Promise(resolve => setTimeout(resolve, 1)); Engine.log("info", "tick-work"); });');
-    expect(result.messages.filter(message => message.type === "Log" || message.type === "TickDone").map(message => message.type === "Log" ? message.message : message.tick_number))
-      .toEqual(["fixture-next-tick", "tick-work", 7]);
+      'let active=false,done=false,calls=0; Engine.on("tick", async ({delta_seconds}) => { if(done)return; if(active)throw new Error("overlap"); if(++calls===1){active=true; await new Promise(resolve => setTimeout(resolve, 35)); active=false;}else{if(delta_seconds<=0.01)throw new Error("lost elapsed time");done=true;Engine.log("info","fixture-done");} });');
+    expect(result.batches.length).toBeGreaterThanOrEqual(3);
+    expect(result.messages.filter(message => message.type === "Log").map(message => message.message))
+      .toEqual(["fixture-done"]);
     expect(result.exitCode).toBe(0);
   });
 

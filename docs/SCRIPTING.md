@@ -23,7 +23,7 @@ See [the runtime policy](SANDBOX.md) for the module and global allowlists.
 
 Read-only `"client" | "server"`, available during top-level mod evaluation as well as event handlers. The host sets it before importing the mod. `init` includes the same `mode` alongside `mod_id` and `engine_version`.
 
-Simulation ticks run on a separate engine worker. Tick handlers are awaited without blocking the client renderer. The server runs this worker without a window, GPU or audio output device. FPS and vsync affect presentation only. Invalid tick rates (nonpositive, nonfinite or unrepresentable) are logged and ignored.
+Simulation ticks run on a separate engine worker. Each mod submits one command buffer per tick, independently of promises returned by its handlers. The server runs this worker without a window, GPU or audio output device. FPS and vsync affect presentation only. Invalid tick rates (nonpositive, nonfinite or unrepresentable) are logged and ignored.
 
 Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera` and `clearCamera` reject use in server mode. ECS component data and entity operations remain available there, including components a client may later render.
 
@@ -31,8 +31,10 @@ Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera` and `c
 
 Subscribe to an engine event. Registering a handler also sends a `Subscribe`
 message to the engine automatically (except `mod_message`, which is routed
-unconditionally). For `tick`, all async handlers are awaited before the engine
-advances the simulation.
+unconditionally). Every mod receives private ticks for buffer submission, even without
+a public tick listener. Async tick handlers may span ticks; a still-running handler
+is skipped until it finishes. Its next invocation accumulates simulation time and
+mouse deltas from skipped ticks, with the latest held keys and global tick number.
 
 ```ts
 Engine.on("init", ({ mod_id, engine_version, mode }) => {
@@ -44,7 +46,7 @@ Engine.on("exit", ({ exit_code }) => {
 });
 
 Engine.on("tick", async ({ tick_number, delta_seconds, keys_pressed }) => {
-  // game logic here — engine waits for this Promise to resolve
+  // Record commands here. Awaiting a result does not stop buffer submission.
 });
 ```
 
@@ -57,7 +59,7 @@ The engine sends `Init` after this handshake and runtime readiness (including wi
 |---|---|---|
 | `init` | `{ mod_id, engine_version, mode }` | Fired once after engine initialization; server has no window |
 | `exit` | `{ exit_code }` | Fired on shutdown; process exits after all handlers return |
-| `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta }` | Fired every game tick; engine waits for async handlers |
+| `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta }` | Runs on ticks when this handler is free; no overlapping invocations |
 | `mod_message` | `{ source_mod_id, message, request_id? }` | Message from another mod (see `Message`) |
 
 ### `Engine.log(level, message)`
@@ -113,7 +115,7 @@ Designate an entity as the scene's active camera.  The entity must have both
 every frame to produce the view-projection matrix.
 
 ```ts
-const cam = await Scene.createEntity();
+const cam = await Scene.createEntity().get();
 cam.setComponent(new BuiltInComponents.Transform({ position: [0, 5, 10] }));
 cam.setComponent(new BuiltInComponents.Camera({ fovy_degrees: 60 }));
 Engine.setMainCamera(cam.id);
@@ -198,6 +200,42 @@ Delete a sandboxed file.
 
 ---
 
+## Tick order and command batches
+
+Each tick has one ordered pipeline:
+
+1. Gather input and queued external work: console invocations, network events and completed audio notifications. Input is sampled once; events arriving after collection wait until a later tick.
+2. Send a tick to every initialized mod. The SDK calls available tick handlers in registration order, then flushes its command buffer immediately, without awaiting user promises. This private flush happens even when there are no tick handlers or all handlers are awaiting results.
+3. Collect exactly one batch per live mod for the current tick. Execute complete batches in dependency/load order, and commands within each batch in recording order. No command executes while other batches are still being collected.
+4. Run native simulation systems. Physics will occupy this phase when implemented; no physics currently runs.
+5. Publish the world/render snapshot and buffered command results. Result callbacks and async continuations record new commands for a later tick.
+
+All API namespaces share this buffer, including logging, window commands, files, ECS, console and networking. Arguments are serialized when recorded so later JavaScript mutations cannot change earlier commands. Queries capture the value at their position in the command sequence. This is ordered execution, not an atomic transaction: commands do not roll back together on failure.
+
+Mods are ordered by dependencies and explicit load constraints, with `core` preferred first and alphabetical mod-ID tie-breaking among eligible mods. Startup waits for host handshakes and sends `Init` in this order before the first tick. Pipe arrival order cannot change command execution order. A process exit removes it from the submission barrier; shutdown interrupts that barrier. A synchronously blocked mod can still delay submission, while an asynchronously waiting handler continues submitting empty or otherwise queued buffers.
+
+This establishes a predictable execution order, not automatic deterministic gameplay. Network/input timing, timers and arbitrary asynchronous JavaScript still need controlled inputs for reproducible runs. Do not await engine API requests during top-level module evaluation: the startup handshake happens after evaluation; perform that work in `init` instead.
+
+## `Pending<T>` and `PendingEntity`
+
+Scene creation and ECS queries record work immediately and return pending handles. They are not promises or thenables. `pending.get()` returns the same result promise on every call; it does not flush, repeat work or change ordering. For callbacks, use `pending.get().then(callback)`.
+
+Migration: replace `await Scene.createEntity()` with `await Scene.createEntity().get()`, and add `.get()` to awaited ECS queries and spawn/light helpers. Entity mutation methods record work synchronously and return the entity for chaining.
+
+`Scene.createEntity()` and spawn/light helpers return `PendingEntity`, which also satisfies `Pending<Entity>`. Its entity methods can record mutations and queries before a native ID exists. Mutations (`setComponent`, `removeComponent`, `setParent`, `move`) return `this`; queries return their own `Pending<T>`, so the final `.get()` selects that query's result. Parent links accept another pending entity created earlier in the same batch. The native engine resolves these temporary references only within the originating mod's batch.
+
+```ts
+const pendingEntity = Scene.createEntity()
+  .setComponent("game:health", { value: 100 });
+const pendingHealth = pendingEntity.getComponent("game:health");
+const [entity, health] = await Promise.all([
+  pendingEntity.get(),
+  pendingHealth.get(),
+]);
+```
+
+The pending entity's `.id` throws until its creation result arrives; use `.get()` when an actual ID is needed. Keeping the pending reference lets you continue using its entity methods after resolution. Queries issued later or commands recorded by a result callback belong to a later batch. Other namespaces retain their documented promise return types while using the same per-tick buffer.
+
 ## `Entity`
 
 A live entity in the scene. All methods that create or enumerate entities
@@ -210,7 +248,7 @@ TypeScript compiler automatically narrows the data parameter and return type.
 For custom component types you can supply a generic `T`:
 
 ```ts
-const comp = await entity.getComponent<MyComponent>("mymod:mycomp");
+const comp = await entity.getComponent<MyComponent>("mymod:mycomp").get();
 ```
 
 ### `entity.id`
@@ -221,7 +259,7 @@ The underlying opaque entity ID string.
 
 Destroy this entity and all its components. Fire-and-forget.
 
-### `entity.setComponent(component_type, data)` / `entity.setComponent(component)`
+### `entity.setComponent(component_type, data)` / `entity.setComponent(component)` → `this`
 
 Set a component on this entity. Fire-and-forget. Creates the component if absent,
 overwrites if present. For built-in component types the compiler enforces the correct shape.
@@ -245,7 +283,7 @@ const t = new BuiltInComponents.Transform({ position: [1, 2, 3] });
 entity.setComponent(t);
 
 // Common pattern: fetch, mutate, push back
-const t = await entity.getComponent("core:transform");
+const t = await entity.getComponent("core:transform").get();
 if (t) {
   t.addX(1);
   entity.setComponent(t); // no need to repeat the component type string
@@ -255,17 +293,17 @@ if (t) {
 A sprite becomes visible as soon as the entity has **both** `core:transform` and
 `core:sprite_renderer` set.
 
-### `entity.removeComponent(component_type)`
+### `entity.removeComponent(component_type)` → `this`
 
 Remove a component from this entity. Fire-and-forget.
 
-### `entity.getComponent(component_type)` → `Promise<T | null>`
+### `entity.getComponent(component_type)` → `Pending<T | null>`
 
 Get a component's data. Returns `null` if the component is not set. Return type is
 automatically inferred for built-in component types.
 
 ```ts
-const t = await entity.getComponent("core:transform");
+const t = await entity.getComponent("core:transform").get();
 // t is BuiltInComponents.Transform | null — a live class instance
 if (t) {
   Engine.log("info", `pos: ${t.getX()}, ${t.getY()}, ${t.getZ()}`);
@@ -274,17 +312,17 @@ if (t) {
 }
 ```
 
-### `entity.move(position)` → `Promise<void>`
+### `entity.move(position)` → `this`
 
 Convenience: update the `position` field of this entity's `core:transform` while
 preserving existing rotation and scale. Initialises rotation/scale to identity/`[1,1,1]`
 if the component is not yet set.
 
 ```ts
-await entity.move([x, y, z]);
+entity.move([x, y, z]);
 ```
 
-### `entity.setParent(parent)`
+### `entity.setParent(parent)` → `this`
 
 Attach this entity to a parent. `parent` can be an `Entity`, a raw entity ID
 string, or `null` to detach. Fire-and-forget.
@@ -298,21 +336,21 @@ entity.setParent(parentEntity);    // attach
 entity.setParent("5:0");           // attach by raw ID
 entity.setParent(null);            // detach
 ```
-### `entity.getParent()` → `Promise<Entity | null>`
+### `entity.getParent()` → `Pending<Entity | null>`
 
 Return the parent `Entity`, or `null` if this entity has no parent.
 
 ```ts
-const parent = await entity.getParent();
+const parent = await entity.getParent().get();
 if (parent) Engine.log("info", `parent: ${parent.id}`);
 ```
 
-### `entity.getChildren()` → `Promise<Entity[]>`
+### `entity.getChildren()` → `Pending<Entity[]>`
 
 Return all direct children of this entity.
 
 ```ts
-const kids = await entity.getChildren();
+const kids = await entity.getChildren().get();
 ```
 
 ---
@@ -326,12 +364,12 @@ Most callers should work with `Entity` objects returned by `Scene.createEntity`,
 `Scene.listEntities`, `Scene.spawnSprite`, and `Scene.query` rather than calling
 `Scene.setComponent` / `Scene.getComponent` with raw IDs.
 
-### `Scene.createEntity()` → `Promise<Entity>`
+### `Scene.createEntity()` → `PendingEntity`
 
 Create a new entity and return it.
 
 ```ts
-const entity = await Scene.createEntity();
+const entity = await Scene.createEntity().get();
 ```
 
 ### `Scene.destroyEntity(entity_id)`
@@ -339,7 +377,7 @@ const entity = await Scene.createEntity();
 Destroy an entity by raw ID and all its components. Fire-and-forget.
 Prefer `entity.destroy()` when you already have an `Entity` object.
 
-### `Scene.listEntities()` → `Promise<Entity[]>`
+### `Scene.listEntities()` → `Pending<Entity[]>`
 
 Return all living entities.
 
@@ -361,61 +399,64 @@ Scene.setComponent(id, "core:transform", {
 
 Remove a component from an entity. Fire-and-forget.
 
-### `Scene.getComponent(entity_id, component_type)` → `Promise<T | null>`
+### `Scene.getComponent(entity_id, component_type)` → `Pending<T | null>`
 
 Get a component's data by raw ID. Return type is automatically inferred for
 built-in component types. Returns `null` if the component is not set.
 
 ```ts
-const t = await Scene.getComponent(id, "core:transform");
+const t = await Scene.getComponent(id, "core:transform").get();
 // t is BuiltInComponents.Transform | null
 ```
 
-### `Scene.query(component_types)` → `Promise<QueryResult[]>`
+### `Scene.query(component_types)` → `Pending<QueryResult<Entity>[]>`
 
 Return all entities that have every listed component type, along with the requested
 component data.
 
 ```ts
-const results = await Scene.query(["core:transform", "core:sprite_renderer"]);
+const results = await Scene.query(["core:transform", "core:sprite_renderer"]).get();
 for (const { entity, components } of results) {
   const t = components["core:transform"] as BuiltInComponents.Transform;
-  await entity.move([t.position[0] + 1, t.position[1], t.position[2]]);
+  entity.move([t.position[0] + 1, t.position[1], t.position[2]]);
 }
 ```
 
 `QueryResult` shape: `{ entity: Entity; components: Record<string, JsonValue> }`.
 
-### `Scene.spawnText(text, position, options?)` → `Promise<Entity>`
+### `Scene.spawnText(text, position, options)` → `PendingEntity`
 
 Convenience: create an entity with `core:transform` and `core:text_renderer` pre-attached. Returns the entity.
 
 ```ts
-const label = await Scene.spawnText("Hello, world!", [0, 0, 0]);
+const label = await Scene.spawnText("Hello, world!", [0, 0, 0], {
+  font: "core://fonts/default.ttf", shader: "core://shaders/sprite.wgsl",
+}).get();
 
 // With options:
 const label = await Scene.spawnText("Score: 0", [0, 0, 2], {
-  font: "my_mod://fonts/custom.ttf",   // optional, defaults to core://fonts/default.ttf
+  font: "my_mod://fonts/custom.ttf",
+  shader: "core://shaders/sprite.wgsl",
   font_size: 32,                        // optional, defaults to 24
   color: [1, 0.8, 0, 1],               // optional RGBA, defaults to [1, 1, 1, 1]
-});
+}).get();
 ```
 
-### `Scene.spawnSprite(texture, position, scale?)` → `Promise<Entity>`
+### `Scene.spawnSprite(texture, shader, position, scale?)` → `PendingEntity`
 
 Convenience: create an entity with `core:transform` and `core:sprite_renderer`
-pre-attached. The `shader` field defaults to `"core://shaders/sprite.wgsl"`;
-use `entity.setComponent(new BuiltInComponents.SpriteRenderer({ ..., shader: "..." }))` to change it after spawning.
+pre-attached. Pass the shader's VFS path explicitly.
 
 ```ts
 const entity = await Scene.spawnSprite(
   "my_mod://textures/player.png",
+  "core://shaders/sprite.wgsl",
   [0, 0, 0],
   [1, 1, 1],   // optional, defaults to [1, 1, 1]
-);
+).get();
 ```
 
-### `Scene.spawnMesh(mesh, shader, position, options?)` → `Promise<Entity>`
+### `Scene.spawnMesh(mesh, shader, position, options?)` → `PendingEntity`
 
 Convenience: create an entity with `core:transform` and `core:mesh_renderer` pre-attached.
 
@@ -428,40 +469,40 @@ const entity = await Scene.spawnMesh(
     texture: "my_mod://textures/crate.png",  // optional
     scale:   [2, 2, 2],                      // optional, defaults to [1, 1, 1]
   },
-);
+).get();
 ```
 
-### `Scene.moveEntity(entity_id, position)` → `Promise<void>`
+### `Scene.moveEntity(entity_id, position)` → `void`
 
 Convenience: update the `position` field of an entity's `core:transform` while
 preserving its rotation and scale.
 
 ```ts
-await Scene.moveEntity(id, [x, y, z]);
+Scene.moveEntity(id, [x, y, z]);
 ```
 
-### `Scene.addAmbientLight(color?, intensity?)` → `Promise<Entity>`
+### `Scene.addAmbientLight(color?, intensity?)` → `PendingEntity`
 
 Convenience: create an entity and attach `core:ambient_light`. Multiple ambient lights are additive.
 
 ```ts
-await Scene.addAmbientLight([1, 0.9, 0.7], 0.15);
+await Scene.addAmbientLight([1, 0.9, 0.7], 0.15).get();
 ```
 
-### `Scene.addDirectionalLight(direction, color?, intensity?)` → `Promise<Entity>`
+### `Scene.addDirectionalLight(direction, color?, intensity?)` → `PendingEntity`
 
 Convenience: create an entity and attach `core:directional_light`.
 
 ```ts
-await Scene.addDirectionalLight([0, -1, -0.3], [1, 1, 1], 1.0);
+await Scene.addDirectionalLight([0, -1, -0.3], [1, 1, 1], 1.0).get();
 ```
 
-### `Scene.addPointLight(position, color?, intensity?, range?)` → `Promise<Entity>`
+### `Scene.addPointLight(position, color?, intensity?, range?)` → `PendingEntity`
 
 Convenience: create an entity with `core:transform` + `core:point_light`. The light is emitted from `position` in all directions.
 
 ```ts
-await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15);
+await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15).get();
 ```
 
 ### `Scene.setParent(entity_id, parent_id)`
@@ -474,11 +515,11 @@ Scene.setParent(childId, parentId);
 Scene.setParent(childId, null); // detach
 ```
 
-### `Scene.getParent(entity_id)` → `Promise<string | null>`
+### `Scene.getParent(entity_id)` → `Pending<string | null>`
 
 Return the parent entity ID as a string, or `null` if the entity has no parent.
 
-### `Scene.getChildren(entity_id)` → `Promise<string[]>`
+### `Scene.getChildren(entity_id)` → `Pending<string[]>`
 
 Return the IDs of all direct children of the given entity.
 
@@ -553,7 +594,7 @@ Left-multiplies an axis rotation onto the current quaternion (world-space compos
 ```ts
 // Spin a sprite 45° per tick around Y, translate it, and push the change back.
 Engine.on("tick", async () => {
-  const t = await entity.getComponent("core:transform");
+  const t = await entity.getComponent("core:transform").get();
   if (!t) return;
   t.rotateY(45).setX(t.getX() + 0.1);
   entity.setComponent("core:transform", t);
@@ -627,11 +668,11 @@ Text is rendered on top of sprites. The engine ships Noto Sans as `core://fonts/
 
 ```ts
 // Spawn a white label
-const label = await Scene.spawnText("Hello!", [0, 0, 0], { font_size: 36 });
+const label = await Scene.spawnText("Hello!", [0, 0, 0], { font_size: 36 }).get();
 
 // Update it each tick
 Engine.on("tick", async ({ tick_number }) => {
-  const t = await label.getComponent("core:text_renderer");
+  const t = await label.getComponent("core:text_renderer").get();
   if (!t) return;
   t.setText(`Tick: ${tick_number}`);
   label.setComponent("core:text_renderer", t);
@@ -665,7 +706,7 @@ entity via `core:transform` orbits/tilts the camera accordingly.
 ```ts
 // Minimal camera setup
 Engine.on("init", async () => {
-  const cam = await Scene.createEntity();
+  const cam = await Scene.createEntity().get();
   cam.setComponent(new BuiltInComponents.Transform({ position: [0, 5, 10] }));
   cam.setComponent(new BuiltInComponents.Camera({ fovy_degrees: 60 }));
   Engine.setMainCamera(cam.id);
@@ -673,7 +714,7 @@ Engine.on("init", async () => {
 
 // Move camera each tick
 Engine.on("tick", async ({ delta_seconds }) => {
-  const t = await cam.getComponent("core:transform");
+  const t = await cam.getComponent("core:transform").get();
   if (!t) return;
   t.addZ(-5 * delta_seconds); // fly forward along -Z
   cam.setComponent(t);
@@ -698,7 +739,7 @@ Returned by `getComponent("core:ambient_light")`. Contributes a uniform fill lig
 
 ```ts
 // Soft warm ambient fill
-await Scene.addAmbientLight([1, 0.9, 0.7], 0.15);
+await Scene.addAmbientLight([1, 0.9, 0.7], 0.15).get();
 ```
 
 #### `BuiltInComponents.DirectionalLight`
@@ -722,7 +763,7 @@ Returned by `getComponent("core:directional_light")`. Simulates an infinitely di
 
 ```ts
 // Sun shining down and slightly forward
-await Scene.addDirectionalLight([0, -1, -0.3], [1, 0.95, 0.8], 1.2);
+await Scene.addDirectionalLight([0, -1, -0.3], [1, 0.95, 0.8], 1.2).get();
 ```
 
 #### `BuiltInComponents.PointLight`
@@ -748,7 +789,7 @@ Requires a `core:transform` on the same entity to provide the position.
 
 ```ts
 // Orange glow above the origin
-await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15);
+await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15).get();
 ```
 
 ---
@@ -1135,15 +1176,16 @@ The native engine stores server identities and trust records under the OS local-
 This section documents the raw wire format. Normal mod code should use the API
 namespaces above rather than speaking the protocol directly.
 
-Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 4. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
+Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 5. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
 
-**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process.
+**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 5 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
 Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine-to-mod pipe writes run on a dedicated bounded writer thread (256 queued messages, 64 MiB including the in-flight write). A full/broken writer terminates the affected mod rather than blocking the simulation or silently losing RPCs.
 
 ### Engine → Script
 
 | Message | Key fields |
 |---|---|
+| `CommandResults` | `tick_number`, `messages` (the replies below) |
 | `NetworkResponse` | `request_id`, `result`, `error` |
 | `NetworkEvent` | `event`, `registration_id`, `client_id`, `event_id` when acknowledged, event-specific data |
 | `Init` | `mod_id`, `engine_version`, `mode` |
@@ -1169,7 +1211,6 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 |---|---|
 | `NetworkRequest` | `request_id`, `request` (operation DTO) |
 | `Subscribe` | `events` |
-| `TickDone` | `tick_number` |
 | `Log` | `level`, `message` |
 | `SetWindowTitle` | `title` |
 | `SetWindowSize` | `width`, `height` |
@@ -1187,6 +1228,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `ModMessageReply` | `request_id`, `payload` |
 | `EntityCreate` | `request_id` |
 | `EntityDestroy` | `entity_id` |
+| `EntityMove` | `entity_id`, `position` (preserves rotation/scale in native code) |
 | `EntityListRequest` | `request_id` |
 | `EntitySetParent` | `entity_id`, `parent_id` (string or null) |
 | `EntityGetParent` | `request_id`, `entity_id` |
@@ -1204,4 +1246,4 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 The `[mod].sides` list defaults to both `client` and `server`. Inactive mods are removed before dependency validation. The `[script]` section may contain optional `entry`, `client` and `server` paths: a side entry overrides `entry`; without either, that mod has no script on that side. `Mods.list()` and `Mods.get()` expose only active mods, with `sides: RuntimeMode[]` and nullable script entry paths. `RuntimeMode` is exported as a public type.
 
 
-A synchronous throw or rejected promise from a tick handler is logged and terminates that mod process. The runtime removes exited subscribers from the current tick barrier so other mods can continue. Shutdown interrupts a waiting tick and cleans up remaining subprocesses.
+A synchronous throw or rejected promise from a tick handler is queued for logging and terminates that mod process after its next buffer submission. The runtime removes exited processes from the submission barrier so other mods can continue. Shutdown interrupts a waiting tick and cleans up remaining subprocesses.

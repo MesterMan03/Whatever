@@ -56,39 +56,34 @@ impl Node {
     }
     fn pump(&mut self) {
         self.simulation.controls();
-        self.simulation.network_events();
-        for (owner, message) in self
-            .simulation
-            .script_host
-            .drain_messages(&mut self.simulation.debug)
-        {
-            if self.trace.len() < 30 {
-                self.trace.push(format!("{owner}: {message:?}"));
-            }
-            if owner == "network_example" {
-                match &message {
-                    ScriptMessage::RegisterCommand { name, .. } if name == "netdemo" => {
-                        self.registered = true
+        let batches = self.simulation.tick_commands();
+        for (owner, commands) in &batches {
+            for message in commands {
+                if self.trace.len() < 30 {
+                    self.trace.push(format!("{owner}: {message:?}"));
+                }
+                if owner == "network_example" {
+                    match &message {
+                        ScriptMessage::RegisterCommand { name, .. } if name == "netdemo" => {
+                            self.registered = true
+                        }
+                        ScriptMessage::CommandResponse {
+                            request_id,
+                            output,
+                            error,
+                        } => {
+                            self.responses
+                                .insert(request_id.clone(), (output.clone(), error.clone()));
+                        }
+                        ScriptMessage::Log { level, message } if level == "error" => {
+                            panic!("network example error: {message}")
+                        }
+                        _ => {}
                     }
-                    ScriptMessage::CommandResponse {
-                        request_id,
-                        output,
-                        error,
-                    } => {
-                        self.responses
-                            .insert(request_id.clone(), (output.clone(), error.clone()));
-                    }
-                    ScriptMessage::Log { level, message } if level == "error" => {
-                        panic!("network example error: {message}")
-                    }
-                    _ => {}
                 }
             }
-            self.simulation.message(owner, message);
         }
-        // Exercise network/command IPC without rendering, ticking or audio hardware.
-        // Tick barriers have their own worker regression test.
-        self.simulation.publish();
+        self.simulation.finish_tick(batches);
         if let Ok(mut slot) = self.simulation.shared.presentation.lock() {
             slot.take();
         }

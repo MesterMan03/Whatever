@@ -107,7 +107,7 @@ renderCommands.push({
 
     const shaderPath = getShaderPath(shaderName);
 
-    const entity = await Scene.spawnMesh(meshPath, shaderPath, [x, y, z]);
+    const entity = await Scene.spawnMesh(meshPath, shaderPath, [x, y, z]).get();
 
     spawned.push(entity);
     return (
@@ -143,7 +143,7 @@ renderCommands.push({
     const shaderName = args["shader"] as string;
     const shaderPath = getShaderPath(shaderName);
 
-    const entity = await Scene.createEntity();
+    const entity = await Scene.createEntity().get();
     entity.setComponent("core:transform", {
       position: [0, 0, -3],
       rotation: [0, 0, 0, 1],
@@ -190,7 +190,7 @@ renderCommands.push({
           args["b"] as number,
         ];
         const intensity = (args["intensity"] as number | undefined) ?? 0.1;
-        const entity = await Scene.addAmbientLight(color, intensity);
+        const entity = await Scene.addAmbientLight(color, intensity).get();
         spawned.push(entity);
         return `Spawned ambient light color=(${color}) intensity=${intensity} [entity ${entity.id}]`;
       },
@@ -229,7 +229,7 @@ renderCommands.push({
           (args["b"] as number | undefined) ?? 1,
         ];
         const intensity = (args["intensity"] as number | undefined) ?? 1.0;
-        const entity = await Scene.addDirectionalLight(direction, color, intensity);
+        const entity = await Scene.addDirectionalLight(direction, color, intensity).get();
         spawned.push(entity);
         return `Spawned directional light dir=(${direction}) color=(${color}) intensity=${intensity} [entity ${entity.id}]`;
       },
@@ -275,7 +275,7 @@ renderCommands.push({
         ];
         const intensity = (args["intensity"] as number | undefined) ?? 1.0;
         const range = (args["range"] as number | undefined) ?? 10;
-        const entity = await Scene.addPointLight(position, color, intensity, range);
+        const entity = await Scene.addPointLight(position, color, intensity, range).get();
         spawned.push(entity);
         return `Spawned point light at (${position}) color=(${color}) intensity=${intensity} range=${range} [entity ${entity.id}]`;
       },

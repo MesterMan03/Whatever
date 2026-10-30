@@ -5,7 +5,8 @@ export type { RuntimeMode, Component, JsonValue, ModManifest, EventPayloads, Eve
 export { Engine } from "./components/engine.ts";
 export { Window } from "./components/window.ts";
 export { File } from "./components/file.ts";
-export { BuiltInComponents, Entity, Scene } from "./components/ecs.ts";
+export { BuiltInComponents, Entity, PendingEntity, Scene } from "./components/ecs.ts";
+export type { Pending } from "./pending.ts";
 export { Mods, Message } from "./components/mods.ts";
 export { Console } from "./components/console.ts";
 export type { ArgType, ArgSpec, CommandSpec } from "./components/console.ts";

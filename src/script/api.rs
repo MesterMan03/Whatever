@@ -59,6 +59,8 @@ pub struct EngineContext<'a> {
     pub world: &'a mut World,
     pub vfs: &'a dyn Vfs,
     pub audio: &'a mut AudioManager,
+    /// References created earlier in this mod's current batch, never shared across mods.
+    pub batch_entities: &'a mut std::collections::HashMap<String, EntityId>,
 }
 
 pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> DispatchResult {
@@ -72,6 +74,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         world,
         vfs,
         audio,
+        batch_entities,
     } = ctx;
     match msg {
         ScriptMessage::NetworkRequest {
@@ -82,9 +85,6 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 Ok(request) => network.dispatch(mod_id, mode, request, &request_id),
                 Err(error) => Some(Err(error.into())),
             };
-            for (owner, message) in network.poll() {
-                script_host.send(&owner, &message, debug);
-            }
             let Some(result) = result else {
                 return DispatchResult::default();
             };
@@ -97,19 +97,6 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 },
                 debug,
             );
-        }
-        ScriptMessage::RuntimeReady { protocol } => {
-            if protocol == super::runtime::HOST_PROTOCOL && script_host.mark_ready(mod_id) {
-                script_host.send(
-                    mod_id,
-                    &EngineMessage::Init {
-                        mod_id: mod_id.to_owned(),
-                        engine_version: env!("CARGO_PKG_VERSION").to_owned(),
-                        mode,
-                    },
-                    debug,
-                );
-            }
         }
         // --- Logging ---------------------------------------------------------
         ScriptMessage::Log { level, message } => {
@@ -309,6 +296,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         // --- Entity management -----------------------------------------------
         ScriptMessage::EntityCreate { request_id } => {
             let id = world.create_entity();
+            batch_entities.insert(format!("pending:{request_id}"), id);
             script_host.send(
                 mod_id,
                 &EngineMessage::EntityCreated {
@@ -318,8 +306,41 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 debug,
             );
         }
+        ScriptMessage::EntityMove {
+            entity_id,
+            position,
+        } => {
+            let Some(id) = resolve_entity(&entity_id, batch_entities) else {
+                tracing::warn!(mod_id, "EntityMove: invalid entity_id '{entity_id}'");
+                return DispatchResult::default();
+            };
+            let mut transform = world.transforms.get(&id.index).cloned().unwrap_or_default();
+            transform.position = position;
+            if let Ok(data) = serde_json::to_value(transform) {
+                return dispatch(
+                    mod_id,
+                    ScriptMessage::ComponentSet {
+                        entity_id: id.to_string(),
+                        component_type: COMPONENT_TRANSFORM.to_owned(),
+                        data,
+                    },
+                    EngineContext {
+                        mode,
+                        network,
+                        script_host,
+                        registry,
+                        game_id,
+                        debug,
+                        world,
+                        vfs,
+                        audio,
+                        batch_entities,
+                    },
+                );
+            }
+        }
         ScriptMessage::EntityDestroy { entity_id } => {
-            let Some(id) = EntityId::parse(&entity_id) else {
+            let Some(id) = resolve_entity(&entity_id, batch_entities) else {
                 tracing::warn!(mod_id, "EntityDestroy: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
@@ -364,13 +385,13 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             entity_id,
             parent_id,
         } => {
-            let Some(child) = EntityId::parse(&entity_id) else {
+            let Some(child) = resolve_entity(&entity_id, batch_entities) else {
                 tracing::warn!(mod_id, "EntitySetParent: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
             let parent = match &parent_id {
                 None => None,
-                Some(pid) => match EntityId::parse(pid) {
+                Some(pid) => match resolve_entity(pid, batch_entities) {
                     Some(p) => Some(p),
                     None => {
                         tracing::warn!(mod_id, "EntitySetParent: invalid parent_id '{pid}'");
@@ -412,7 +433,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             request_id,
             entity_id,
         } => {
-            let parent_id = EntityId::parse(&entity_id)
+            let parent_id = resolve_entity(&entity_id, batch_entities)
                 .and_then(|id| world.get_parent(&id))
                 .map(|p| p.to_string());
             script_host.send(
@@ -429,7 +450,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             request_id,
             entity_id,
         } => {
-            let child_ids = EntityId::parse(&entity_id)
+            let child_ids = resolve_entity(&entity_id, batch_entities)
                 .map(|id| {
                     world
                         .get_children(&id)
@@ -455,7 +476,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             component_type,
             data,
         } => {
-            let Some(id) = EntityId::parse(&entity_id) else {
+            let Some(id) = resolve_entity(&entity_id, batch_entities) else {
                 tracing::warn!(mod_id, "ComponentSet: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
@@ -498,7 +519,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             entity_id,
             component_type,
         } => {
-            let Some(id) = EntityId::parse(&entity_id) else {
+            let Some(id) = resolve_entity(&entity_id, batch_entities) else {
                 tracing::warn!(mod_id, "ComponentRemove: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
@@ -529,7 +550,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             entity_id,
             component_type,
         } => {
-            let reply = match EntityId::parse(&entity_id) {
+            let reply = match resolve_entity(&entity_id, batch_entities) {
                 None => EngineMessage::ComponentGetResponse {
                     request_id,
                     entity_id,
@@ -759,7 +780,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             let camera_entity = if entity_id.is_empty() {
                 None
             } else {
-                match EntityId::parse(&entity_id) {
+                match resolve_entity(&entity_id, batch_entities) {
                     Some(id) => Some(id),
                     None => {
                         tracing::warn!(mod_id, "SetMainCamera: invalid entity_id '{entity_id}'");
@@ -772,14 +793,19 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 ..Default::default()
             };
         }
-
-        // --- Tick sync (intercepted in run_tick; this arm is a safety net) ---
-        ScriptMessage::TickDone { .. } => {
-            tracing::warn!(mod_id, "TickDone reached dispatcher unexpectedly");
-        }
     }
 
     DispatchResult::default()
+}
+
+fn resolve_entity(
+    reference: &str,
+    batch_entities: &std::collections::HashMap<String, EntityId>,
+) -> Option<EntityId> {
+    batch_entities
+        .get(reference)
+        .copied()
+        .or_else(|| EntityId::parse(reference))
 }
 
 fn build_audio_state(

@@ -4,7 +4,7 @@ use crate::debug::DebugLogger;
 use crate::vfs::{DiskLayer, LayeredVfs, VfsPath};
 use anyhow::{Context, bail};
 use semver::{Version, VersionReq};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 type ModOrder = HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>;
 use std::path::Path;
@@ -101,7 +101,7 @@ pub fn discover_and_load(
     }
 
     // Kahn's toposort
-    let sorted = toposort(manifests, &id_to_version, debug)?;
+    let sorted = toposort(manifests, debug)?;
 
     // asset root per mod — used for dangling override validation
     let mod_assets: HashMap<String, std::path::PathBuf> = sorted
@@ -211,14 +211,10 @@ pub fn discover_and_load(
 
 fn toposort(
     mut manifests: Vec<(ModManifest, std::path::PathBuf)>,
-    id_to_version: &HashMap<String, Version>,
     debug: &mut DebugLogger,
 ) -> anyhow::Result<Vec<(ModManifest, std::path::PathBuf)>> {
-    // ensure core is first if present
-    if let Some(core_pos) = manifests.iter().position(|(m, _)| m.meta.id == "core") {
-        let core = manifests.remove(core_pos);
-        manifests.insert(0, core);
-    }
+    // Filesystem discovery order must not influence tick/override order.
+    manifests.sort_by(|(a, _), (b, _)| a.meta.id.cmp(&b.meta.id));
 
     let ids: Vec<String> = manifests.iter().map(|(m, _)| m.meta.id.clone()).collect();
     let idx: HashMap<&str, usize> = ids
@@ -254,15 +250,16 @@ fn toposort(
         }
     }
 
-    let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+    let key = |i: usize| (ids[i] != "core", ids[i].clone(), i);
+    let mut queue: BTreeSet<_> = (0..n).filter(|&i| in_degree[i] == 0).map(key).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
 
-    while let Some(i) = queue.pop_front() {
+    while let Some((_, _, i)) = queue.pop_first() {
         order.push(i);
         for &j in &adj[i] {
             in_degree[j] -= 1;
             if in_degree[j] == 0 {
-                queue.push_back(j);
+                queue.insert(key(j));
             }
         }
     }
@@ -270,8 +267,6 @@ fn toposort(
     if order.len() != n {
         bail!("mod dependency cycle detected");
     }
-
-    let _ = id_to_version;
 
     let mut indexed: Vec<Option<(ModManifest, std::path::PathBuf)>> =
         manifests.into_iter().map(Some).collect();
@@ -309,6 +304,44 @@ fn has_explicit_order(mod_a: &str, mod_b: &str, mod_order: &ModOrder) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dependency_order_is_stable_across_discovery_and_hash_iteration() {
+        let path = std::env::temp_dir().join(format!("whatever-sort-{}.log", std::process::id()));
+        let log = std::fs::File::create(&path).expect("test log");
+        let mut debug = DebugLogger::new(
+            &crate::debug::DebugConfig::from_args(&[]),
+            std::sync::Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(log))),
+        );
+        for ids in [
+            ["zeta", "core", "alpha", "beta"],
+            ["beta", "alpha", "core", "zeta"],
+        ] {
+            let manifests = ids
+                .into_iter()
+                .map(|id| {
+                    let dependencies = if id == "alpha" {
+                        "\n[dependencies]\nzeta='*'\ncore='*'\n"
+                    } else {
+                        ""
+                    };
+                    let manifest = toml::from_str(&format!(
+                        "[mod]\nid='{id}'\nname='{id}'\nversion='1.0.0'\n{dependencies}"
+                    ))
+                    .expect("manifest");
+                    (manifest, std::path::PathBuf::new())
+                })
+                .collect();
+            let order: Vec<_> = toposort(manifests, &mut debug)
+                .expect("sort")
+                .into_iter()
+                .map(|(manifest, _)| manifest.meta.id)
+                .collect();
+            assert_eq!(order, ["core", "beta", "zeta", "alpha"]);
+        }
+        drop(debug);
+        std::fs::remove_file(path).expect("cleanup log");
+    }
 
     #[test]
     fn shipped_core_is_asset_only() {

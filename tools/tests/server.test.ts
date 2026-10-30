@@ -7,7 +7,7 @@ const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
 if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
-async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[]}={}) {
+async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
@@ -19,7 +19,7 @@ async function runServer(source:string, options:{mode?:string;defaultMode?:strin
     put("mods/client_only/mod.toml",'[mod]\nid="client_only"\nname="Client"\nversion="1.0.0"\nsides=["client"]\n[dependencies]\nmissing_client_dependency="*"\n[script]\nentry="wrong.ts"\n');
     put("mods/client_only/wrong.ts",'throw new Error("client-only mod executed");');
     put("mods/server_only/mod.toml",'[mod]\nid="server_only"\nname="Server"\nversion="1.0.0"\nsides=["server"]\n[script]\nentry="server.ts"\n');
-    put("mods/server_only/server.ts",'import { Engine } from "@whatever-engine/api"; Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));');
+    put("mods/server_only/server.ts", options.serverSource ?? 'import { Engine } from "@whatever-engine/api"; Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));');
     const args=[binary,"--mods",join(directory,"mods"),...(options.mode?["--mode",options.mode]:[])];
     child=Bun.spawn(args,{cwd:directory,env:{...process.env,RUST_LOG:"Whatever=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:"",ALSA_CONFIG_PATH:join(directory,"no-audio.conf")},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:15_000});
     const active=child;
@@ -49,13 +49,71 @@ const normal='import { Engine, Scene, Mods } from "@whatever-engine/api";'+
   'if(Engine.mode!=="server")throw new Error("mode missing before evaluation");'+
   'let ready=false;'+
   'Engine.on("init",async({mode})=>{if(mode!=="server")throw new Error("wrong init mode");'+
-  'const entity=await Scene.createEntity();entity.setComponent("fixture:test",{ok:true});'+
-  'const component=await entity.getComponent("fixture:test");if(!component?.ok)throw new Error("ECS IPC failed");'+
+  'const entity=await Scene.createEntity().get();entity.setComponent("fixture:test",{ok:true});'+
+  'const component=await entity.getComponent("fixture:test").get();if(!component?.ok)throw new Error("ECS IPC failed");'+
   'const mods=await Mods.list();if(mods.some(mod=>mod.id==="client_only"))throw new Error("side filtering failed");'+
   'if(!mods.find(mod=>mod.id==="server_only")?.sides.includes("server"))throw new Error("side metadata missing");'+
   'ready=true;Engine.setTickRate(-1);Engine.log("info","INIT_COMPLETE");});'+
   'Engine.on("tick",({tick_number,keys_pressed,mouse_delta})=>{if(keys_pressed.length||mouse_delta.some(x=>x!==0))throw new Error("server has input");'+
   'if(ready&&tick_number>=5)Engine.log("info","FIXTURE_DONE");});';
+
+test("implicit tick buffers execute pending entity chains and capture intermediate query results", async () => {
+  const source = `
+import { Engine, Scene } from "@whatever-engine/api";
+Engine.on("init", async () => {
+  try {
+    const parent = Scene.createEntity();
+    const value = { value: 1 };
+    const child = Scene.createEntity().setComponent("fixture:health", value).setParent(parent);
+    const before = child.getComponent("fixture:health");
+    value.value = 99;
+    child.setComponent("fixture:health", { value: 2 });
+    const after = child.getComponent("fixture:health");
+    const ancestry = child.getParent();
+    const children = parent.getChildren();
+    const firstGet = before.get();
+    if (firstGet !== before.get()) throw new Error("get repeated work");
+    const [entity, parentEntity, first, second, actualParent, actualChildren] = await Promise.all([
+      child.get(), parent.get(), firstGet, after.get(), ancestry.get(), children.get(),
+    ]);
+    if (first.value !== 1 || second.value !== 2) throw new Error("query order or snapshot");
+    if (actualParent.id !== parentEntity.id || actualChildren[0].id !== entity.id) throw new Error("pending references");
+    const transform = { position: [0,0,0], rotation: [0,0,0,1], scale: [2,3,4] };
+    const moved = Scene.createEntity().setComponent("core:transform", transform).move([3,4,5]);
+    const position = await moved.getComponent("core:transform").get();
+    if (position.position.join() !== "3,4,5" || position.scale.join() !== "2,3,4") throw new Error("native move");
+    const selected = await Scene.createEntity().setComponent("fixture:selected", { ok: true }).getComponent("fixture:selected").get();
+    if (!selected.ok) throw new Error("selected result");
+    Engine.log("info", "FIXTURE_DONE");
+  } catch (error) { Engine.log("error", "CHAIN_FAILURE " + error); }
+});`;
+  const result = await runServer(source, { mode: "server" });
+  expect(result.stdout).toContain("FIXTURE_DONE");
+  expect(result.stdout).not.toContain("CHAIN_FAILURE");
+});
+
+test("mod dependency order wins even when its batch arrives after another mod's batch", async () => {
+  const source = `
+import { Engine, Scene } from "@whatever-engine/api";
+Engine.on("init", () => Scene.createEntity().setComponent("fixture:order", { writer: "initial" }));
+Engine.on("tick", ({ tick_number }) => {
+  const previous = Scene.getComponent("0:0", "fixture:order");
+  Scene.setComponent("0:0", "fixture:order", { writer: "core" });
+  const deadline = Date.now() + 20;
+  while (Date.now() < deadline) {}
+  if (tick_number > 1) void previous.get().then(value => {
+    if (value.writer !== "server") Engine.log("error", "ORDER_FAILURE " + value.writer);
+    if (tick_number >= 4) Engine.log("info", "FIXTURE_DONE");
+  });
+});`;
+  const serverSource = `
+import { Engine, Scene } from "@whatever-engine/api";
+Engine.on("init", () => Engine.log("info", "SERVER_ONLY_READY"));
+Engine.on("tick", () => Scene.setComponent("0:0", "fixture:order", { writer: "server" }));`;
+  const result = await runServer(source, { mode: "server", serverSource });
+  expect(result.stdout).not.toContain("ORDER_FAILURE");
+  expect(result.stdout).toContain("FIXTURE_DONE");
+});
 
 describe("headless runtime",()=>{
   test("CLI overrides the client default; ECS and ticks work without a display, audio or PATH",async()=>{
@@ -70,7 +128,7 @@ describe("headless runtime",()=>{
     const result=await runServer(normal,{defaultMode:"server"});
     expect(result.code).toBe(0);expect(result.stdout).toContain("FIXTURE_DONE");expect(result.stderr).toBe("");
   });
-  test("shutdown interrupts a tick whose mod never finishes",async()=>{
+  test("shutdown completes while a mod's async handler never resolves",async()=>{
     const source='import {Engine} from "@whatever-engine/api";Engine.on("tick",()=>{Engine.log("info","TICK_BLOCKED");return new Promise(()=>{});});';
     const result=await runServer(source,{mode:"server",stopAt:"TICK_BLOCKED"});
     expect(result.code).toBe(0);expect(result.stdout).toContain("simulation stopped");expect(result.shutdownMs).toBeLessThan(3000);
