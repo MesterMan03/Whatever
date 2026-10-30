@@ -31,6 +31,8 @@ export type ModManifest = {
 
 /** Payload types for each public event name. */
 export type EventPayloads = {
+  /** Collision and force events, delivered after the native physics phase. */
+  physics: { event: import("./physics-options.ts").PhysicsEventData };
   /** Fired once after the runtime is ready; client mode also waits for its window. */
   init: { mod_id: string; engine_version: string; mode: RuntimeMode };
   /** Fired when the game is shutting down. The process exits after all handlers return. */

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct World {
+    pub rigid_body_states: HashMap<u32, super::RigidBodyState>,
     pub allocator: EntityAllocator,
     pub transforms: HashMap<u32, Transform>,
     pub sprite_renderers: HashMap<u32, SpriteRenderer>,
@@ -30,6 +31,7 @@ pub struct World {
 impl World {
     pub fn new() -> Self {
         World {
+            rigid_body_states: HashMap::new(),
             allocator: EntityAllocator::new(),
             transforms: HashMap::new(),
             sprite_renderers: HashMap::new(),
@@ -124,16 +126,29 @@ impl World {
             .map(|idxs| {
                 idxs.iter()
                     .filter_map(|&idx| {
-                        let candidate = self.parents.get(&idx)?;
-                        // Look up the live EntityId for this child index.
-                        self.allocator
-                            .alive_entity_ids()
-                            .find(|e| e.index == idx)
-                            .filter(|_| self.allocator.is_alive(candidate))
+                        (self.parents.get(&idx) == Some(id))
+                            .then(|| self.allocator.live_id(idx))
+                            .flatten()
                     })
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// A stable traversal, deduplicated when roots overlap; stale roots are ignored.
+    pub fn hierarchy(&self, roots: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+        let mut pending: Vec<_> = roots.into_iter().collect();
+        pending.reverse();
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        while let Some(id) = pending.pop() {
+            if !self.is_alive(&id) || !seen.insert(id) {
+                continue;
+            }
+            result.push(id);
+            pending.extend(self.get_children(&id).into_iter().rev());
+        }
+        result
     }
 
     /// Compute the world-space `Transform` for `id` by composing all ancestor
@@ -215,14 +230,12 @@ impl World {
 
         // Free every entity in the subtree.
         for idx in to_destroy {
-            // Build a synthetic EntityId to free the allocator slot.
-            // We need the correct generation, which the allocator tracks internally.
-            // Walk alive_entity_ids to find it (subtree is usually tiny).
-            let eid = self.allocator.alive_entity_ids().find(|e| e.index == idx);
+            let eid = self.allocator.live_id(idx);
             if let Some(eid) = eid {
                 self.allocator.free(eid);
             }
             self.transforms.remove(&idx);
+            self.rigid_body_states.remove(&idx);
             self.sprite_renderers.remove(&idx);
             self.text_renderers.remove(&idx);
             self.camera_components.remove(&idx);
@@ -252,6 +265,7 @@ impl World {
         }
         let idx = id.index;
         match type_id {
+            super::COMPONENT_RIGID_BODY_STATE => return false,
             COMPONENT_TRANSFORM => match serde_json::from_value::<Transform>(data) {
                 Ok(t) => {
                     self.transforms.insert(idx, t);
@@ -341,6 +355,7 @@ impl World {
         }
         let idx = id.index;
         match type_id {
+            super::COMPONENT_RIGID_BODY_STATE => false,
             COMPONENT_TRANSFORM => self.transforms.remove(&idx).is_some(),
             COMPONENT_SPRITE_RENDERER => self.sprite_renderers.remove(&idx).is_some(),
             COMPONENT_TEXT_RENDERER => self.text_renderers.remove(&idx).is_some(),
@@ -364,6 +379,10 @@ impl World {
         }
         let idx = id.index;
         match type_id {
+            super::COMPONENT_RIGID_BODY_STATE => self
+                .rigid_body_states
+                .get(&idx)
+                .and_then(|state| serde_json::to_value(state).ok()),
             COMPONENT_TRANSFORM => self
                 .transforms
                 .get(&idx)

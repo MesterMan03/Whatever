@@ -5,7 +5,7 @@ TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC prot
 ## Usage
 
 ```ts
-import { Engine, Window, File, Scene, Entity, Mods, Message, Console, Audio } from "@whatever-engine/api";
+import { Engine, Window, File, Scene, Entity, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
 
 Engine.on("init", ({ mod_id }) => {
   Engine.log("info", `loaded as ${mod_id}`);
@@ -25,12 +25,13 @@ Other package imports, including `node:` and `bun:` modules, are denied initiall
 ### `Engine`
 
 - `Engine.mode` — read-only `"client" | "server"`, available before top-level evaluation
-- `Engine.on(event, handler)` — subscribe to an engine event (`init`, `exit`, `tick`, `mod_message`)
+- `Engine.on(event, handler)` — subscribe to an engine event (`init`, `exit`, `tick`, `mod_message`, `physics`)
 - `Engine.log(level, message)` — log through the engine logger (`"info"`, `"warn"`, `"error"`)
 - `Engine.setTickRate(ticks_per_second)` — override the game tick rate at runtime
 - `Engine.setFpsCap(fps | null)` — set FPS cap; `null` = uncapped
 - `Engine.setVsync(enabled)` — enable or disable vertical sync
-- `Engine.setMainCamera(entity_id)` — designate an entity as the active camera (needs `core:camera` + `core:transform`)
+- `Engine.setMainCamera(entityOrId)` — designate a live or pending entity as the active camera
+- `Engine.getMainCamera()` → `Pending<Entity | null>`
 - `Engine.clearCamera()` — remove the active camera (screen goes black with a warning)
 
 ### `Window`
@@ -64,15 +65,23 @@ A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntitie
 - `entity.removeComponent(component_type)` → `this`
 - `entity.getComponent(component_type)` → `Pending<T | null>` — typed for built-in components
 - `entity.move(position)` → `this` — update `core:transform` position, preserve rotation/scale
-- `entity.setParent(parent | null)` → `this` — accepts live or pending entities
+- `entity.setParent(parent | null)` → `this` — accepts entities, references or IDs
 - `entity.getParent()` → `Pending<Entity | null>` — return the parent entity
 - `entity.getChildren()` → `Pending<Entity[]>` — return all direct children
+
+### `EntityRef` / `EntityReference`
+
+- `new EntityRef(entityOrId)` / `Scene.ref(entityOrId)` — typed references in nested component data
+- `reference.id` — opaque ID; unavailable while its target is pending
+- `ComponentValue` — component JSON with typed entity references
+- `ComponentRegistry` / `ComponentSetRegistry` — augment custom component read/write types
 
 ### `Scene`
 
 Entity and component management. Methods that accept a raw `entity_id` string are provided for cases where only an ID is available; prefer `Entity` methods when possible.
 
 - `Scene.createEntity()` → `PendingEntity`
+- `Scene.ref(entityOrId)` → `EntityRef`
 - `Scene.destroyEntity(entity_id)` — fire-and-forget
 - `Scene.listEntities()` → `Pending<Entity[]>`
 - `Scene.setComponent(entity_id, component_type, data)` — fire-and-forget; typed for built-in components
@@ -154,6 +163,26 @@ Omnidirectional point light. Position comes from `core:transform`. Max 8 active 
 - `getColor()`, `setColor(r, g, b)` — RGB colour (default: white)
 - `getIntensity()`, `setIntensity(v)` — multiplier (default: `1.0`)
 - `getRange()`, `setRange(v)` — attenuation radius in world units (default: `10`)
+
+### `Physics`
+
+Native Rapier 3D; see the [full physics reference](../docs/PHYSICS.md).
+
+- `new Physics.World(options?)` — `core:physics_world`
+- `Physics.defaultWorld.get()` → `Promise<Entity>`; `Physics.capabilities`
+- `Physics.RigidBody.dynamic(options?)`, `.fixed(options?)`, `.kinematicPosition(options?)`, `.kinematicVelocity(options?)` — `core:rigid_body`
+- `new Physics.Collider(options)` — `core:collider`
+- `Physics.Joint.fixed(options)`, `.revolute(options)`, `.prismatic(options)`, `.spherical(options)`, `.generic(options)` — `core:joint`
+- `Physics.Shape.sphere(radius)`, `.box(options)`, `.capsule(options)`, `.cylinder(options)`, `.cone(options)`, `.plane(normal?)`, `.convexHull(points)`, `.triMesh(vertices, indices, flags?)`, `.compound(parts)`
+- `Physics.body(entityOrId)` → `BodyHandle`
+- `body.applyImpulse(vector, options?)`, `.applyTorqueImpulse(vector, wake?)`, `.addForce(vector, options?)`, `.addTorque(vector, wake?)`
+- `body.resetForces(wake?)`, `.resetTorques(wake?)`, `.setLinearVelocity(vector, options?)`, `.setAngularVelocity(vector, wake?)`
+- `body.teleport(position, options?)`, `.setKinematicTarget(position, rotation?)`, `.sleep()`, `.wake()`
+- `body.get()` → `Promise<void>`; `body.state()` → `Pending<Physics.BodyState>`
+- `Physics.world(entityOrId?)` → `WorldHandle`; `world.castRay(origin, direction, options)` → `Pending<Physics.RayHit | null>`
+- `Physics.onEvent(handler)`; `Physics.QueryFilterFlag`, `Physics.CollisionType`, `Physics.TriMeshFlag`
+- Read-only ECS views: `core:rigid_body_state` / `Physics.BodyState`, `core:physics_status` / `Physics.Status`
+- Typed expert settings: `Physics.IntegrationOptions`, `BodyRapierOptions`, `ColliderRapierOptions`, `JointRapierOptions`
 
 ### `Audio`
 

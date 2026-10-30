@@ -12,6 +12,7 @@ export const _modGetCallbacks = new Map<string, { resolve: (v: ModManifest) => v
 export const _msgCallbacks = new Map<string, { resolve: (v: JsonValue) => void; reject: (e: Error) => void }>();
 export const _entityCallbacks = new Map<string, { resolve: (v: string) => void; reject: (e: Error) => void }>();
 export const _entityListCallbacks = new Map<string, { resolve: (v: string[]) => void; reject: (e: Error) => void }>();
+export const _mainCameraCallbacks = new Map<string, {resolve:(value:string|null)=>void;reject:(error:Error)=>void}>();
 export const _componentGetCallbacks = new Map<string, { resolve: (v: JsonValue | null) => void; reject: (e: Error) => void }>();
 export const _componentQueryCallbacks = new Map<string, { resolve: (v: Array<{ entity_id: string; components: Record<string, JsonValue> }>) => void; reject: (e: Error) => void }>();
 export const _entityParentCallbacks = new Map<string, { resolve: (v: string | null) => void; reject: (e: Error) => void }>();
@@ -43,4 +44,5 @@ export const _EVENT_SUBSCRIBE: Partial<Record<EventName, string>> = {
   init: "Init",
   exit: "Shutdown",
   tick: "Tick",
+  physics: "PhysicsEvent",
 };

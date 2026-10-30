@@ -62,7 +62,15 @@ fn run_inspect(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
             t.text, t.font, t.font_size, t.color
         ))
     }
-    for (comp_type, entities) in &ctx.world.custom {
+    if let Some(state) = ctx
+        .world
+        .get_component(&id, crate::ecs::COMPONENT_RIGID_BODY_STATE)
+    {
+        lines.push(format!("  core:rigid_body_state  {state}"));
+    }
+    let mut custom: Vec<_> = ctx.world.custom.iter().collect();
+    custom.sort_by_key(|(kind, _)| *kind);
+    for (comp_type, entities) in custom {
         if let Some(data) = entities.get(&id.index) {
             lines.push(format!("  {comp_type}  {data}"));
         }

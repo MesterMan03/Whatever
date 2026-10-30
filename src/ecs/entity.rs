@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId {
     pub index: u32,
     pub generation: u32,
@@ -82,6 +82,16 @@ impl EntityAllocator {
             .get(id.index as usize)
             .map(|s| s.alive && s.generation == id.generation)
             .unwrap_or(false)
+    }
+
+    pub fn live_id(&self, index: u32) -> Option<EntityId> {
+        self.slots
+            .get(index as usize)
+            .filter(|slot| slot.alive)
+            .map(|slot| EntityId {
+                index,
+                generation: slot.generation,
+            })
     }
 
     /// Total number of slots (alive + dead) — used as a safe iteration bound.

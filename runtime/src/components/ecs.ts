@@ -1,5 +1,6 @@
-import type { Component, JsonValue, QueryResult } from "../types.ts";
+import type { Component, QueryResult } from "../types.ts";
 import { _pending, type Pending } from "../pending.ts";
+import { EntityRef, type EntityReference, type ComponentValue } from "../references.ts";
 import {
   _send, nextReqId,
   _entityCallbacks, _entityListCallbacks,
@@ -371,7 +372,7 @@ export namespace BuiltInComponents {
   }
 }
 
-interface _ComponentRegistry {
+export interface ComponentRegistry {
   [BuiltInComponents.TRANSFORM_ID]: BuiltInComponents.Transform;
   [BuiltInComponents.SPRITE_RENDERER_ID]: BuiltInComponents.SpriteRenderer;
   [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
@@ -383,7 +384,7 @@ interface _ComponentRegistry {
 }
 
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
-interface _ComponentSetRegistry {
+export interface ComponentSetRegistry {
   [BuiltInComponents.TRANSFORM_ID]: { position: [number, number, number]; rotation: [number, number, number, number]; scale: [number, number, number] };
   [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; shader: string };
   [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font: string; shader: string; font_size?: number; color?: [number, number, number, number]; };
@@ -395,7 +396,7 @@ interface _ComponentSetRegistry {
 }
 
 // Converts raw component JSON into the appropriate class instance for built-in types.
-const _componentHydrators: Record<string, (data: any) => any> = {
+export const _componentHydrators: Record<string, (data: any) => any> = {
   "core:transform": (data) => new BuiltInComponents.Transform(data),
   "core:sprite_renderer": (data) => new BuiltInComponents.SpriteRenderer(data),
   "core:text_renderer": (data) => new BuiltInComponents.TextRenderer(data),
@@ -406,15 +407,24 @@ const _componentHydrators: Record<string, (data: any) => any> = {
   "core:point_light": (data) => new BuiltInComponents.PointLight(data),
 };
 
-function _setComponentImpl<K extends keyof _ComponentSetRegistry>(entity_id: string, component_type: K, data: _ComponentSetRegistry[K]): void;
-function _setComponentImpl<K extends string>(entity_id: string, component_type: K, data: K extends keyof _ComponentSetRegistry ? _ComponentSetRegistry[K] : JsonValue): void;
+export function hydrateReferences(value: any): any {
+  if (Array.isArray(value)) return value.map(hydrateReferences);
+  if (value && typeof value === "object") {
+    if (Object.keys(value).length === 1 && typeof value.$entity === "string") return new Entity(value.$entity);
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, hydrateReferences(item)]));
+  }
+  return value;
+}
+
+function _setComponentImpl<K extends keyof ComponentSetRegistry>(entity_id: string, component_type: K, data: ComponentSetRegistry[K]): void;
+function _setComponentImpl<K extends string>(entity_id: string, component_type: K, data: K extends keyof ComponentSetRegistry ? ComponentSetRegistry[K] : K extends keyof ComponentRegistry ? never : ComponentValue): void;
 function _setComponentImpl(entity_id: string, component_type: string, data: any): void {
   // Destructure to exclude `id` without mutating the caller's object.
   const { id: _id, ...rest } = data;
   _send({ type: "ComponentSet", entity_id, component_type, data: rest });
 }
 
-function _getComponentImpl<K extends keyof _ComponentRegistry>(entity_id: string, component_type: K): Pending<_ComponentRegistry[K] | null>;
+function _getComponentImpl<K extends keyof ComponentRegistry>(entity_id: string, component_type: K): Pending<ComponentRegistry[K] | null>;
 function _getComponentImpl<T extends Component = Component>(entity_id: string, component_type: string): Pending<T | null>;
 function _getComponentImpl(entity_id: string, component_type: string): Pending<any> {
   return _pending(new Promise((resolve, reject) => {
@@ -424,7 +434,7 @@ function _getComponentImpl(entity_id: string, component_type: string): Pending<a
   }).then((data) => {
     if (data === null) return null;
     const hydrator = _componentHydrators[component_type];
-    return hydrator ? hydrator(data) : data;
+    return hydrator ? hydrator(hydrateReferences(data)) : hydrateReferences(data);
   }));
 }
 
@@ -432,6 +442,7 @@ function _getComponentImpl(entity_id: string, component_type: string): Pending<a
 export class Entity {
   constructor(protected _entityId: string) {}
   get id(): string { return this._entityId; }
+  toJSON(): { $entity: string } { return { $entity: this._entityId }; }
 
   /** Destroy this entity and all its components. Fire-and-forget. */
   destroy(): void {
@@ -439,9 +450,9 @@ export class Entity {
   }
 
   /** Set a component on this entity. Fire-and-forget. */
-  setComponent<K extends keyof _ComponentSetRegistry>(component_type: K, data: _ComponentSetRegistry[K]): this;
+  setComponent<K extends keyof ComponentSetRegistry>(component_type: K, data: ComponentSetRegistry[K]): this;
   setComponent(component: Component): this;
-  setComponent<K extends string>(component_type: K, data: K extends keyof _ComponentSetRegistry ? _ComponentSetRegistry[K] : JsonValue): this;
+  setComponent<K extends string>(component_type: K, data: K extends keyof ComponentSetRegistry ? ComponentSetRegistry[K] : K extends keyof ComponentRegistry ? never : ComponentValue): this;
   setComponent(component_type_or_component: string | Component, data?: any): this {
     if (typeof component_type_or_component === "object") {
       _setComponentImpl(this._entityId, component_type_or_component.id, component_type_or_component as any);
@@ -458,7 +469,7 @@ export class Entity {
   }
 
   /** Get a component's data. Returns `null` if the component is not set. */
-  getComponent<K extends keyof _ComponentRegistry>(component_type: K): Pending<_ComponentRegistry[K] | null>;
+  getComponent<K extends keyof ComponentRegistry>(component_type: K): Pending<ComponentRegistry[K] | null>;
   getComponent<T extends Component = Component>(component_type: string): Pending<T | null>;
   getComponent(component_type: string): Pending<any> {
     return _getComponentImpl(this._entityId, component_type);
@@ -481,8 +492,8 @@ export class Entity {
    * parent's world-space transform. If the entity has no parent its local
    * transform equals its world-space transform.
    */
-  setParent(parent: Entity | string | null): this {
-    const parent_id = parent === null ? null : (typeof parent === "string" ? parent : parent._entityId);
+  setParent(parent: EntityReference | string | null): this {
+    const parent_id = parent === null ? null : (typeof parent === "string" ? parent : parent.toJSON().$entity);
     _send({ type: "EntitySetParent", entity_id: this._entityId, parent_id });
     return this;
   }
@@ -537,6 +548,8 @@ export class PendingEntity extends Entity {
 
 /** Entity and component management. */
 export const Scene = {
+  /** Embed an entity or opaque entity ID in any component field. */
+  ref(target: EntityReference | string): EntityRef { return new EntityRef(target); },
   /** Create a new entity and return it. */
   createEntity(): PendingEntity {
     return new PendingEntity();
@@ -577,7 +590,7 @@ export const Scene = {
           components: Object.fromEntries(
             Object.entries(r.components).map(([k, v]) => {
               const hydrator = _componentHydrators[k];
-              return [k, hydrator ? hydrator(v) : v];
+              return [k, hydrator ? hydrator(hydrateReferences(v)) : hydrateReferences(v)];
             })
           ),
         }))),

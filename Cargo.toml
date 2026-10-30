@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "Whatever"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 
 [dependencies]
@@ -12,6 +12,7 @@ winit          = "0.30"
 wgpu           = "23"
 bytemuck       = { version = "1", features = ["derive"] }
 glam           = "0.29"
+rapier3d       = { version = "=0.36.1", features = ["enhanced-determinism", "serde-serialize"] }
 image          = { version = "0.25", default-features = false, features = ["png"] }
 serde          = { version = "1", features = ["derive"] }
 toml           = "0.8"

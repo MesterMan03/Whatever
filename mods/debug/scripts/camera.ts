@@ -13,28 +13,34 @@ const MOVE_SPEED = 5.0; // world units per second
 
 // --- Scene entities ----------------------------------------------------------
 
-let character: Entity;
+let cameraRig: Entity;
 let cameraEntity: Entity;
 
 Engine.on("init", async () => {
-  character = await Scene.spawnSprite(
-    "debug://textures/sample.png",
-    "core://shaders/sprite.wgsl",
-    [0, 0, 0],
-    [1, 1, 1],
-  ).get();
-  cameraEntity = await Scene.createEntity().get();
-  cameraEntity.move([0, 0, 0]);
-  cameraEntity.setComponent(new Camera());
-  cameraEntity.setParent(character);
-  Engine.setMainCamera(cameraEntity.id);
+  // A free camera needs a transform rig, not a visible player/sprite entity.
+  const rig = Scene.createEntity().setComponent(new BuiltInComponents.Transform());
+  const camera = Scene.createEntity()
+    .setComponent(new BuiltInComponents.Transform().setEulerRadians(pitch, 0, 0))
+    .setComponent(new Camera())
+    .setParent(rig);
+  Engine.setMainCamera(camera);
+  [cameraRig, cameraEntity] = await Promise.all([rig.get(), camera.get()]);
 });
 
 // --- Tick: camera controller -------------------------------------------------
 
 Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
   // Entities aren't ready until after init resolves.
-  if (!character || !cameraEntity) return;
+  if (!cameraRig || !cameraEntity) return;
+
+  const [activeCamera, rigTransform, camTransform] = await Promise.all([
+    Engine.getMainCamera().get(),
+    cameraRig.getComponent("core:transform").get(),
+    cameraEntity.getComponent("core:transform").get(),
+  ]);
+  // Another mod can take over the view, e.g. the physics playground. Its input
+  // must not also move this inactive camera or change the view restored later.
+  if (activeCamera?.id !== cameraEntity.id || !rigTransform || !camTransform) return;
 
   const [dx, dy] = mouse_delta;
 
@@ -44,10 +50,7 @@ Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
   yaw -= dx * MOUSE_SENSITIVITY;
   pitch = Math.max(-1.5, Math.min(1.5, pitch - dy * MOUSE_SENSITIVITY));
 
-  // ---- Character: movement + yaw ------------------------------------------
-
-  const charTransform = await character.getComponent("core:transform").get();
-  if (!charTransform) return;
+  // ---- Camera rig: movement + yaw -----------------------------------------
 
   // World-space forward/right vectors derived from yaw.
   // With yaw=0 the camera looks toward −Z, so forward is (0, 0, −1) and
@@ -93,22 +96,20 @@ Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
     moveZ /= hLen;
   }
 
-  charTransform.position[0] += moveX * MOVE_SPEED * delta_seconds;
-  charTransform.position[1] += moveY * MOVE_SPEED * delta_seconds;
-  charTransform.position[2] += moveZ * MOVE_SPEED * delta_seconds;
+  rigTransform.position[0] += moveX * MOVE_SPEED * delta_seconds;
+  rigTransform.position[1] += moveY * MOVE_SPEED * delta_seconds;
+  rigTransform.position[2] += moveZ * MOVE_SPEED * delta_seconds;
 
-  // Character yaw is the horizontal rotation; the camera inherits this
+  // Rig yaw is the horizontal rotation; the camera inherits this
   // through the parent-child relationship.
-  charTransform.setEulerRadians(0, yaw, 0);
+  rigTransform.setEulerRadians(0, yaw, 0);
 
-  character.setComponent(charTransform);
+  cameraRig.setComponent(rigTransform);
 
   // ---- Camera: pitch (local X-axis rotation) ------------------------------
 
-  // The camera entity is a child of the character, so it already inherits
+  // The camera entity is a child of the rig, so it already inherits
   // the yaw.  We only need to apply the vertical pitch in local space.
-  const camTransform =
-    (await cameraEntity.getComponent("core:transform").get()) ?? new BuiltInComponents.Transform();
   camTransform.setEulerRadians(pitch, 0, 0);
   cameraEntity.setComponent(camTransform);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
 if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
-async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string}={}) {
+async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
@@ -16,6 +16,7 @@ async function runServer(source:string, options:{mode?:string;defaultMode?:strin
     put("mods/core/mod.toml",'[mod]\nid="core"\nname="Core"\nversion="1.0.0"\n[script]\nentry="wrong.ts"\nclient="wrong.ts"\nserver="server.ts"\n');
     put("mods/core/wrong.ts",'throw new Error("wrong entry selected");');
     put("mods/core/server.ts",source);
+    for(const [path,text] of Object.entries(options.files??{}))put("mods/core/"+path,text);
     put("mods/client_only/mod.toml",'[mod]\nid="client_only"\nname="Client"\nversion="1.0.0"\nsides=["client"]\n[dependencies]\nmissing_client_dependency="*"\n[script]\nentry="wrong.ts"\n');
     put("mods/client_only/wrong.ts",'throw new Error("client-only mod executed");');
     put("mods/server_only/mod.toml",'[mod]\nid="server_only"\nname="Server"\nversion="1.0.0"\nsides=["server"]\n[script]\nentry="server.ts"\n');
@@ -163,4 +164,123 @@ test("headless stdin executes registered mod commands using engine argument vali
     'Engine.on("init",()=>Engine.log("info","CONSOLE_READY"));';
   const result=await runServer(source,{mode:"server",commandsOnReady:["probe core"]});
   expect(result.stdout).toContain("FIXTURE_DONE target=core");
+});
+
+test("pending ECS references, physics configuration and intermediate results round-trip through the real host",async()=>{
+  const source=String.raw`
+import {Engine,Entity,Physics,Scene} from "@whatever-engine/api";
+function check(value,message){if(!value)throw new Error(message);}
+Engine.on("init",async()=>{try{
+  const arena=Scene.createEntity().setComponent(new Physics.World({gravity:[0,0,0],substeps:2,rapier:{integration:{num_solver_iterations:8,friction_model:"Coulomb"}}}));
+  const body=Scene.createEntity().move([0,4,0]).setComponent(Physics.RigidBody.dynamic({world:arena,ccd:true,rapier:{additional_solver_iterations:3}}));
+  const left=Scene.createEntity().setComponent(new Physics.Collider({body,position:[-1,0,0],shape:Physics.Shape.sphere(0.5),mass:3}));
+  const right=Scene.createEntity().setComponent(new Physics.Collider({body,position:[1,0,0],shape:Physics.Shape.box({size:[1,1,1]}),mass:4}));
+  left.setParent(Scene.ref(right));
+  body.setComponent("fixture:refs",{target:left,nested:[Scene.ref(right)]});
+  Physics.body(body).setLinearVelocity([3,1,0]);
+  const selected=left.getComponent("core:collider");
+  const selectedState=Physics.body(body).state();
+  const selectedRefs=body.getComponent("fixture:refs");
+  const [entity,collider,state,refs,settings,parent]=await Promise.all([body.get(),selected.get(),selectedState.get(),selectedRefs.get(),arena.getComponent("core:physics_world").get(),left.getParent().get()]);
+  check(parent.id===right.id,"typed entity reference parenting");
+  check(collider instanceof Physics.Collider,"typed collider hydration");
+  check(collider.body.id===entity.id,"pending body reference");
+  check(refs.target instanceof Entity && refs.nested[0] instanceof Entity,"custom nested reference hydration");
+  check(refs.target.id===left.id && refs.nested[0].id===right.id,"custom reference targets");
+  check(Math.abs(state.mass-7)<0.001 && state.linearVelocity[0]===3 && state.world.id===arena.id,"mass, velocity and world state: "+JSON.stringify(state));
+  check(settings.rapier.integration.num_solver_iterations===8 && settings.rapier.integration.dt===undefined,"world settings and engine dt");
+  const config=await entity.getComponent("core:rigid_body").get();
+  config.world=arena;
+  config.rapier.additional_solver_iterations=6;entity.setComponent(config);
+  left.removeComponent("core:collider");
+  const next=await Physics.body(entity).state().get();
+  check(Math.abs(next.mass-4)<0.001 && next.linearVelocity[0]===3,"ordered removal/configuration must preserve velocity");
+  const defaultWorld=await Physics.defaultWorld.get();
+  check(defaultWorld instanceof Entity && defaultWorld.id.includes(":"),"default world entity");
+  const defaultSettings=await defaultWorld.getComponent("core:physics_world").get();
+  check(defaultSettings instanceof Physics.World,"default world ECS configuration");
+  try {await Physics.body(left).applyImpulse([1,0,0]).get();throw new Error("missing body accepted");}
+  catch(error){check(String(error).includes("no active rigid body"),"native mutation error must reach Pending.get");}
+  Engine.log("info","PHYSICS_REFS_OK");
+}catch(error){Engine.log("error","PHYSICS_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
+  const result=await runServer(source,{mode:"server"});
+  expect(result.stdout).toContain("PHYSICS_REFS_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
+});
+
+test("physics advances after commands, queries see prior mutations and collisions return on later ticks",async()=>{
+  const source=String.raw`
+import {Engine,Physics,Scene} from "@whatever-engine/api";
+let body,floor,ready=false,started=0,collision=false,force=false,done=false;
+function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error.stack);else Engine.log("info","PHYSICS_TICKS_OK");Engine.log("info","FIXTURE_DONE");}
+Physics.onEvent(event=>{
+ if(event.kind==="started" && !event.sensor)collision=true;
+ if(event.kind==="contactForce" && event.totalForceMagnitude>0 && event.totalForce.length===3)force=true;
+});
+Engine.on("init",async()=>{try{
+ floor=Scene.createEntity().move([0,-0.5,0]).setComponent(Physics.RigidBody.fixed()).setComponent(new Physics.Collider({shape:Physics.Shape.box({size:[30,1,30]}),events:["collision","contactForce"],rapier:{contact_force_event_threshold:0}}));
+ body=Scene.createEntity().move([0,3,0]).setComponent(Physics.RigidBody.dynamic()).setComponent(new Physics.Collider({shape:Physics.Shape.box({size:[1,1,1]}),mass:2}));
+ const first=await Physics.world().castRay([0,10,0],[0,-1,0],{maxDistance:20}).get();
+ if(first.collider.id!==body.id || Math.abs(first.distance-6.5)>0.001)throw new Error("same-batch creation query");
+ Physics.body(body).teleport([3,3,0]);
+ const second=await Physics.world().castRay([0,10,0],[0,-1,0],{maxDistance:20,flags:Physics.QueryFilterFlag.EXCLUDE_SENSORS}).get();
+ if(second.collider.id!==floor.id)throw new Error("ordered teleport query");
+ ready=true;
+}catch(error){finish(error);}});
+Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)started=tick_number;if(tick_number-started<180)return;try{
+ const state=await Physics.body(body).state().get();
+ const transform=await body.getComponent("core:transform").get();
+ if(Math.abs(state.position[1]-0.5)>0.03 || Math.abs(transform.position[1]-0.5)>0.03)throw new Error("body did not settle or write back to ECS");
+ if(!collision || !force)throw new Error("collision/force events missing");
+ finish();
+}catch(error){finish(error);}});`;
+  const result=await runServer(source,{mode:"server"});
+  expect(result.stdout).toContain("PHYSICS_TICKS_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
+});
+
+test("the shipped physics playground scene simulates and cleans up headlessly",async()=>{
+  const source=String.raw`
+import {Engine,Physics,Scene} from "@whatever-engine/api";
+import {createDemoScene,destroyDemoScene,spawnCubes} from "./physics-scene.ts";
+let scene,ready=false,started=0,done=false;
+function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error.stack);else Engine.log("info","PHYSICS_SCENE_OK");Engine.log("info","FIXTURE_DONE");}
+Engine.on("init",async()=>{try{
+ scene=createDemoScene(1234);await scene.player.get();
+ const cubes=await Scene.query(["physics_demo:cube"]).get();if(cubes.length!==24)throw new Error("initial cubes");
+ const colliders=await Scene.query(["core:collider"]).get();if(colliders.length!==30)throw new Error("compound frame colliders");
+ spawnCubes(scene,3);
+ const more=await Scene.query(["physics_demo:cube"]).get();if(more.length!==27)throw new Error("additional cubes");
+ ready=true;
+}catch(error){finish(error);}});
+Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)started=tick_number;if(tick_number-started<120)return;try{
+ const state=await Physics.body(scene.player).state().get();
+ if(Math.abs(state.position[1]-1)>0.04 || state.mass!==75)throw new Error("player capsule did not settle");
+ const statuses=await Scene.query(["core:physics_status"]).get();
+ for(const row of statuses)for(const status of Object.values(row.components["core:physics_status"]))if(!status.active)throw new Error("inactive playground physics: "+status.error);
+ const cubes=await Scene.query(["physics_demo:cube","core:rigid_body_state"]).get();
+ if(cubes.some(row=>row.components["core:rigid_body_state"].position[1]<0))throw new Error("cube fell through floor");
+ destroyDemoScene(scene);
+ const remaining=await Scene.listEntities().get();if(remaining.length!==0)throw new Error("playground leaked "+remaining.length+" entities");
+ finish();
+}catch(error){finish(error);}});`;
+  const sceneSource=readFileSync(join(repository,"mods/physics_demo/scripts/scene.ts"),"utf8");
+  const result=await runServer(source,{mode:"server",files:{"physics-scene.ts":sceneSource}});
+  expect(result.stdout).toContain("PHYSICS_SCENE_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
+});
+
+test("tick-rate changes preserve the current physics delta and affect the next tick",async()=>{
+  const source=String.raw`
+import {Engine,Physics,Scene} from "@whatever-engine/api";
+Engine.on("init",async()=>{try{
+ const arena=Scene.createEntity().setComponent(new Physics.World({gravity:[0,0,0]}));
+ const body=Scene.createEntity().setComponent(Physics.RigidBody.dynamic({world:arena,rapier:{additional_mass:1}}));
+ Physics.body(body).setLinearVelocity([1,0,0]);
+ Engine.setTickRate(20);
+ await body.get();
+ const first=await Physics.body(body).state().get();
+ const second=await Physics.body(body).state().get();
+ if(Math.abs(first.position[0]-0.01)>0.0001 || Math.abs(second.position[0]-0.06)>0.0001)throw new Error("tick deltas were not stable: "+JSON.stringify([first.position,second.position]));
+ Engine.log("info","PHYSICS_CLOCK_OK");
+}catch(error){Engine.log("error","PHYSICS_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
+  const result=await runServer(source,{mode:"server"});
+  expect(result.stdout).toContain("PHYSICS_CLOCK_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
 });

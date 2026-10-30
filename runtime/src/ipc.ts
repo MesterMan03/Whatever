@@ -1,9 +1,12 @@
 import { handleResponse as handleNetworkResponse, handleEvent as handleNetworkEvent, type NetworkEvent } from "./network/registration.ts";
+import { _handlePhysicsResponse } from "./components/physics.ts";
+import { hydrateReferences } from "./components/ecs.ts";
 import type { JsonValue, ModManifest, EventName, EventPayloads } from "./types.ts";
 import {
   _handlers, _fileCallbacks, _modListCallbacks, _modGetCallbacks, _msgCallbacks,
   _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
   _entityParentCallbacks, _entityChildrenCallbacks,
+  _mainCameraCallbacks,
   _EVENT_SUBSCRIBE, _send, _flush,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
@@ -17,6 +20,9 @@ const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
+  | {type:"MainCameraResponse";request_id:string;entity_id:string|null}
+  | { type:"PhysicsResponse"; request_id:string; result:unknown; error:string|null }
+  | { type:"PhysicsEvent"; event:unknown }
   | { type: "CommandResults"; tick_number: number; messages: _EngineMsg[] }
   | ({type: "NetworkEvent"} & NetworkEvent)
   | {type: "NetworkResponse"; request_id: string; result: unknown; error: string | null}
@@ -51,6 +57,12 @@ let initialized = false;
 let failed = false;
 
 function _dispatch(msg: _EngineMsg): void {
+  if (msg.type==="MainCameraResponse") {const callback=_mainCameraCallbacks.get(msg.request_id);if(callback){_mainCameraCallbacks.delete(msg.request_id);callback.resolve(msg.entity_id);}return;}
+  if (msg.type==="PhysicsResponse") {_handlePhysicsResponse(msg);return;}
+  if (msg.type==="PhysicsEvent") {
+    for (const handler of _handlers.get("physics") ?? []) handler({event:hydrateReferences(msg.event)});
+    return;
+  }
   if (msg.type === "CommandResults") {
     for (const result of msg.messages) _dispatch(result);
     return;

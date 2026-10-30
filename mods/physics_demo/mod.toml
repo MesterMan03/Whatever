@@ -1,0 +1,15 @@
+[mod]
+id = "physics_demo"
+name = "Rapier Physics Playground"
+version = "0.1.0"
+description = "Opt-in components-first physics playground: a bean, orbit camera, cubes and a hinged gate"
+sides = ["client"]
+
+[dependencies]
+core = "*"
+
+[script]
+client = "scripts/client.ts"
+
+[assets]
+root = "assets"

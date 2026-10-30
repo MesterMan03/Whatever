@@ -5,7 +5,7 @@ communicates with each script over NDJSON on stdin/stdout. The `@whatever-engine
 package abstracts the wire protocol.
 
 ```ts
-import { Engine, Window, File, Scene, Mods, Message, Console, Audio } from "@whatever-engine/api";
+import { Engine, Window, File, Scene, EntityRef, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
 ```
 
 The engine-owned mod host embeds the API and registers `@whatever-engine/api` before
@@ -25,7 +25,7 @@ Read-only `"client" | "server"`, available during top-level mod evaluation as we
 
 Simulation ticks run on a separate engine worker. Each mod submits one command buffer per tick, independently of promises returned by its handlers. The server runs this worker without a window, GPU or audio output device. FPS and vsync affect presentation only. Invalid tick rates (nonpositive, nonfinite or unrepresentable) are logged and ignored.
 
-Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera` and `clearCamera` reject use in server mode. ECS component data and entity operations remain available there, including components a client may later render.
+Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera`, `getMainCamera` and `clearCamera` reject use in server mode. ECS component data, native physics and entity operations remain available there, including components a client may later render.
 
 ### `Engine.on(event, handler)`
 
@@ -61,6 +61,7 @@ The engine sends `Init` after this handshake and runtime readiness (including wi
 | `exit` | `{ exit_code }` | Fired on shutdown; process exits after all handlers return |
 | `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta }` | Runs on ticks when this handler is free; no overlapping invocations |
 | `mod_message` | `{ source_mod_id, message, request_id? }` | Message from another mod (see `Message`) |
+| `physics` | `{ event: Physics.Event }` | Native collision/contact-force event after physics |
 
 ### `Engine.log(level, message)`
 
@@ -108,22 +109,30 @@ Engine.setVsync(true);  // on (default)
 Engine.setVsync(false); // off
 ```
 
-### `Engine.setMainCamera(entity_id)`
+### `Engine.setMainCamera(entityOrId)`
 
 Designate an entity as the scene's active camera.  The entity must have both
 `core:camera` and `core:transform` components attached; the engine reads them
 every frame to produce the view-projection matrix.
 
+Accepts `Entity`, `PendingEntity`, `EntityRef`, or an opaque ID string. Pending cameras
+can be created, configured and selected in the same batch.
+
 ```ts
 const cam = await Scene.createEntity().get();
 cam.setComponent(new BuiltInComponents.Transform({ position: [0, 5, 10] }));
 cam.setComponent(new BuiltInComponents.Camera({ fovy_degrees: 60 }));
-Engine.setMainCamera(cam.id);
+Engine.setMainCamera(cam);
 ```
 
 Multiple camera entities can coexist in the scene; only the designated one is
 rendered.  If no camera is set, or if the entity dies, the screen clears to
 black and a warning overlay is displayed.
+
+### `Engine.getMainCamera()` → `Pending<Entity | null>`
+
+Select the current live camera at this command's position. Useful for restoring the
+previous view after a mod temporarily installs a camera. Available on the client only.
 
 ### `Engine.clearCamera()`
 
@@ -204,13 +213,13 @@ Delete a sandboxed file.
 
 Each tick has one ordered pipeline:
 
-1. Gather input and queued external work: console invocations, network events and completed audio notifications. Input is sampled once; events arriving after collection wait until a later tick.
+1. Gather input and queued external work: console invocations, network events and completed audio notifications. Input is sampled once with held keys in stable sorted order; events arriving after collection wait until a later tick.
 2. Send a tick to every initialized mod. The SDK calls available tick handlers in registration order, then flushes its command buffer immediately, without awaiting user promises. This private flush happens even when there are no tick handlers or all handlers are awaiting results.
 3. Collect exactly one batch per live mod for the current tick. Execute complete batches in dependency/load order, and commands within each batch in recording order. No command executes while other batches are still being collected.
-4. Run native simulation systems. Physics will occupy this phase when implemented; no physics currently runs.
+4. Reconcile physics components, step each native world in stable entity order using this tick's sampled delta, then write poses and derived state back to ECS. World substeps/timeScale affect only that world's integration. Position-based kinematic targets interpolate across its substeps.
 5. Publish the world/render snapshot and buffered command results. Result callbacks and async continuations record new commands for a later tick.
 
-All API namespaces share this buffer, including logging, window commands, files, ECS, console and networking. Arguments are serialized when recorded so later JavaScript mutations cannot change earlier commands. Queries capture the value at their position in the command sequence. This is ordered execution, not an atomic transaction: commands do not roll back together on failure.
+All API namespaces share this buffer, including logging, window commands, files, ECS, physics, console and networking. Arguments are serialized when recorded so later JavaScript mutations cannot change earlier commands. Queries capture the value at their position in the command sequence. Native physics operations/queries reconcile preceding component changes without advancing simulation time. Physics events and buffered results publish after the physics phase. Changing the tick rate affects the next tick; the current tick keeps the delta already delivered to mods. This is ordered execution, not an atomic transaction: commands do not roll back together on failure.
 
 Mods are ordered by dependencies and explicit load constraints, with `core` preferred first and alphabetical mod-ID tie-breaking among eligible mods. Startup waits for host handshakes and sends `Init` in this order before the first tick. Pipe arrival order cannot change command execution order. A process exit removes it from the submission barrier; shutdown interrupts that barrier. A synchronously blocked mod can still delay submission, while an asynchronously waiting handler continues submitting empty or otherwise queued buffers.
 
@@ -237,6 +246,26 @@ const [entity, health] = await Promise.all([
 The pending entity's `.id` throws until its creation result arrives; use `.get()` when an actual ID is needed. Keeping the pending reference lets you continue using its entity methods after resolution. Queries issued later or commands recorded by a result callback belong to a later batch. Other namespaces retain their documented promise return types while using the same per-tick buffer.
 
 ## `Entity`
+
+### Typed references in component data
+
+An `Entity` or `PendingEntity` can appear in nested component data. `Scene.ref(entityOrId)`
+and `new EntityRef(entityOrId)` explicitly wrap opaque IDs. These implement `EntityReference`;
+`ComponentValue` is the recursive component-data type including references. Native storage
+resolves pending references to generational IDs within the originating batch; reads hydrate
+them to entities. Ordinary strings remain ordinary data. `$entity` is a reserved wire tag.
+Reference values also work in `entity.setParent()` and `Engine.setMainCamera()`.
+
+```ts
+const target = Scene.createEntity();
+const tracker = Scene.createEntity().setComponent("game:tracker", {
+  target, children: [Scene.ref(target)],
+});
+```
+
+Exported `ComponentRegistry` / `ComponentSetRegistry` interfaces support declaration merging
+for custom read/write schemas. Known physics configuration keys participate in the same
+typed ECS setters/getters. Native physics state/status keys are read-only.
 
 A live entity in the scene. All methods that create or enumerate entities
 (`Scene.createEntity`, `Scene.listEntities`, `Scene.query`, `Scene.spawnSprite`)
@@ -794,6 +823,59 @@ await Scene.addPointLight([0, 3, 0], [1, 0.5, 0.1], 2.0, 15).get();
 
 ---
 
+## `Physics`
+
+Native Rapier 3D 0.36.1 runs on the simulation worker. Configure it with ordinary ECS
+components; `Physics.body(reference)` binds operations without implicitly adding a body.
+See [the full physics reference](PHYSICS.md) for shapes, compound bodies, joint frames,
+lifecycle, timing, all native option names and supported compile-time capabilities.
+
+```ts
+const ball = Scene.createEntity().move([0, 5, 0])
+  .setComponent(Physics.RigidBody.dynamic({ ccd: true }))
+  .setComponent(new Physics.Collider({ shape: Physics.Shape.sphere(0.5), mass: 2 }));
+Physics.body(ball).applyImpulse([0, 3, 0]);
+const state = await Physics.body(ball).state().get();
+```
+
+Component constructors/factories:
+
+- `new Physics.World(WorldOptions?)`: `core:physics_world`. `defaultWorld` is a lazy
+  symbolic entity reference; `await Physics.defaultWorld.get()` returns its real entity.
+- `new Physics.RigidBody({ type?, ...BodyOptions })`, or factories `dynamic`, `fixed`,
+  `kinematicPosition`, `kinematicVelocity`: `core:rigid_body`.
+- `new Physics.Collider(ColliderOptions)`: `core:collider`. Omitted `body` means same
+  entity; explicit body references create compound objects; `body: null` is standalone.
+- `new Physics.Joint({ type?, ...JointOptions })`, or factories `fixed`, `revolute`,
+  `prismatic`, `spherical`, `generic`: `core:joint` on an independent joint entity.
+- Read-only views: `core:rigid_body_state` (`BodyState`) and `core:physics_status` (`Status`).
+- `Physics.Shape`: `sphere`, `box`, `capsule`, `cylinder`, `cone`, `plane`, `convexHull`,
+  `triMesh`, `compound`. All sizes are full dimensions; capsule height includes its caps.
+
+`Physics.BodyHandle` operations return `this`: `applyImpulse`, `applyTorqueImpulse`,
+`addForce`, `addTorque`, `resetForces`, `resetTorques`, `setLinearVelocity`,
+`setAngularVelocity`, `teleport`, `setKinematicTarget`, `sleep`, `wake`.
+`body.get(): Promise<void>` waits for recorded mutations and reports errors;
+`body.state(): Pending<BodyState>` selects state. Force/impulse options include world-space
+`point` and `wake`. `setLinearVelocity` accepts selected axes to preserve the others.
+
+`Physics.world(reference?)` returns a `WorldHandle` with
+`castRay(origin, direction, RayOptions): Pending<RayHit | null>`. Directions normalize;
+options include distance, solidity, groups, native filter flags and body/collider exclusions.
+`Physics.onEvent(handler)` observes collision/force events after physics. The same events
+are available through `Engine.on("physics", ({ event }) => ...)`. Enable events on colliders.
+
+Public types under `Physics`: `Vec3`, `Quat`, `EntityInput`, `WorldOptions`, `BodyOptions`,
+`ColliderOptions`, `JointOptions`, `IntegrationOptions`, `BodyRapierOptions`,
+`ColliderRapierOptions`, `JointRapierOptions`, `ShapeData`, `BodyState`, `Status`, `Event`,
+`RayHit`, `RayOptions`, `Groups`, `MassProperties`, `Motor`, `Limits`, `JointAxis`,
+`LockedAxis`, `CombineRule`, `MotorModel`. Runtime constants include `capabilities`,
+`QueryFilterFlag`, `CollisionType`, `TriMeshFlag`, and the six component ID constants.
+
+This build exposes 3D rigid-body physics with enhanced determinism and serial execution.
+Compile-time limitations are explicit in `capabilities`; there are no soft-body ECS
+components or synchronous JavaScript physics hooks. Collision/solver groups are native.
+
 ## `Audio`
 
 Play audio files loaded from the VFS. Supported formats: WAV, OGG/Vorbis, MP3.
@@ -1187,6 +1269,9 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 |---|---|
 | `CommandResults` | `tick_number`, `messages` (the replies below) |
 | `NetworkResponse` | `request_id`, `result`, `error` |
+| `PhysicsResponse` | `request_id`, `result`, `error` |
+| `PhysicsEvent` | `event` (generational references, collision/force data, tick and substep) |
+| `MainCameraResponse` | `request_id`, `entity_id` (string or null) |
 | `NetworkEvent` | `event`, `registration_id`, `client_id`, `event_id` when acknowledged, event-specific data |
 | `Init` | `mod_id`, `engine_version`, `mode` |
 | `Tick` | `tick_number`, `delta_seconds`, `keys_pressed`, `mouse_delta` |
@@ -1210,6 +1295,8 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | Message | Key fields |
 |---|---|
 | `NetworkRequest` | `request_id`, `request` (operation DTO) |
+| `PhysicsRequest` | `request_id`, `request` (`worldEntity`, `state`, `body`, `castRay` operation DTO) |
+| `GetMainCamera` | `request_id` |
 | `Subscribe` | `events` |
 | `Log` | `level`, `message` |
 | `SetWindowTitle` | `title` |

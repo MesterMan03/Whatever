@@ -1,6 +1,10 @@
 import { _getMode, _requireClient } from "../environment.ts";
 import type { EventName, EventPayloads } from "../types.ts";
 import { _handlers, _send, _EVENT_SUBSCRIBE } from "../shared.ts";
+import { _mainCameraCallbacks, nextReqId } from "../shared.ts";
+import { Entity } from "./ecs.ts";
+import type { EntityReference } from "../references.ts";
+import { _pending, type Pending } from "../pending.ts";
 
 /** Core engine events and logging. */
 export const Engine = {
@@ -25,7 +29,7 @@ export const Engine = {
     _send({ type: "Log", level, message });
   },
 
-  /** Override the game tick rate. Takes effect after this tick's command phase. */
+  /** Change the next tick's interval. This tick keeps the delta already delivered to mods. */
   setTickRate(ticks_per_second: number): void {
     _send({ type: "SetTickRate", ticks_per_second });
   },
@@ -53,8 +57,9 @@ export const Engine = {
    * Multiple cameras can exist in the scene; only the one designated here is
    * used for rendering.
    */
-  setMainCamera(entity_id: string): void {
+  setMainCamera(entity: string | EntityReference): void {
     _requireClient("Engine.setMainCamera");
+    const entity_id=typeof entity==="string" ? entity : entity.toJSON().$entity;
     _send({ type: "SetMainCamera", entity_id });
   },
 
@@ -65,5 +70,13 @@ export const Engine = {
   clearCamera(): void {
     _requireClient("Engine.clearCamera");
     _send({ type: "SetMainCamera", entity_id: "" });
+  },
+  getMainCamera():Pending<Entity|null> {
+    _requireClient("Engine.getMainCamera");
+    const request_id=nextReqId();
+    return _pending(new Promise<string|null>((resolve,reject)=>{
+      _mainCameraCallbacks.set(request_id,{resolve,reject});
+      _send({type:"GetMainCamera",request_id});
+    }).then(id=>id===null?null:new Entity(id)));
   },
 };

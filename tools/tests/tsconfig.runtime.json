@@ -3,6 +3,7 @@
   "files": [
     "runtime-types.ts",
     "../../mods/debug/scripts/client.ts",
-    "../../mods/debug/scripts/server.ts"
+    "../../mods/debug/scripts/server.ts",
+    "../../mods/physics_demo/scripts/client.ts"
   ]
 }

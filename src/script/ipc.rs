@@ -64,6 +64,18 @@ impl From<&ModManifest> for ModManifestDto {
 #[serde(tag = "type")]
 #[allow(dead_code)]
 pub enum EngineMessage {
+    MainCameraResponse {
+        request_id: String,
+        entity_id: Option<String>,
+    },
+    PhysicsResponse {
+        request_id: String,
+        result: Option<serde_json::Value>,
+        error: Option<String>,
+    },
+    PhysicsEvent {
+        event: serde_json::Value,
+    },
     CommandResults {
         tick_number: u64,
         messages: Vec<EngineMessage>,
@@ -220,6 +232,13 @@ pub enum ScriptPacket {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum ScriptMessage {
+    GetMainCamera {
+        request_id: String,
+    },
+    PhysicsRequest {
+        request_id: String,
+        request: serde_json::Value,
+    },
     NetworkRequest {
         request_id: String,
         request: serde_json::Value,

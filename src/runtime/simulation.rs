@@ -35,6 +35,7 @@ pub struct Simulation {
     network: crate::network::NetworkRegistry,
     server_console: Option<crate::console::DevConsole>,
     world: World,
+    physics: crate::physics::PhysicsRegistry,
     audio: AudioManager,
     clock: TickClock,
     tick_number: u64,
@@ -123,6 +124,7 @@ impl Simulation {
             network: crate::network::NetworkRegistry::new(network),
             server_console: (mode == RuntimeMode::Server).then(crate::console::DevConsole::new),
             world: World::new(),
+            physics: crate::physics::PhysicsRegistry::default(),
             audio,
             clock,
             tick_number: 0,
@@ -270,6 +272,20 @@ impl Simulation {
         message: ScriptMessage,
         batch_entities: &mut HashMap<String, EntityId>,
     ) {
+        if let ScriptMessage::GetMainCamera { request_id } = &message {
+            self.script_host.send(
+                &id,
+                &EngineMessage::MainCameraResponse {
+                    request_id: request_id.clone(),
+                    entity_id: self
+                        .main_camera
+                        .filter(|id| self.world.is_alive(id))
+                        .map(|id| id.to_string()),
+                },
+                &mut self.debug,
+            );
+            return;
+        }
         match &message {
             ScriptMessage::RegisterCommand { .. }
             | ScriptMessage::CommandResponse { .. }
@@ -295,6 +311,7 @@ impl Simulation {
                 game_id: &self.meta.game.id,
                 debug: &mut self.debug,
                 world: &mut self.world,
+                physics: &mut self.physics,
                 vfs: self.vfs.as_ref(),
                 audio: &mut self.audio,
                 batch_entities,
@@ -494,13 +511,36 @@ impl Simulation {
             return;
         }
         self.script_host.begin_responses();
+        let tick_delta = self.clock.interval.as_secs_f64();
+        self.physics.begin_tick(self.tick_number);
         for (id, commands) in batches {
             let mut batch_entities = HashMap::new();
             for message in commands {
                 self.message(id.clone(), message, &mut batch_entities);
             }
         }
-        // Physics advances here, after every mod's commands and before publication.
+        // Fixed simulation order: input/events -> mod batches -> commands -> physics
+        // -> presentation and results. Rendering never advances this clock.
+        match self.physics.step(&mut self.world, tick_delta) {
+            Ok(changed) if self.mode == RuntimeMode::Client && !changed.is_empty() => {
+                self.render_cmds
+                    .extend(crate::script::RenderCommand::upsert_hierarchy(
+                        &self.world,
+                        changed,
+                    ));
+            }
+            Ok(_) => {}
+            Err(error) => tracing::error!(%error,"physics tick failed"),
+        }
+        for event in self.physics.take_events() {
+            let message = EngineMessage::PhysicsEvent { event };
+            for loaded in self.registry.iter() {
+                let id = &loaded.manifest.meta.id;
+                if self.physics.subscribers.contains(id) {
+                    self.script_host.send(id, &message, &mut self.debug);
+                }
+            }
+        }
         self.changed = true;
         self.publish();
         self.script_host

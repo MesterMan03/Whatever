@@ -1,3 +1,4 @@
+use super::RenderCommand;
 use super::host::{PendingReply, ScriptHost};
 use super::ipc::{EngineMessage, ModManifestDto, QueryResultDto, ScriptMessage};
 use crate::audio::manager::LoadOpts;
@@ -25,28 +26,6 @@ pub struct DispatchResult {
     pub set_main_camera: Option<Option<EntityId>>,
 }
 
-#[derive(Debug)]
-pub enum RenderCommand {
-    UpsertSprite { entity_idx: u32 },
-    RemoveSprite { entity_idx: u32 },
-    UpsertText { entity_idx: u32 },
-    RemoveText { entity_idx: u32 },
-    UpsertMesh { entity_idx: u32 },
-    RemoveMesh { entity_idx: u32 },
-}
-
-impl RenderCommand {
-    pub fn key(&self) -> (u8, u32) {
-        match *self {
-            Self::UpsertSprite { entity_idx } | Self::RemoveSprite { entity_idx } => {
-                (0, entity_idx)
-            }
-            Self::UpsertText { entity_idx } | Self::RemoveText { entity_idx } => (1, entity_idx),
-            Self::UpsertMesh { entity_idx } | Self::RemoveMesh { entity_idx } => (2, entity_idx),
-        }
-    }
-}
-
 // --- Dispatcher --------------------------------------------------------------
 
 pub struct EngineContext<'a> {
@@ -57,6 +36,7 @@ pub struct EngineContext<'a> {
     pub game_id: &'a str,
     pub debug: &'a mut DebugLogger,
     pub world: &'a mut World,
+    pub physics: &'a mut crate::physics::PhysicsRegistry,
     pub vfs: &'a dyn Vfs,
     pub audio: &'a mut AudioManager,
     /// References created earlier in this mod's current batch, never shared across mods.
@@ -72,11 +52,77 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         game_id,
         debug,
         world,
+        physics,
         vfs,
         audio,
         batch_entities,
     } = ctx;
+    // The default world is an ordinary, lazily allocated ECS entity. Its symbolic
+    // reference is resolved before any component data is persisted.
+    fn uses_default(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.get("$entity").and_then(|v| v.as_str()) == Some("default:physics_world")
+                    || fields.values().any(uses_default)
+            }
+            serde_json::Value::Array(items) => items.iter().any(uses_default),
+            _ => false,
+        }
+    }
+    let default_needed = match &msg {
+        ScriptMessage::PhysicsRequest { request, .. } => uses_default(request),
+        ScriptMessage::ComponentSet {
+            entity_id, data, ..
+        } => entity_id == "default:physics_world" || uses_default(data),
+        ScriptMessage::ComponentGet { entity_id, .. }
+        | ScriptMessage::ComponentRemove { entity_id, .. }
+        | ScriptMessage::EntityDestroy { entity_id }
+        | ScriptMessage::EntityMove { entity_id, .. }
+        | ScriptMessage::EntityGetParent { entity_id, .. }
+        | ScriptMessage::EntityGetChildren { entity_id, .. }
+        | ScriptMessage::SetMainCamera { entity_id } => entity_id == "default:physics_world",
+        ScriptMessage::EntitySetParent {
+            entity_id,
+            parent_id,
+        } => {
+            entity_id == "default:physics_world"
+                || parent_id.as_deref() == Some("default:physics_world")
+        }
+        _ => false,
+    };
+    if default_needed {
+        batch_entities.insert(
+            "default:physics_world".into(),
+            physics.ensure_default(world),
+        );
+    }
+    if matches!(&msg, ScriptMessage::EntitySetParent { .. }) {
+        physics.invalidate();
+    }
     match msg {
+        ScriptMessage::GetMainCamera { .. } => {}
+        ScriptMessage::PhysicsRequest {
+            request_id,
+            mut request,
+        } => {
+            let result = crate::ecs::resolve_references(&mut request, &mut |reference| {
+                resolve_entity(reference, batch_entities)
+            })
+            .and_then(|()| physics.request(world, request));
+            let (result, error) = match result {
+                Ok(value) => (Some(value), None),
+                Err(error) => (None, Some(format!("{error:#}"))),
+            };
+            script_host.send(
+                mod_id,
+                &EngineMessage::PhysicsResponse {
+                    request_id,
+                    result,
+                    error,
+                },
+                debug,
+            );
+        }
         ScriptMessage::NetworkRequest {
             request_id,
             request,
@@ -128,6 +174,9 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
 
         // --- Events ----------------------------------------------------------
         ScriptMessage::Subscribe { events } => {
+            if events.iter().any(|event| event == "PhysicsEvent") {
+                physics.subscribers.insert(mod_id.to_owned());
+            }
             tracing::debug!(mod_id, "subscribed to: {:?}", events);
         }
 
@@ -332,6 +381,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                         game_id,
                         debug,
                         world,
+                        physics,
                         vfs,
                         audio,
                         batch_entities,
@@ -344,21 +394,9 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 tracing::warn!(mod_id, "EntityDestroy: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
-            let idx = id.index;
-            let had_sprite = world.is_alive(&id) && world.sprite_renderers.contains_key(&idx);
-            let had_text = world.is_alive(&id) && world.text_renderers.contains_key(&idx);
-            let had_mesh = world.is_alive(&id) && world.mesh_renderers.contains_key(&idx);
+            let render_cmds = RenderCommand::remove_hierarchy(world, [id]);
+            physics.entity_destroyed(world, id);
             world.destroy_entity(id);
-            let mut render_cmds = Vec::new();
-            if had_sprite {
-                render_cmds.push(RenderCommand::RemoveSprite { entity_idx: idx });
-            }
-            if had_text {
-                render_cmds.push(RenderCommand::RemoveText { entity_idx: idx });
-            }
-            if had_mesh {
-                render_cmds.push(RenderCommand::RemoveMesh { entity_idx: idx });
-            }
             if !render_cmds.is_empty() {
                 return DispatchResult {
                     render_cmds,
@@ -400,28 +438,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 },
             };
             world.set_parent(child, parent);
-            // Re-render affected entities if they have renderable components.
-            let mut render_cmds = Vec::new();
-            let affected = std::iter::once(child.index).chain(
-                world
-                    .get_children(&child)
-                    .iter()
-                    .map(|e| e.index)
-                    .collect::<Vec<_>>(),
-            );
-            for idx in affected {
-                if world.transforms.contains_key(&idx) {
-                    if world.sprite_renderers.contains_key(&idx) {
-                        render_cmds.push(RenderCommand::UpsertSprite { entity_idx: idx });
-                    }
-                    if world.text_renderers.contains_key(&idx) {
-                        render_cmds.push(RenderCommand::UpsertText { entity_idx: idx });
-                    }
-                    if world.mesh_renderers.contains_key(&idx) {
-                        render_cmds.push(RenderCommand::UpsertMesh { entity_idx: idx });
-                    }
-                }
-            }
+            let render_cmds = RenderCommand::upsert_hierarchy(world, [child]);
             if !render_cmds.is_empty() {
                 return DispatchResult {
                     render_cmds,
@@ -474,18 +491,40 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         ScriptMessage::ComponentSet {
             entity_id,
             component_type,
-            data,
+            mut data,
         } => {
             let Some(id) = resolve_entity(&entity_id, batch_entities) else {
                 tracing::warn!(mod_id, "ComponentSet: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
-            world.set_component(&id, &component_type, data);
+            if !world.is_alive(&id) {
+                return DispatchResult::default();
+            }
+            let data = crate::ecs::resolve_references(&mut data, &mut |reference| {
+                resolve_entity(reference, batch_entities)
+            })
+            .and_then(|()| physics.normalize_component(world, id, &component_type, data));
+            let data = match data {
+                Ok(data) => data,
+                Err(error) => {
+                    tracing::warn!(mod_id,%component_type,%error,"ComponentSet rejected");
+                    return DispatchResult::default();
+                }
+            };
+            physics.component_changed(world, id, &component_type);
+            if !world.set_component(&id, &component_type, data) {
+                return DispatchResult::default();
+            }
+            if component_type == COMPONENT_TRANSFORM {
+                return DispatchResult {
+                    render_cmds: RenderCommand::upsert_hierarchy(world, [id]),
+                    ..Default::default()
+                };
+            }
             let idx = id.index;
             let has_transform = world.transforms.contains_key(&idx);
             // Emit UpsertSprite only once both sprite renderer components are present.
-            if (component_type == COMPONENT_TRANSFORM
-                || component_type == COMPONENT_SPRITE_RENDERER)
+            if component_type == COMPONENT_SPRITE_RENDERER
                 && has_transform
                 && world.sprite_renderers.contains_key(&idx)
             {
@@ -495,7 +534,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 };
             }
             // Emit UpsertText only once both text renderer components are present.
-            if (component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_TEXT_RENDERER)
+            if component_type == COMPONENT_TEXT_RENDERER
                 && has_transform
                 && world.text_renderers.contains_key(&idx)
             {
@@ -505,7 +544,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
                 };
             }
             // Emit UpsertMesh only once both mesh renderer components are present.
-            if (component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_MESH_RENDERER)
+            if component_type == COMPONENT_MESH_RENDERER
                 && has_transform
                 && world.mesh_renderers.contains_key(&idx)
             {
@@ -519,26 +558,45 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             entity_id,
             component_type,
         } => {
+            if crate::physics::PhysicsRegistry::is_read_only(&component_type) {
+                tracing::warn!(mod_id,%component_type,"native physics state is read-only");
+                return DispatchResult::default();
+            }
             let Some(id) = resolve_entity(&entity_id, batch_entities) else {
                 tracing::warn!(mod_id, "ComponentRemove: invalid entity_id '{entity_id}'");
                 return DispatchResult::default();
             };
             let idx = id.index;
+            physics.component_changed(world, id, &component_type);
+            let mut removed_transform = if component_type == COMPONENT_TRANSFORM {
+                RenderCommand::remove_entity(world, id)
+            } else {
+                Vec::new()
+            };
             world.remove_component(&id, &component_type);
-            if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_SPRITE_RENDERER
-            {
+            if component_type == COMPONENT_TRANSFORM {
+                removed_transform.extend(RenderCommand::upsert_hierarchy(
+                    world,
+                    world.get_children(&id),
+                ));
+                return DispatchResult {
+                    render_cmds: removed_transform,
+                    ..Default::default()
+                };
+            }
+            if component_type == COMPONENT_SPRITE_RENDERER {
                 return DispatchResult {
                     render_cmds: vec![RenderCommand::RemoveSprite { entity_idx: idx }],
                     ..Default::default()
                 };
             }
-            if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_TEXT_RENDERER {
+            if component_type == COMPONENT_TEXT_RENDERER {
                 return DispatchResult {
                     render_cmds: vec![RenderCommand::RemoveText { entity_idx: idx }],
                     ..Default::default()
                 };
             }
-            if component_type == COMPONENT_TRANSFORM || component_type == COMPONENT_MESH_RENDERER {
+            if component_type == COMPONENT_MESH_RENDERER {
                 return DispatchResult {
                     render_cmds: vec![RenderCommand::RemoveMesh { entity_idx: idx }],
                     ..Default::default()
@@ -550,6 +608,9 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             entity_id,
             component_type,
         } => {
+            if let Err(error) = physics.synchronize(world) {
+                tracing::warn!(%error,"physics synchronization failed");
+            }
             let reply = match resolve_entity(&entity_id, batch_entities) {
                 None => EngineMessage::ComponentGetResponse {
                     request_id,
@@ -572,6 +633,9 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             request_id,
             component_types,
         } => {
+            if let Err(error) = physics.synchronize(world) {
+                tracing::warn!(%error,"physics synchronization failed");
+            }
             let type_refs: Vec<&str> = component_types.iter().map(String::as_str).collect();
             let results = world
                 .query(&type_refs)

@@ -9,7 +9,7 @@
 
 # Whatever Engine
 
-A barebones game engine where every game is just a mod. The engine owns the window, GPU renderer, virtual file system, mod loader, and TypeScript/Bun scripting host, nothing else. No game logic lives in engine code.
+A barebones game engine where every game is just a mod. The engine owns the window, GPU renderer, virtual file system, mod loader, ECS, native services such as physics and networking, and TypeScript/Bun scripting host. Gameplay lives in mods.
 
 This enables the core philosophy of "you can do whatever": both developers and players are allowed to freely dissect and modify every part of the engine.
 
@@ -61,15 +61,20 @@ mods/                   Engine-shipped mods (tracked in git)
   core/                 Game metadata and shared shaders/fonts; no test scripts
   debug/                First-party debug suite: dev commands, camera, rendering and sandbox probes
   network_example/      Shared protocol and a multi-client QUIC messenger demo
+  physics_demo/         Opt-in Rapier playground: bean player, third-person camera, cubes and gate
 mods_user/              User-installed mods (gitignored)
 vendor/
   bun/                  Pinned Whatever-mod-runtime fork of Bun
   patches/              Reproducible native runtime fork patch
-tools/                  Fork preparation, host builds and end-to-end security tests
+tools/                  Fork preparation, host builds, asset generation and integration tests
+  generate-physics-demo.ts  Reproduce the playground's OBJ meshes and lit shaders
 runtime/                @whatever-engine/api — TypeScript scripting API package
   host/                 Trusted bootstrap compiled with the API into whatever-mod-host
   src/                  Source (components/ public namespaces, network/ schema and registration helpers)
     pending.ts          Pending operation result handles
+    references.ts       Typed references embedded in ECS component data
+    physics-options.ts  Typed native Rapier configuration and physics result schemas
+    components/physics.ts  Components-first physics API and native operation handles
   dist/
     index.js            Compiled API bundle (built from src/ via bun build:runtime)
     index.d.ts          Type declarations for the API
@@ -88,6 +93,7 @@ src/
     types.rs            Shared types (CommandNode, ArgSpec, …)
     widget.rs           DevConsole render + execute
   script/               Bundled runtime discovery + subprocess host + NDJSON IPC
+    render_updates.rs   Render invalidation for moved/reparented/destroyed ECS hierarchies
   network/              Native schemas/codecs, QUIC service, TLS trust and per-client data
   sandbox/              Native-host OS restrictions and broker path containment
   audio/                Audio playback and handle management
@@ -96,8 +102,11 @@ src/
   vfs/                  Layered virtual filesystem
   mods/                 Mod manifest, discovery, toposort, registry
   ecs/                  Entity-component system
+    references.rs       Resolve nested, generational ECS references
+  physics/              Native Rapier worlds, bodies, colliders, joints and state synchronization
 docs/
   SCRIPTING.md          Full scripting API reference
+  PHYSICS.md            Components-first physics, native options and lifecycle semantics
   SHADER.md             Custom shader contract, mesh formats, and patterns
   SANDBOX.md            Security sandbox design and implementation details
 ```
@@ -160,6 +169,18 @@ server = "scripts/server.ts" # optional override
 Only one entry executes per mod. A mod with no matching entry still contributes its assets and metadata. `Engine.mode` is available before top-level mod evaluation. Window, audio and presentation settings reject server use; ECS, files and inter-mod messages remain available. The shipped core script and visual demo mods run on the client.
 
 Run `bun run test:server` after building the engine and host to check headless startup and shutdown. The additional `cargo test client_ticks_without_redraws -- --ignored` integration case requires the bundled host and verifies client ticks with a 1 FPS cap and no renderer consuming snapshots.
+
+### Physics
+
+Rapier 3D runs natively on the simulation worker after mod commands and before world
+snapshots/results are published. Mods configure ordinary ECS world/body/collider/joint
+components, with typed entity references and native tuning options. See the
+[physics API](docs/PHYSICS.md).
+
+To try the shipped client playground, open the **F2** console and enter
+`physicsdemo start`. Use WASD to walk, Shift to sprint, the mouse to orbit, and R to
+respawn. `physicsdemo cubes [count]` adds cubes; `physicsdemo stop` removes the scene
+and restores the previous camera. The mod creates nothing until activated.
 
 ### VFS paths
 

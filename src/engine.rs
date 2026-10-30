@@ -383,6 +383,7 @@ impl Engine {
                     .map(|key| format!("{key:?}"))
                     .collect()
             };
+            input.keys.sort_unstable();
             let (dx, dy) = self.input.flush_mouse();
             if self.console.is_open {
                 input.mouse = (0.0, 0.0);

@@ -7,6 +7,7 @@ mod input;
 mod logging;
 mod mods;
 mod network;
+mod physics;
 mod renderer;
 mod runtime;
 mod sandbox;

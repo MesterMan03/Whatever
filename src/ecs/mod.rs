@@ -1,6 +1,8 @@
 mod components;
 mod entity;
+mod references;
 mod world;
+pub use references::{referenced_entity, resolve_references};
 
 #[allow(unused_imports)]
 pub use components::{
@@ -9,5 +11,6 @@ pub use components::{
     CameraComponent, DirectionalLight, MeshRenderer, PointLight, SpriteRenderer, TextRenderer,
     Transform,
 };
+pub use components::{COMPONENT_RIGID_BODY_STATE, RigidBodyState};
 pub use entity::EntityId;
 pub use world::World;

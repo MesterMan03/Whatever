@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, existsSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync, existsSync, symlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +19,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(standaloneDirectory, { recursive: true, force: true }));
 
-async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean) {
+async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean, tickInput: {keys_pressed:string[];mouse_delta:[number,number]} = {keys_pressed:[],mouse_delta:[0,0]}) {
   const directory = mkdtempSync(join(tmpdir(), "whatever-host-"));
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   try {
@@ -52,7 +52,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
     const messages: Array<Record<string, any>> = [];
     const batches: Array<Record<string, any>> = [];
     let tickNumber = 0;
-    const tick = () => child.stdin.write(JSON.stringify({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, keys_pressed: [], mouse_delta: [0, 0] }) + "\n");
+    const tick = () => child.stdin.write(JSON.stringify({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, ...tickInput }) + "\n");
     const output = (async () => {
       let remaining = "";
       for await (const chunk of child.stdout) {
@@ -95,6 +95,41 @@ function fixture(body: string) {
 }
 
 describe("bundled mod host", () => {
+  test("debug free camera is invisible and consumes input only while its camera is active", async () => {
+    const cameraSource=readFileSync(join(repository,"mods/debug/scripts/camera.ts"),"utf8");
+    for (const active of [false,true]) {
+      let entityIndex=0;
+      const result=await runHost(
+        'import {Engine} from "@whatever-engine/api";import "./camera.ts";Engine.on("tick",({tick_number})=>{if(tick_number===12)Engine.log("info","fixture-done");});',
+        {"camera.ts":cameraSource},{},"index.ts","client",
+        (message,reply)=>{
+          if(message.type==="EntityCreate") {
+            reply({type:"EntityCreated",request_id:message.request_id,entity_id:`${entityIndex++}:0`});return true;
+          }
+          if(message.type==="GetMainCamera") {
+            reply({type:"MainCameraResponse",request_id:message.request_id,entity_id:active?"1:0":"9:0"});return true;
+          }
+          if(message.type==="ComponentGet") {
+            reply({type:"ComponentGetResponse",request_id:message.request_id,entity_id:message.entity_id,component_type:message.component_type,data:{position:[0,0,0],rotation:[0,0,0,1],scale:[1,1,1]},error:null});return true;
+          }
+          return false;
+        },
+        {keys_pressed:["Space","KeyW"],mouse_delta:[5,-2]},
+      );
+      expect(result.exitCode).toBe(0);expect(result.stderr).toBe("");
+      expect(result.messages.filter(message=>message.type==="EntityCreate")).toHaveLength(2);
+      expect(result.messages.some(message=>message.type==="ComponentSet" && message.component_type==="core:sprite_renderer")).toBe(false);
+      const movement=result.messages.filter(message=>message.type==="ComponentSet" && message.component_type==="core:transform" && message.entity_id==="0:0");
+      if(active) {
+        expect(movement.length).toBeGreaterThan(0);
+        expect(movement.some(message=>message.data.position[1]>0 && message.data.position[2]<0)).toBe(true);
+      } else {
+        // The initial transforms use pending IDs; no movement may target the resolved rig.
+        expect(movement).toHaveLength(0);
+        expect(result.messages.filter(message=>message.type==="ComponentSet" && message.component_type==="core:transform")).toHaveLength(2);
+      }
+    }
+  });
   test("preserves engine-provided console argument types without mod suggestion callbacks", async () => {
     const result = await runHost('import { Engine, Console } from "@whatever-engine/api";' +
       'Console.register({name:"targets",args:[' +

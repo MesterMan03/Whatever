@@ -21,4 +21,4 @@ Open F2 on the client or type commands into server stdin. Use `help dev`, `help 
 - `dev render light ambient 1 1 1 0.2` and `dev render light point 0 2 0 1 1 1 2 10`.
 - `dev render clear`: remove entities created by the render probes.
 
-Presentation commands are client-only. The camera preserves the former core controller: WASD, Space/Shift and captured mouse movement. Shared engine introspection (`engine`, `mods`, `scene`, `vfs`) and logging switches (`debug`) remain native console services.
+Presentation commands are client-only. The invisible free-camera rig uses WASD, Space/Shift and captured mouse movement only while its camera is active. Other mods can replace the main camera without moving the debug rig in the background. Sprites are created explicitly through `dev sprite` or the rendering probes. Shared engine introspection (`engine`, `mods`, `scene`, `vfs`) and logging switches (`debug`) remain native console services.
