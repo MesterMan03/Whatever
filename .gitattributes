@@ -33,3 +33,15 @@ games/**/*.mts text eol=lf
 games/**/*.cts text eol=lf
 games/**/*.json text eol=lf
 games/**/*.jsonc text eol=lf
+
+# The public API and trusted host share the mod formatter's LF contract.
+runtime/**/*.js text eol=lf
+runtime/**/*.jsx text eol=lf
+runtime/**/*.ts text eol=lf
+runtime/**/*.tsx text eol=lf
+runtime/**/*.mjs text eol=lf
+runtime/**/*.cjs text eol=lf
+runtime/**/*.mts text eol=lf
+runtime/**/*.cts text eol=lf
+runtime/**/*.json text eol=lf
+runtime/**/*.jsonc text eol=lf
