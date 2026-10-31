@@ -228,10 +228,10 @@ async fn supervise(
                     tracing::warn!("previous QUIC listener stopped unexpectedly: {error}");
                 }
                 let result = security::server_config(&settings)
-                    .and_then(|config| Endpoint::server(config, address).map_err(Into::into));
+                    .and_then(|config| bind_listener(config, address));
                 match result {
-                    Ok(endpoint) => {
-                        let address = match endpoint.local_addr() {
+                    Ok(listener) => {
+                        let address = match listener.endpoint.local_addr() {
                             Ok(address) => address.to_string(),
                             Err(error) => {
                                 let _ = events
@@ -253,7 +253,7 @@ async fn supervise(
                             .await;
                         let listener_id = registration.clone();
                         let task = tokio::spawn(listen(
-                            endpoint,
+                            listener,
                             max_clients,
                             Session {
                                 registration,
@@ -443,9 +443,30 @@ async fn connect(
     };
     tokio::select! { result = tokio::time::timeout(Duration::from_secs(10), operation) => result.context("connection timed out")?, _ = wait_for_stop(&mut cancellation) => bail!("connection cancelled") }
 }
-async fn listen(endpoint: Endpoint, max_clients: usize, mut state: Session) {
+struct BoundListener {
+    endpoint: Endpoint,
+    socket: Arc<dyn quinn::AsyncUdpSocket>,
+}
+
+fn bind_listener(config: quinn::ServerConfig, address: SocketAddr) -> Result<BoundListener> {
+    let runtime = Arc::new(quinn::TokioRuntime);
+    let socket =
+        quinn::Runtime::wrap_udp_socket(runtime.as_ref(), std::net::UdpSocket::bind(address)?)?;
+    let endpoint = Endpoint::new_with_abstract_socket(
+        quinn::EndpointConfig::default(),
+        Some(config),
+        Arc::clone(&socket),
+        runtime,
+    )?;
+    Ok(BoundListener { endpoint, socket })
+}
+
+async fn listen(listener: BoundListener, max_clients: usize, mut state: Session) {
+    let BoundListener { endpoint, socket } = listener;
     let capacity = Arc::new(Semaphore::new(max_clients));
+    let mut sessions = tokio::task::JoinSet::new();
     loop {
+        while sessions.try_join_next().is_some() {}
         let incoming = tokio::select! { incoming = endpoint.accept() => incoming, _ = wait_for_stop(&mut state.cancellation) => break };
         let Some(incoming) = incoming else {
             break;
@@ -455,7 +476,7 @@ async fn listen(endpoint: Endpoint, max_clients: usize, mut state: Session) {
             continue;
         };
         let session = state.clone();
-        tokio::spawn(async move {
+        sessions.spawn(async move {
             let _permit = permit;
             let setup = async {
                 let connection = incoming.await?;
@@ -481,7 +502,19 @@ async fn listen(endpoint: Endpoint, max_clients: usize, mut state: Session) {
         });
     }
     endpoint.close(0u8.into(), b"listener stopped");
+    // Accepted tasks can retain Incoming/Connection handles, including while waiting
+    // to publish an event. Retire them before waiting for Quinn's socket owners.
+    sessions.abort_all();
+    while sessions.join_next().await.is_some() {}
     let _ = tokio::time::timeout(Duration::from_secs(1), endpoint.wait_idle()).await;
+    drop(endpoint);
+    // wait_idle only drains connections. Quinn's endpoint driver and I/O pollers
+    // release their socket references asynchronously after the public handle drops.
+    // Keep the last reference ourselves so returning guarantees the UDP port is free.
+    while Arc::strong_count(&socket) > 1 {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    drop(socket);
 }
 #[derive(Clone)]
 struct Session {

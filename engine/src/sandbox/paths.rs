@@ -88,7 +88,9 @@ mod tests {
         assert!(resolve_contained(&root, "dangling/new/file").is_err());
         assert_eq!(
             resolve_contained(&root, "new/nested/save.json").expect("local path"),
-            root.join("new/nested/save.json")
+            root.canonicalize()
+                .expect("canonical storage root")
+                .join("new/nested/save.json")
         );
         std::fs::remove_dir_all(&directory).expect("remove fixture");
     }
