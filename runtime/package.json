@@ -29,6 +29,7 @@
     "directory": "runtime"
   },
   "files": [
-    "dist"
+    "dist/index.js",
+    "dist/index.d.ts"
   ]
 }

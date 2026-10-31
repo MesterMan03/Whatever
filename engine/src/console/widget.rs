@@ -51,7 +51,12 @@ pub enum ConsoleAction {
         mod_id: String,
         message: EngineMessage,
     },
-    EngineSettings(crate::console::types::EngineSettingAction),
+    SetFpsCap(Option<f64>),
+    SetVsync(bool),
+    LoadScene {
+        path: String,
+        request_id: String,
+    },
 }
 
 impl DevConsole {
@@ -73,6 +78,10 @@ impl DevConsole {
         );
         registry.register_engine(CommandNode::engine("clear", "Clear console output"));
         registry.register_engine(CommandNode::engine("quit", "Shutdown the engine"));
+        registry.register_engine(CommandNode::engine(
+            "stop",
+            "Shutdown the engine (alias for quit)",
+        ));
         registry.register_engine(debug_cmd::node());
         registry.register_engine(engine_cmd::node());
         registry.register_engine(mods_cmd::node());
@@ -109,6 +118,17 @@ impl DevConsole {
         } else {
             self.dismiss_completions();
         }
+    }
+
+    /// Resolve emergency stdin shutdowns through the same namespace rules, even
+    /// while the worker is waiting for a busy mod's next tick batch.
+    pub(crate) fn is_shutdown_command(&self, input: &str) -> bool {
+        let tokens = parser::tokenize_pub(input);
+        tokens.len() == 1
+            && self.registry.find(&[&tokens[0]]).is_some_and(|root| {
+                matches!(root.source, CommandSource::Engine)
+                    && matches!(root.name.rsplit(':').next(), Some("quit" | "stop"))
+            })
     }
 
     /// Escape key: clear completions first; close the console only when already clear.
@@ -160,13 +180,13 @@ impl DevConsole {
 
     pub fn handle_command_response(&mut self, output: Vec<String>, error: Option<String>) {
         if let Some(last) = self.output.last()
-            && matches!(last, OutputLine::Text(s) if s == "(waiting for mod response…)")
+            && matches!(last, OutputLine::Text(s) if s == "(waiting for command response…)")
         {
             self.output.pop();
         }
         self.pending_invoke = None;
         if let Some(err) = error {
-            tracing::warn!("mod command error: {err}");
+            tracing::warn!("console: command failed: {err}");
             self.output.push(OutputLine::Error(err));
         } else {
             for line in output {
@@ -523,15 +543,16 @@ impl DevConsole {
         debug: crate::debug::SharedDebugSwitches,
         world: &crate::ecs::World,
     ) -> ConsoleAction {
-        if self.pending_invoke.is_some() {
-            tracing::warn!("a console command is still awaiting its mod response");
-            return ConsoleAction::None;
-        }
         self.output.clear();
         let action = self.execute(input, registry, vfs, debug, world);
         // Regular command results/errors are already logged by execute/response.
         // Help is rendered inline and needs its output mirrored explicitly.
-        if input.split_whitespace().next() == Some("help") {
+        if input.split_whitespace().next().is_some_and(|name| {
+            self.registry.find(&[name]).is_some_and(|root| {
+                matches!(root.source, CommandSource::Engine)
+                    && name.rsplit(':').next() == Some("help")
+            })
+        }) {
             for line in &self.output {
                 if let OutputLine::Text(text) = line {
                     tracing::info!("{text}");
@@ -557,37 +578,61 @@ impl DevConsole {
             return ConsoleAction::None;
         }
 
-        // Built-in special commands (need registry access, handled inline)
-        match tokens[0].as_str() {
-            "clear" => {
-                self.output.clear();
-                return ConsoleAction::None;
-            }
-            "help" => {
-                let path = tokens[1..].join(" ");
-                let lines = self.run_help((!path.is_empty()).then_some(path.as_str()));
-                for line in lines {
-                    self.output.push(OutputLine::Text(line));
-                }
-                return ConsoleAction::None;
-            }
-            "quit" => {
-                return ConsoleAction::Quit;
-            }
-            _ => {}
-        }
-
         let root_name = &tokens[0];
         let root_node = match self.registry.roots.iter().find(|n| n.name == *root_name) {
             Some(n) => n,
             None => {
-                tracing::warn!("console: unknown command '{root_name}'");
-                self.output.push(OutputLine::Error(format!(
-                    "unknown command '{root_name}' — type 'help'"
-                )));
+                let suffix = format!(":{root_name}");
+                let mut alternatives: Vec<_> = self
+                    .registry
+                    .roots
+                    .iter()
+                    .filter(|node| node.name.ends_with(&suffix))
+                    .map(|node| node.name.as_str())
+                    .collect();
+                alternatives.sort_unstable();
+                let error = if alternatives.is_empty() {
+                    format!("unknown command '{root_name}'")
+                } else {
+                    format!(
+                        "ambiguous command '{root_name}' — use {}",
+                        alternatives.join(" or ")
+                    )
+                };
+                tracing::warn!("console: {error}");
+                self.output.push(OutputLine::Error(error));
                 return ConsoleAction::None;
             }
         };
+
+        // Inline commands must resolve through the registry like every other command.
+        if matches!(root_node.source, CommandSource::Engine) {
+            match root_name.rsplit(':').next().unwrap_or(root_name) {
+                "clear" => {
+                    self.output.clear();
+                    return ConsoleAction::None;
+                }
+                "help" => {
+                    let path = tokens[1..].join(" ");
+                    let lines = self.run_help((!path.is_empty()).then_some(path.as_str()));
+                    for line in lines {
+                        self.output.push(OutputLine::Text(line));
+                    }
+                    return ConsoleAction::None;
+                }
+                "quit" | "stop" => {
+                    return ConsoleAction::Quit;
+                }
+                _ => {}
+            }
+        }
+
+        if self.pending_invoke.is_some() {
+            let error = "a console command is still awaiting its response";
+            tracing::warn!("{error}");
+            self.output.push(OutputLine::Error(error.into()));
+            return ConsoleAction::None;
+        }
 
         // Walk subcommands
         let mut node: &CommandNode = root_node;
@@ -637,7 +682,7 @@ impl DevConsole {
         match &node.source {
             CommandSource::Engine => {
                 let pending_action = std::sync::Arc::new(std::sync::Mutex::new(
-                    None::<crate::console::types::EngineSettingAction>,
+                    None::<crate::console::types::EngineCommandAction>,
                 ));
                 let ctx = CommandContext {
                     mod_registry,
@@ -667,7 +712,26 @@ impl DevConsole {
                 if let Ok(mut guard) = pending_action.lock()
                     && let Some(action) = guard.take()
                 {
-                    return ConsoleAction::EngineSettings(action);
+                    match action {
+                        crate::console::types::EngineCommandAction::LoadScene(path) => {
+                            let request_id = format!(
+                                "scene_{}",
+                                SUGGEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+                            );
+                            self.pending_invoke = Some(PendingInvoke {
+                                request_id: request_id.clone(),
+                            });
+                            self.output
+                                .push(OutputLine::Text("(waiting for command response…)".into()));
+                            return ConsoleAction::LoadScene { path, request_id };
+                        }
+                        crate::console::types::EngineCommandAction::SetFpsCap(cap) => {
+                            return ConsoleAction::SetFpsCap(cap);
+                        }
+                        crate::console::types::EngineCommandAction::SetVsync(enabled) => {
+                            return ConsoleAction::SetVsync(enabled);
+                        }
+                    }
                 }
                 ConsoleAction::None
             }
@@ -700,7 +764,7 @@ impl DevConsole {
                     .collect();
 
                 self.output
-                    .push(OutputLine::Text("(waiting for mod response…)".into()));
+                    .push(OutputLine::Text("(waiting for command response…)".into()));
                 self.pending_invoke = Some(PendingInvoke {
                     request_id: request_id.clone(),
                 });
@@ -863,7 +927,7 @@ mod tests {
     }
 
     #[test]
-    fn builtins_are_completed_once_and_reserved_against_mods() {
+    fn builtin_collisions_qualify_both_commands_and_remove_the_plain_name() {
         let mut console = DevConsole::new();
         assert_eq!(completions(&console, "h"), ["help"]);
         assert_eq!(completions(&console, "help en"), ["help engine"]);
@@ -876,14 +940,113 @@ mod tests {
             console
                 .registry
                 .register_mod("demo", CommandNode::engine("help", "Mod help")),
-            Some("demo:help".into())
+            Ok("demo:help".into())
         );
+        assert_eq!(completions(&console, "h"), Vec::<String>::new());
+        assert_eq!(completions(&console, "core:h"), ["core:help"]);
         let help = console.run_help(None);
         assert_eq!(
             help.iter()
-                .filter(|line| line.trim() == "help [command]")
+                .filter(|line| line.trim() == "core:help [command]")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn qualified_inline_commands_execute_and_plain_collisions_cannot_bypass_the_registry() {
+        let mut console = DevConsole::new();
+        for name in ["help", "clear", "quit", "stop"] {
+            console
+                .registry
+                .register_mod(
+                    "demo",
+                    CommandNode::engine(name, "")
+                        .with_handler(std::sync::Arc::new(|_, _| Ok(vec![]))),
+                )
+                .expect("distinct namespace");
+        }
+        let execute = |console: &mut DevConsole, input: &str| {
+            console.execute_headless(
+                input,
+                &ModRegistry::new(),
+                &LayeredVfs::new(),
+                Arc::new(DebugSwitches::new(false, false, false, false, false)),
+                &crate::ecs::World::new(),
+            )
+        };
+        for name in ["help", "clear", "quit", "stop"] {
+            assert!(matches!(execute(&mut console, name), ConsoleAction::None));
+            assert!(!console.is_shutdown_command(name));
+            assert!(!console.is_shutdown_command(&format!("demo:{name}")));
+            assert!(matches!(execute(&mut console, &format!("demo:{name}")),
+                ConsoleAction::SendIpc { mod_id, message: EngineMessage::CommandInvoke {command_path, ..} }
+                if mod_id == "demo" && command_path == [name]));
+            console.handle_command_response(vec![], None);
+        }
+        assert!(matches!(
+            execute(&mut console, "core:help demo:quit"),
+            ConsoleAction::None
+        ));
+        assert!(matches!(
+            execute(&mut console, "core:clear"),
+            ConsoleAction::None
+        ));
+        assert!(console.output.is_empty());
+        console.pending_invoke = Some(PendingInvoke {
+            request_id: "never_resolves".into(),
+        });
+        assert!(console.is_shutdown_command("core:quit"));
+        assert!(console.is_shutdown_command("core:stop"));
+        assert!(matches!(
+            execute(&mut console, "core:quit"),
+            ConsoleAction::Quit
+        ));
+    }
+
+    #[test]
+    fn scene_load_requires_a_vfs_path_and_queues_a_correlated_runtime_response() {
+        let mut console = DevConsole::new();
+        let execute = |console: &mut DevConsole, input: &str| {
+            console.execute_headless(
+                input,
+                &ModRegistry::new(),
+                &LayeredVfs::new(),
+                Arc::new(DebugSwitches::new(false, false, false, false, false)),
+                &crate::ecs::World::new(),
+            )
+        };
+        for input in ["scene load", "scene load local_file.wscene"] {
+            assert!(matches!(execute(&mut console, input), ConsoleAction::None));
+            assert!(console.pending_invoke.is_none());
+        }
+        let ConsoleAction::LoadScene { path, request_id } =
+            execute(&mut console, "scene load demo://main")
+        else {
+            panic!("scene load must run on the simulation worker");
+        };
+        assert_eq!(path, "demo://main");
+        assert_eq!(
+            console
+                .pending_invoke
+                .as_ref()
+                .expect("awaiting result")
+                .request_id,
+            request_id
+        );
+        console.handle_command_response(vec!["Loaded 2 entities".into()], None);
+        assert!(console.pending_invoke.is_none());
+        console
+            .registry
+            .register_mod("demo", CommandNode::engine("scene", ""))
+            .expect("distinct namespace");
+        assert!(matches!(
+            execute(&mut console, "scene load demo://main"),
+            ConsoleAction::None
+        ));
+        assert!(
+            matches!(execute(&mut console, "core:scene load demo://main"),
+            ConsoleAction::LoadScene {path, ..} if path == "demo://main")
         );
     }
 
@@ -1077,7 +1240,8 @@ mod argument_tests {
         let mut console = DevConsole::new();
         console
             .registry
-            .register_mod("core", command_node_from_spec(&spec, "core"));
+            .register_mod("core", command_node_from_spec(&spec, "core"))
+            .expect("unique command");
         let mut world = crate::ecs::World::new();
         let context = ArgumentContext {
             mod_registry: &game.registry,
@@ -1119,18 +1283,19 @@ mod argument_tests {
             matches!(valid, ConsoleAction::SendIpc { mod_id, message: EngineMessage::CommandInvoke {args, ..} }
             if mod_id == "core" && args == vec![serde_json::json!("active")])
         );
+        console.handle_command_response(vec![], None);
 
-        // Built-in names are reserved; a conflicting mod command remains usable
-        // through its namespace while invocation targets its original handler key.
+        // Both sides are qualified, while IPC keeps the mod's original handler key.
         let alias_spec = crate::script::ipc::CommandNodeSpec {
             name: "help".into(),
             ..spec.clone()
         };
         console
             .registry
-            .register_mod("core", command_node_from_spec(&alias_spec, "core"));
+            .register_mod("active", command_node_from_spec(&alias_spec, "active"))
+            .expect("distinct namespace");
         let aliased = console.execute(
-            "core:help core",
+            "active:help core",
             &game.registry,
             game.vfs.as_ref(),
             game.debug.shared_switches(),
@@ -1142,12 +1307,14 @@ mod argument_tests {
         );
         let mut suggest_spec = alias_spec;
         suggest_spec.args[0].arg_type = "string".into();
-        let alias = command_node_from_spec(&suggest_spec, "core");
+        let alias = command_node_from_spec(&suggest_spec, "active");
         let mut alias_registry = CommandRegistry::new();
         alias_registry.register_engine(CommandNode::engine("help", ""));
-        alias_registry.register_mod("core", alias);
+        alias_registry
+            .register_mod("active", alias)
+            .expect("distinct namespace");
         assert_eq!(
-            completer::arg_suggest_context("core:help co", &alias_registry.roots)
+            completer::arg_suggest_context("active:help co", &alias_registry.roots)
                 .expect("custom suggester context")
                 .command_path,
             ["help"]

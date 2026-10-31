@@ -1,5 +1,7 @@
 # @whatever-engine/api
 
+The npm package contains the scripting bundle and TypeScript declarations. The native mod host is supplied separately by the editor/player distribution.
+
 TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC protocol between the engine and Bun script subprocesses.
 
 ## Usage
@@ -234,6 +236,8 @@ Inter-mod communication. Payloads must be JSON-serializable.
 - `Message.registerMessageHandler(handler)` — handle incoming messages; return a value to reply
 
 ### `Console`
+
+Unique commands use plain names. Collisions qualify all participants as `mod_id:name` (built-ins use `core:name`). Duplicate commands within one namespace, including a core mod clashing with a built-in, stop loading.
 
 - `Console.register(spec)` — register developer console commands with typed args and subcommands. Argument types: `string`, `int`, `float`, `bool`, `mod_id`, `entity_id`. The engine completes and validates loaded mod IDs and living entity IDs; handlers receive ID strings. `bool` suggests `false`/`true` by default. Open the console with F2; Up/Down previews suggestions and Tab accepts.
 

@@ -1249,8 +1249,23 @@ Handlers may return a plain string, a string array (multiple output lines), or a
 `Promise` resolving to either. The console shows a "waiting" indicator while a
 promise is pending.
 
-If a command name conflicts with an already-registered command, the engine will
-register it as `mod_id:name` instead and log a warning.
+Unique root commands use their plain name. When multiple sources register the same
+root name, **every** participant is renamed to `<namespace>:<name>`; the plain name
+becomes ambiguous and is rejected. Built-ins use `core`, and mod commands use the
+mod ID. For example, a mod named `tools` registering `scene` produces `core:scene`
+and `tools:scene`, independent of registration order. Subcommand paths stay intact,
+and mod handlers/suggesters continue using their original, unqualified paths.
+Registering the same root twice within one namespace is a fatal registration error.
+In particular, a core mod command that clashes with a built-in prevents the game
+from continuing to load, since both would be `core:<name>`.
+
+The built-in `scene load <path>` instantiates any loaded mod's scene using the same
+atomic loader as `Scene.loadScene`, without replacing existing entities. For example,
+`scene load debug://editor` and `scene load debug://scenes/editor.wscene` load the same
+file. It runs on the simulation worker before physics and publishes render updates;
+invalid loads report a console error without leaving partial entities. If another
+mod registers `scene`, use `core:scene load <path>` instead. The debug mod no longer
+registers its own scene loader.
 
 ---
 

@@ -1,9 +1,8 @@
 use super::{LoadedGame, SimulationHandle};
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::atomic::Ordering;
 pub fn run_server(game: LoadedGame) -> anyhow::Result<()> {
     let mut simulation = SimulationHandle::spawn(game)?;
     simulation.ready();
-    let stop = Arc::clone(&simulation.shared);
     let commands = simulation.commands.clone();
     std::thread::Builder::new()
         .name("whatever-server-stdin".into())
@@ -11,10 +10,6 @@ pub fn run_server(game: LoadedGame) -> anyhow::Result<()> {
             use std::io::BufRead;
             for line in std::io::stdin().lock().lines() {
                 let Ok(line) = line else { break };
-                if matches!(line.trim(), "quit" | "stop") {
-                    stop.stop.store(true, Ordering::Relaxed);
-                    break;
-                }
                 if !line.trim().is_empty() {
                     let _ = commands.send(super::bridge::RuntimeCommand::ConsoleInput(line));
                 }

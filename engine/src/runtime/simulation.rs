@@ -35,7 +35,8 @@ pub struct Simulation {
     debug: DebugLogger,
     script_host: ScriptHost,
     network: crate::network::NetworkRegistry,
-    server_console: Option<crate::console::DevConsole>,
+    console: crate::console::DevConsole,
+    fatal_error: Option<String>,
     world: World,
     initial_scene: Option<crate::scene::LoadedScene>,
     physics: crate::physics::PhysicsRegistry,
@@ -145,7 +146,8 @@ impl Simulation {
             debug,
             script_host,
             network: crate::network::NetworkRegistry::new(network),
-            server_console: (mode == RuntimeMode::Server).then(crate::console::DevConsole::new),
+            console: crate::console::DevConsole::new(),
+            fatal_error: None,
             world,
             initial_scene,
             physics,
@@ -177,7 +179,7 @@ impl Simulation {
         }
     }
     fn stopped(&self) -> bool {
-        self.shared.stop.load(Ordering::Relaxed)
+        self.fatal_error.is_some() || self.shared.stop.load(Ordering::Relaxed)
     }
     fn controls(&mut self) {
         while let Ok(command) = self.commands.try_recv() {
@@ -187,6 +189,9 @@ impl Simulation {
                         self.ready = true;
                         self.clock.next = Instant::now() + self.clock.interval;
                     }
+                }
+                RuntimeCommand::ConsoleInput(input) if self.console.is_shutdown_command(&input) => {
+                    self.shared.stop.store(true, Ordering::Relaxed);
                 }
                 command => self.pending_controls.push(command),
             }
@@ -224,12 +229,13 @@ impl Simulation {
             }
         }
         tracing::info!(ticks = self.tick_number, "simulation stopped");
+        if let Some(error) = self.fatal_error {
+            anyhow::bail!(error);
+        }
         Ok(())
     }
     fn server_command(&mut self, input: &str) {
-        let Some(console) = self.server_console.as_mut() else {
-            return;
-        };
+        let console = &mut self.console;
         let action = console.execute_headless(
             input,
             &self.registry,
@@ -248,16 +254,51 @@ impl Simulation {
                     console.discard_output();
                 }
             }
-            crate::console::ConsoleAction::EngineSettings(_) => {
+            crate::console::ConsoleAction::LoadScene { path, request_id } => {
+                self.load_scene(&path, request_id);
+            }
+            crate::console::ConsoleAction::SetFpsCap(_)
+            | crate::console::ConsoleAction::SetVsync(_) => {
                 tracing::warn!("presentation settings are unavailable on a headless server")
             }
             crate::console::ConsoleAction::None => {}
         }
     }
-    fn server_console_message(&mut self, mod_id: &str, message: &ScriptMessage) {
-        let Some(console) = self.server_console.as_mut() else {
-            return;
+    fn load_scene(&mut self, path: &str, request_id: String) {
+        let (output, error) =
+            match crate::scene::SceneDocument::load(self.vfs.as_ref(), path, &mut self.world) {
+                Ok(scene) => {
+                    self.physics.invalidate();
+                    self.render_cmds.extend(RenderCommand::upsert_hierarchy(
+                        &self.world,
+                        scene.entity_ids.iter().filter_map(|id| EntityId::parse(id)),
+                    ));
+                    (
+                        vec![format!(
+                            "Loaded {} entities in {:.2} ms",
+                            scene.entity_ids.len(),
+                            scene.load_time
+                        )],
+                        None,
+                    )
+                }
+                Err(error) => (vec![], Some(format!("{error:#}"))),
+            };
+        let response = ScriptMessage::CommandResponse {
+            request_id,
+            output,
+            error,
         };
+        if self.mode == RuntimeMode::Client {
+            self.events.push(("core".into(), response));
+        } else {
+            self.console_message("core", &response);
+        }
+        self.changed = true;
+    }
+
+    fn console_message(&mut self, mod_id: &str, message: &ScriptMessage) {
+        let console = &mut self.console;
         match message {
             ScriptMessage::RegisterCommand {
                 name,
@@ -273,10 +314,13 @@ impl Simulation {
                     args: args.clone(),
                     has_handler: *has_handler,
                 };
-                console.registry.register_mod(
+                if let Err(error) = console.registry.register_mod(
                     mod_id,
                     crate::console::command_node_from_spec(&spec, mod_id),
-                );
+                ) {
+                    tracing::error!("command registration: {error}");
+                    self.fatal_error = Some(error);
+                }
             }
             ScriptMessage::CommandResponse {
                 request_id,
@@ -317,11 +361,14 @@ impl Simulation {
             ScriptMessage::RegisterCommand { .. }
             | ScriptMessage::CommandResponse { .. }
             | ScriptMessage::ArgSuggestResponse { .. } => {
+                // Validate registrations on the simulation worker in both modes.
+                self.console_message(&id, &message);
+                if self.stopped() {
+                    return;
+                }
                 if self.mode == RuntimeMode::Client {
                     self.events.push((id, message));
                     self.changed = true;
-                } else {
-                    self.server_console_message(&id, &message);
                 }
                 return;
             }
@@ -400,6 +447,9 @@ impl Simulation {
         for command in std::mem::take(&mut self.pending_controls) {
             match command {
                 RuntimeCommand::ConsoleInput(input) => self.server_command(&input),
+                RuntimeCommand::LoadScene { path, request_id } => {
+                    self.load_scene(&path, request_id);
+                }
                 RuntimeCommand::Ipc { mod_id, message } => {
                     self.script_host.send(&mod_id, &message, &mut self.debug);
                 }
@@ -548,6 +598,9 @@ impl Simulation {
             let mut batch_entities = HashMap::new();
             for message in commands {
                 self.message(id.clone(), message, &mut batch_entities);
+                if self.stopped() {
+                    return;
+                }
             }
         }
         for edit in std::mem::take(&mut self.editor_edits) {
@@ -805,6 +858,17 @@ Engine.on("tick",({tick_number})=>{
     if(entity)entity.setComponent("core:transform",{position:[tick_number,0,0],rotation:[0,0,0,1],scale:[1,1,1]});
 });
 "#).expect("script");
+        std::fs::create_dir_all(directory.join("core/scenes")).expect("scenes");
+        std::fs::write(
+            directory.join("core/scenes/console.wscene"),
+            r#"{
+            "version":1,"entities":[{"name":"Console spawn","components":{
+                "core:transform":{"position":[1,2,3],"rotation":[0,0,0,1],"scale":[1,1,1]},
+                "core:sprite_renderer":{"texture":"core://unused.png","shader":"core://unused.wgsl"}
+            }}]
+        }"#,
+        )
+        .expect("console scene");
         let log = std::fs::File::create(directory.join("test.log")).expect("log");
         let game = LoadedGame::load(
             &LaunchOptions {
@@ -851,6 +915,33 @@ Engine.on("tick",({tick_number})=>{
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+        tx.send(RuntimeCommand::LoadScene {
+            path: "core://console".into(),
+            request_id: "console_load_test".into(),
+        })
+        .expect("load scene");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut loaded = false;
+        while Instant::now() < deadline {
+            if let Ok(slot) = shared.presentation.lock() {
+                loaded = slot.as_ref().is_some_and(|frame| {
+                    frame
+                        .world
+                        .names
+                        .values()
+                        .any(|name| name == "Console spawn")
+                        && frame.events.iter().any(|(_, message)| {
+                            matches!(message,
+                            ScriptMessage::CommandResponse {request_id, error: None, ..}
+                            if request_id == "console_load_test")
+                        })
+                });
+            }
+            if loaded || worker.is_finished() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         shared.stop.store(true, Ordering::Relaxed);
         worker
             .join()
@@ -860,6 +951,10 @@ Engine.on("tick",({tick_number})=>{
             advanced,
             "client simulation must advance with a 1 FPS cap and zero redraws"
         );
+        assert!(
+            loaded,
+            "console scene load must publish world and response without redraws"
+        );
         let frame = shared
             .presentation
             .lock()
@@ -868,7 +963,7 @@ Engine.on("tick",({tick_number})=>{
             .expect("snapshot");
         assert_eq!(
             frame.render_cmds.len(),
-            1,
+            2,
             "render updates should coalesce while frames are paused"
         );
         assert!(
@@ -876,6 +971,50 @@ Engine.on("tick",({tick_number})=>{
                 .client_commands
                 .iter()
                 .any(|command| matches!(command, ScriptMessage::SetFpsCap { fps: Some(1.0) }))
+        );
+        assert_eq!(frame.world.transforms[&1].position, [1.0, 2.0, 3.0]);
+
+        // Registration validation belongs to the worker, even if no client redraws
+        // ever consume the registry events.
+        std::fs::write(
+            directory.join("core/index.ts"),
+            r#"
+            import {Console} from "@whatever-engine/api";
+            Console.register({name:"scene",handler:()=>"must not run"});
+        "#,
+        )
+        .expect("colliding script");
+        let log = std::fs::File::create(directory.join("collision.log")).expect("log");
+        let game = LoadedGame::load(
+            &LaunchOptions {
+                mode: Some(RuntimeMode::Client),
+                mods: Some(directory.clone()),
+                ..Default::default()
+            },
+            &DebugConfig::from_args(&[]),
+            &directory,
+            Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(log))),
+        )
+        .expect("collision game");
+        shared.stop.store(false, Ordering::Relaxed);
+        let (_tx, rx) = mpsc::channel();
+        let mut simulation =
+            Simulation::with_audio(game, Arc::clone(&shared), rx, AudioManager::headless())
+                .expect("client simulation");
+        simulation.tick();
+        assert!(simulation.stopped());
+        assert!(
+            simulation
+                .fatal_error
+                .as_deref()
+                .is_some_and(|error| error.contains("core:scene"))
+        );
+        assert!(
+            simulation
+                .run()
+                .expect_err("fatal registration")
+                .to_string()
+                .contains("core:scene")
         );
         std::fs::remove_dir_all(&directory).expect("cleanup fixture");
     }

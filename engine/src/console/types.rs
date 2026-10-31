@@ -2,9 +2,10 @@ use std::sync::{Arc, Mutex};
 
 pub type SuggestFn = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
-pub enum EngineSettingAction {
+pub enum EngineCommandAction {
     SetFpsCap(Option<f64>),
     SetVsync(bool),
+    LoadScene(String),
 }
 
 pub enum OutputLine {
@@ -78,7 +79,7 @@ pub struct CommandContext<'a> {
     pub fps_cap: Option<f64>,
     pub vsync: bool,
     pub debug: crate::debug::SharedDebugSwitches,
-    pub pending_action: Arc<Mutex<Option<EngineSettingAction>>>,
+    pub pending_action: Arc<Mutex<Option<EngineCommandAction>>>,
 }
 
 pub type CommandHandler = Arc<dyn Fn(ParsedArgs, &CommandContext) -> CommandResult + Send + Sync>;

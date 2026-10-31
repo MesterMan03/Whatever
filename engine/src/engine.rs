@@ -1,4 +1,4 @@
-use crate::console::{ConsoleAction, DevConsole, EngineSettingAction, command_node_from_spec};
+use crate::console::{ConsoleAction, DevConsole, command_node_from_spec};
 use crate::debug::DebugLogger;
 use crate::ecs::{EntityId, World};
 use crate::input::InputState;
@@ -197,13 +197,14 @@ impl Engine {
                 ConsoleAction::SendIpc { mod_id, message } => {
                     self.simulation.send(mod_id, message);
                 }
-                ConsoleAction::EngineSettings(action) => match action {
-                    EngineSettingAction::SetFpsCap(cap) => self.set_fps_cap(cap),
-                    EngineSettingAction::SetVsync(enabled) => {
-                        self.vsync = enabled;
-                        self.apply_vsync();
-                    }
-                },
+                ConsoleAction::LoadScene { path, request_id } => {
+                    self.simulation.load_scene(path, request_id);
+                }
+                ConsoleAction::SetFpsCap(cap) => self.set_fps_cap(cap),
+                ConsoleAction::SetVsync(enabled) => {
+                    self.vsync = enabled;
+                    self.apply_vsync();
+                }
                 ConsoleAction::None => {}
             }
 
@@ -364,7 +365,10 @@ impl Engine {
                 );
                 // Override the top-level source (from_spec sets it for children too)
                 node.source = crate::console::CommandSource::Mod(mod_id.clone());
-                self.console.registry.register_mod(&mod_id, node);
+                if let Err(error) = self.console.registry.register_mod(&mod_id, node) {
+                    tracing::error!("command registration: {error}");
+                    self.should_quit = true;
+                }
                 continue;
             }
 

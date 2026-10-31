@@ -25,17 +25,6 @@ import { Engine, Scene, BuiltInComponents, type CommandSpec } from "@whatever-en
 
 export const renderCommands: CommandSpec[] = [];
 
-renderCommands.push({
-  name: "scene",
-  description: "Instantiate a mod scene file (defaults to the editor example)",
-  args: [{ name: "path", type: "string", required: false }],
-  handler: async ({ path }) => {
-    const scene = await Scene.loadScene((path as string | undefined) ?? "debug://editor");
-    spawned.push(...scene.entities());
-    return `Loaded ${scene.entityCount} entities in ${scene.loadTime.toFixed(2)} ms`;
-  },
-});
-
 // Track spawned entities so `clearspawned` can clean them up.
 const spawned: { destroy(): void }[] = [];
 

@@ -57,49 +57,68 @@ impl CommandRegistry {
         CommandRegistry { roots: Vec::new() }
     }
 
-    /// Register an engine built-in. Always succeeds under its plain name.
+    /// Built-ins are installed before any mod registrations.
     pub fn register_engine(&mut self, node: CommandNode) {
         self.roots.push(node);
     }
 
-    /// Register a mod command. Returns the final registered name (may be namespaced).
-    pub fn register_mod(&mut self, mod_id: &str, mut node: CommandNode) -> Option<String> {
+    /// A collision removes the plain name and qualifies every participant.
+    /// Two registrations in one namespace cannot be disambiguated.
+    pub fn register_mod(&mut self, mod_id: &str, mut node: CommandNode) -> Result<String, String> {
         if !valid_name(&node.name) {
-            tracing::warn!(
-                mod_id,
-                name = node.name,
-                "mod tried to register command with invalid name (only [a-z_] allowed)"
-            );
-            return None;
+            return Err(format!(
+                "mod '{mod_id}' registered invalid command '{}' (only [a-z_] allowed)",
+                node.name
+            ));
         }
 
         let plain = node.name.clone();
         let namespaced = format!("{mod_id}:{plain}");
 
-        if !self.roots.iter().any(|r| r.name == plain) {
-            node.source = CommandSource::Mod(mod_id.to_owned());
-            self.roots.push(node);
-            return Some(plain);
+        let conflicts: Vec<_> = self
+            .roots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, root)| {
+                let name = root
+                    .name
+                    .split_once(':')
+                    .map_or(root.name.as_str(), |(_, name)| name);
+                (name == plain).then_some(index)
+            })
+            .collect();
+        for &index in &conflicts {
+            let namespace = match &self.roots[index].source {
+                CommandSource::Engine => "core",
+                CommandSource::Mod(owner) => owner,
+            };
+            if namespace == mod_id {
+                return Err(format!(
+                    "command namespace collision: '{namespaced}' is already registered; engine commands use the 'core' namespace"
+                ));
+            }
         }
-
-        // Plain name taken — try namespaced form
-        if self.roots.iter().any(|r| r.name == namespaced) {
-            tracing::warn!(
-                mod_id,
-                name = plain,
-                "command name conflict and namespaced form also taken; skipping"
+        if !conflicts.is_empty() {
+            for index in conflicts {
+                let root = &mut self.roots[index];
+                if !root.name.contains(':') {
+                    let namespace = match &root.source {
+                        CommandSource::Engine => "core",
+                        CommandSource::Mod(owner) => owner,
+                    };
+                    root.name = format!("{namespace}:{plain}");
+                }
+            }
+            node.name = namespaced;
+            tracing::info!(
+                command = plain,
+                "command collision: all registrations now require a namespace"
             );
-            return None;
         }
-
-        tracing::warn!(
-            mod_id,
-            "command '{plain}' conflicts; registering as '{namespaced}'"
-        );
-        node.name = namespaced.clone();
+        let registered = node.name.clone();
         node.source = CommandSource::Mod(mod_id.to_owned());
         self.roots.push(node);
-        Some(namespaced)
+        Ok(registered)
     }
 
     #[allow(dead_code)]
@@ -132,5 +151,74 @@ impl CommandRegistry {
             .filter(|n| n.name.starts_with(partial_last))
             .map(|n| n.name.clone())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mod_collisions_rename_earlier_commands_and_include_later_registrations() {
+        for order in [["first", "second", "third"], ["third", "second", "first"]] {
+            let mut registry = CommandRegistry::new();
+            for (index, owner) in order.iter().enumerate() {
+                let node = CommandNode::engine("shared", "")
+                    .with_subcommands(vec![CommandNode::engine("child", "")]);
+                let name = registry.register_mod(owner, node).expect("distinct owners");
+                if index == 0 {
+                    assert_eq!(name, "shared");
+                } else {
+                    assert_eq!(name, format!("{owner}:shared"));
+                    assert!(registry.find(&["shared"]).is_none());
+                }
+            }
+            for owner in order {
+                let qualified = format!("{owner}:shared");
+                assert!(registry.find(&[&qualified, "child"]).is_some());
+                assert!(
+                    matches!(&registry.find(&[&qualified]).expect("root").source,
+                    CommandSource::Mod(id) if id == owner)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn same_namespace_collisions_fail_without_mutating_the_registry() {
+        for qualify_first in [false, true] {
+            let mut registry = CommandRegistry::new();
+            registry.register_engine(CommandNode::engine("scene", ""));
+            if qualify_first {
+                registry
+                    .register_mod("debug", CommandNode::engine("scene", ""))
+                    .expect("other namespace");
+            }
+            let names: Vec<_> = registry
+                .roots
+                .iter()
+                .map(|node| node.name.clone())
+                .collect();
+            let error = registry
+                .register_mod("core", CommandNode::engine("scene", ""))
+                .expect_err("core shares the engine namespace");
+            assert!(error.contains("core:scene"));
+            assert_eq!(
+                names,
+                registry
+                    .roots
+                    .iter()
+                    .map(|node| node.name.clone())
+                    .collect::<Vec<_>>()
+            );
+            registry
+                .register_mod("core", CommandNode::engine("unique", ""))
+                .expect("core may still add unique commands");
+            assert!(
+                registry
+                    .register_mod("core", CommandNode::engine("unique", ""))
+                    .is_err()
+            );
+        }
     }
 }

@@ -20,6 +20,6 @@ Open F2 on the client or type commands into server stdin. Use `help dev`, `help 
 - `dev render sprite debug://textures/sample.png uv_debug`: custom sprite shader probe.
 - `dev render light ambient 1 1 1 0.2` and `dev render light point 0 2 0 1 1 1 2 10`.
 - `dev render clear`: remove entities created by the render probes.
-- `dev render scene [path]`: instantiate a `.wscene`; defaults to `debug://editor`, also available in the native editor scene browser.
+- `scene load debug://editor`: instantiate the example `.wscene` using the engine's built-in loader, also available in the native editor scene browser. Full paths such as `debug://scenes/editor.wscene` work too; loaded scenes remain independent of `dev render clear`.
 
 Presentation commands are client-only. The invisible free-camera rig uses WASD, Space/Shift and captured mouse movement only while its camera is active. Other mods can replace the main camera without moving the debug rig in the background. Sprites are created explicitly through `dev sprite` or the rendering probes. Shared engine introspection (`engine`, `mods`, `scene`, `vfs`) and logging switches (`debug`) remain native console services.

@@ -1,6 +1,6 @@
 [package]
 name = "whatever-editor"
-version = "0.6.0"
+version.workspace = true
 edition = "2024"
 publish = false
 

@@ -129,11 +129,13 @@ vendor/
   bun/                  Pinned Whatever Bun fork
   patches/              Reproducible native fork patch
 tools/                  Fork/host builds, generated assets and integration tests
+  check-versions.ts     Shared release version and lockfile audit
   package-editor.ts     Portable editor assembly, dependency bundling and relocation smoke
 .github/workflows/
   editor.yml            Build, test and portable archives on Windows/Linux/macOS
   release.yml           Publish the same tested archives on version tags
 docs/
+  releases/             Curated GitHub release notes
   EDITOR.md             Projects, native editor, CLI and branded deployment layout
   SCRIPTING.md          Public API, scene format and IPC reference
   PHYSICS.md            Native physics configuration and lifecycle
@@ -280,6 +282,12 @@ Stdout mirrors the log with ANSI colours (WARN yellow, ERROR red). The in-game d
 
 Suggestions are sorted alphabetically; Up/Down cycles through the full list and previews the selected completion as dim text in the input. Tab or a click accepts it, while Enter runs only the text already entered. Escape dismisses suggestions first, then closes the console. The input stays anchored when suggestions appear. Help lists command usage and descriptions on separate, wrapping lines.
 
+Console command collisions qualify every participant as `<namespace>:<command>`
+(engine built-ins use `core`); the ambiguous plain name stops resolving. Duplicate
+registrations within a namespace are errors, including a core mod shadowing a built-in.
+Use `scene load debug://editor` to instantiate a scene from a loaded mod, or
+`core:scene load debug://editor` if another mod also registers `scene`.
+
 By default only events from this crate are captured. Set `RUST_LOG` to override:
 
 ```sh
@@ -307,3 +315,7 @@ archive and runs a relocated project/build/launcher smoke test. Version tags pub
 same archives. Run `bun run package:editor` after `cargo build --release --workspace`
 to reproduce packaging locally. See [EDITOR.md](docs/EDITOR.md) for distribution
 contents, platform requirements and live Scene/Play editing.
+
+Rust components inherit `[workspace.package].version`. `bun run check:versions`
+checks them, their lockfile entries and the npm workspace/API versions together;
+release tags must match too. Game and mod versions are independent.

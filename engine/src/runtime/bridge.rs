@@ -35,6 +35,10 @@ impl RuntimeInput {
 pub enum RuntimeCommand {
     Editor(super::editor::EditorControl),
     ConsoleInput(String),
+    LoadScene {
+        path: String,
+        request_id: String,
+    },
     Ready,
     Ipc {
         mod_id: String,
@@ -98,6 +102,11 @@ impl SimulationHandle {
     }
     pub fn send(&self, mod_id: String, message: EngineMessage) {
         let _ = self.commands.send(RuntimeCommand::Ipc { mod_id, message });
+    }
+    pub fn load_scene(&self, path: String, request_id: String) {
+        let _ = self
+            .commands
+            .send(RuntimeCommand::LoadScene { path, request_id });
     }
     pub fn take_presentation(&self) -> Option<Presentation> {
         self.shared.presentation.lock().ok()?.take()

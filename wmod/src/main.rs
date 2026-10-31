@@ -9,6 +9,7 @@ use whatever_engine::project::{self, ModOptions, Project};
 
 const HELP: &str = "Whatever development companion\n\n\
 Usage:\n\
+  wmod --version                                  Print the shared release version\n\
   wmod create <directory>                         Interactive mod creation\n\
   wmod mod create <directory> --id <id> [--name <name>] [--project <project>] [--no-scripts]\n\
   wmod project create <directory> --id <id> [--name <name>] [--core <core-mod>]\n\
@@ -81,6 +82,11 @@ fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() == 1 && matches!(args[0].as_str(), "--version" | "-V") {
+        use std::io::Write;
+        std::io::stdout().write_all(format!("wmod {}\n", env!("CARGO_PKG_VERSION")).as_bytes())?;
+        return Ok(());
+    }
     if args.is_empty() || matches!(args[0].as_str(), "help" | "--help" | "-h") {
         use std::io::Write;
         std::io::stdout().write_all(HELP.as_bytes())?;

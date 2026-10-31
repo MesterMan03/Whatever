@@ -17,12 +17,14 @@
     "test:server": "bun test tools/tests/server.test.ts --timeout 30000",
     "test:project": "bun test tools/tests/project.test.ts --timeout 60000",
     "test:host": "bun test tools/tests/mod-host.test.ts --timeout 30000",
-    "package:editor": "bun tools/package-editor.ts"
+    "package:editor": "bun tools/package-editor.ts",
+    "check:versions": "bun tools/check-versions.ts"
   },
   "dependencies": {
     "@types/bun": "^1.3.14"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4"
-  }
+  },
+  "version": "0.6.0"
 }

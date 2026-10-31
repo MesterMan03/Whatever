@@ -4,10 +4,10 @@ import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
-const binary=join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
+const binary=process.env.WHATEVER_TEST_PLAYER ?? join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
 if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
-async function runServer(source:string, options:{initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>}={}) {
+async function runServer(source:string, options:{shutdownCommand?:string;expectedCode?:number;initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
@@ -34,12 +34,12 @@ async function runServer(source:string, options:{initialScene?:string;mode?:stri
         if(!commandsSent && options.commandsOnReady && stdout.includes("CONSOLE_READY")) {commandsSent=true;(active.stdin as import("bun").FileSink).write(options.commandsOnReady.join("\n")+"\n");}
         if(!stopped && stdout.includes(options.stopAt??"FIXTURE_DONE") && stdout.includes("SERVER_ONLY_READY")){
           stopped=true;stopTime=performance.now();
-          (active.stdin as import("bun").FileSink).write("quit\n");
+          (active.stdin as import("bun").FileSink).write((options.shutdownCommand??"quit")+"\n");
         }
       }
     })();
     const [stderr,code]=await Promise.all([new Response(active.stderr as ReadableStream).text(),active.exited,read]);
-    if(code!==0)throw new Error("Server exited "+code+"\n"+stdout+"\nSTDERR:\n"+stderr);
+    if(code!==(options.expectedCode??0))throw new Error("Server exited "+code+"\n"+stdout+"\nSTDERR:\n"+stderr);
     return {stdout,stderr,code,signal:active.signalCode,shutdownMs:stopped?performance.now()-stopTime:Infinity};
   } finally {
     if(child && child.exitCode===null){child.kill();await child.exited;}
@@ -355,4 +355,67 @@ Engine.on("init",async()=>{try{const startup=Scene.initialScene();if(!startup||s
  }catch(error){Engine.log("error","INITIAL_SCENE_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
  const result=await runServer(source,{mode:"server",initialScene:"core://startup",files:{"scenes/startup.wscene":JSON.stringify(scene)}});
  expect(result.stdout).toContain("INITIAL_SCENE_OK");expect(result.stdout).not.toContain("INITIAL_SCENE_FAILURE");
+});
+
+
+test.each(["help", "clear", "quit", "scene"])("core mod command %s cannot collide with the engine namespace", async name => {
+  const source = `import {Console} from "@whatever-engine/api"; Console.register({name:${JSON.stringify(name)},handler:()=>"SHOULD_NOT_RUN"});`;
+  const result = await runServer(source, { mode: "server", expectedCode: 1 });
+  expect(result.stdout).toContain(`command namespace collision: 'core:${name}'`);
+  expect(result.stdout).toContain("simulation stopped");
+  expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+});
+
+test("colliding mod commands both require namespaces and dispatch their original handler paths", async () => {
+  const source = `import {Engine,Console} from "@whatever-engine/api";
+Console.register({name:"probe",handler:()=>"CORE_PROBE"});
+Engine.on("init",()=>Engine.log("info","CONSOLE_READY"));`;
+  const serverSource = `import {Engine,Console} from "@whatever-engine/api";
+Console.register({name:"probe",handler:()=>"FIXTURE_DONE SERVER_PROBE"});
+Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));`;
+  const result = await runServer(source, {mode:"server",serverSource,commandsOnReady:["probe", "server_only:probe"]});
+  expect(result.stdout).toContain("ambiguous command 'probe' — use core:probe or server_only:probe");
+  expect(result.stdout).toContain("SERVER_PROBE");
+  expect(result.stdout).not.toContain("CORE_PROBE");
+});
+
+test.each(["core://graph", "core://scenes/graph.wscene", "core://missing", "core://invalid"])("builtin scene load %s runs on the simulation worker with atomic validation", async path => {
+  const valid = !path.endsWith("missing") && !path.endsWith("invalid");
+  const source = `import {Engine,Scene} from "@whatever-engine/api";
+let ready=false, checked=false;
+Engine.on("init",async()=>{await Scene.createEntity().get();ready=true;Engine.log("info","CONSOLE_READY");});
+Engine.on("tick",async({tick_number})=>{if(!ready||checked||tick_number<15)return;checked=true;
+try {
+ const entities=await Scene.listEntities().get();
+ if(entities.length!==${valid ? 3 : 1})throw Error("wrong entity count: "+entities.length);
+ if(${valid}) {
+  const child=entities.find(entity=>entity.id==="2:0");
+  const parent=await child.getParent().get();
+  const ref=await child.getComponent("fixture:link").get();
+  if(ref.target.id!==parent.id)throw Error("scene reference/hierarchy mismatch");
+ }
+ Engine.log("info","SCENE_CONSOLE_OK");
+}catch(error){Engine.log("error","SCENE_CONSOLE_FAILURE "+error);}
+Engine.log("info","FIXTURE_DONE");});`;
+  const result = await runServer(source, {mode:"server",commandsOnReady:[`scene load ${path}`],files:{
+    "scenes/graph.wscene": JSON.stringify({version:1,entities:[{script_id:"root",children:[{components:{"fixture:link":{target:{$entity:"root"}}}}]}]}),
+    "scenes/invalid.wscene": JSON.stringify({version:1,entities:[{}, {components:{"fixture:link":{$entity:"missing"}}}]}),
+  }});
+  expect(result.stdout).toContain("SCENE_CONSOLE_OK");
+  expect(result.stdout).not.toContain("SCENE_CONSOLE_FAILURE");
+  expect(result.stdout).toContain(valid ? "Loaded 2 entities in" : "console: command failed:");
+});
+
+
+test("a mod cannot hijack builtin quit, which remains usable while its handler is pending", async () => {
+  const source = `import {Engine} from "@whatever-engine/api";
+Engine.on("init",()=>Engine.log("info","CONSOLE_READY"));`;
+  const serverSource = `import {Engine,Console} from "@whatever-engine/api";
+Console.register({name:"quit",handler:()=>{Engine.log("info","QUIT_HANDLER_PENDING");return new Promise(()=>{});}});
+Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));`;
+  const result = await runServer(source, {mode:"server",serverSource,
+    commandsOnReady:["quit", "server_only:quit"], stopAt:"QUIT_HANDLER_PENDING", shutdownCommand:"core:quit"});
+  expect(result.stdout).toContain("ambiguous command 'quit' — use core:quit or server_only:quit");
+  expect(result.stdout).toContain("QUIT_HANDLER_PENDING");
+  expect(result.shutdownMs).toBeLessThan(3000);
 });

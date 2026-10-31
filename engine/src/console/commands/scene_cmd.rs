@@ -1,24 +1,50 @@
 use crate::console::types::{
-    ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, ParsedArgs,
+    ArgSpec, ArgType, ArgValue, CommandContext, CommandNode, CommandResult, EngineCommandAction,
+    ParsedArgs,
 };
 use crate::ecs::EntityId;
 use std::sync::Arc;
 
 pub fn node() -> CommandNode {
-    CommandNode::engine("scene", "Inspect scene entities and components").with_subcommands(vec![
-        CommandNode::engine("entities", "List all living entity IDs")
-            .with_handler(Arc::new(run_entities)),
-        CommandNode::engine("inspect", "Show all components on an entity")
-            .with_args(vec![ArgSpec {
-                name: "entity_id".into(),
-                arg_type: ArgType::EntityId,
-                required: true,
-                description: "Entity ID in index:generation format".into(),
-                has_suggest: false,
-                suggest: None,
-            }])
-            .with_handler(Arc::new(run_inspect)),
-    ])
+    CommandNode::engine("scene", "Load scenes and inspect entities and components")
+        .with_subcommands(vec![
+            CommandNode::engine("load", "Instantiate a scene from any loaded mod")
+                .with_args(vec![ArgSpec {
+                    name: "path".into(),
+                    arg_type: ArgType::String,
+                    required: true,
+                    description:
+                        "Scene VFS path, e.g. my_mod://main or my_mod://scenes/main.wscene".into(),
+                    has_suggest: false,
+                    suggest: None,
+                }])
+                .with_handler(Arc::new(run_load)),
+            CommandNode::engine("entities", "List all living entity IDs")
+                .with_handler(Arc::new(run_entities)),
+            CommandNode::engine("inspect", "Show all components on an entity")
+                .with_args(vec![ArgSpec {
+                    name: "entity_id".into(),
+                    arg_type: ArgType::EntityId,
+                    required: true,
+                    description: "Entity ID in index:generation format".into(),
+                    has_suggest: false,
+                    suggest: None,
+                }])
+                .with_handler(Arc::new(run_inspect)),
+        ])
+}
+
+fn run_load(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
+    let Some(ArgValue::String(path)) = args.positional.first() else {
+        return Err("expected scene path".into());
+    };
+    crate::scene::scene_path(path).map_err(|error| format!("{error:#}"))?;
+    let mut action = ctx
+        .pending_action
+        .lock()
+        .map_err(|_| "command queue unavailable")?;
+    *action = Some(EngineCommandAction::LoadScene(path.clone()));
+    Ok(vec![])
 }
 
 fn run_entities(_args: ParsedArgs, ctx: &CommandContext) -> CommandResult {

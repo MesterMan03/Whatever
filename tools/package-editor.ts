@@ -15,6 +15,8 @@ import {
 import { join, resolve, dirname, basename, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { checkVersions } from "./check-versions.ts";
+const releaseVersion = checkVersions();
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const option = (name: string, fallback?: string) => {
   const i = process.argv.indexOf(name);
@@ -53,6 +55,8 @@ for (const name of ["wmod", "Whatever", "whatever-launcher", "whatever-editor"])
   if (!existsSync(join(binaries, name + extension)))
     throw Error("Build the workspace first: missing " + name);
 }
+if (run([wmod, "--version"]).trim() !== `wmod ${releaseVersion}`)
+  throw Error("wmod binary does not match the release version; rebuild the workspace.");
 // wmod validates the fork policy, protocol, API version and release profile before copying anything.
 run([
   wmod,
@@ -238,9 +242,7 @@ if (process.platform === "darwin") {
     }
   }
   const app = join(output, "Whatever Editor.app");
-  const version = JSON.parse(
-    readFileSync(join(repository, "runtime/package.json"), "utf8"),
-  ).version;
+  const version = releaseVersion;
   writeFileSync(
     join(app, "Contents/Info.plist"),
     `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>engine.whatever.editor</string><key>CFBundleName</key><string>Whatever Editor</string><key>CFBundleExecutable</key><string>whatever-editor</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string><key>LSMinimumSystemVersion</key><string>13.0</string><key>NSHighResolutionCapable</key><true/></dict></plist>`,
@@ -259,7 +261,7 @@ writeFileSync(
       profile,
       platform,
       architecture,
-      version: JSON.parse(readFileSync(join(repository, "runtime/package.json"), "utf8")).version,
+      version: releaseVersion,
     },
     null,
     2,

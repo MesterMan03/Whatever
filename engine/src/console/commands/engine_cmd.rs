@@ -1,5 +1,5 @@
 use crate::console::types::{
-    ArgSpec, ArgType, CommandContext, CommandNode, CommandResult, EngineSettingAction, ParsedArgs,
+    ArgSpec, ArgType, CommandContext, CommandNode, CommandResult, EngineCommandAction, ParsedArgs,
     SuggestFn,
 };
 use std::sync::Arc;
@@ -64,7 +64,7 @@ fn run_fps_cap(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         }
     };
     if let Ok(mut guard) = ctx.pending_action.lock() {
-        *guard = Some(EngineSettingAction::SetFpsCap(new_cap));
+        *guard = Some(EngineCommandAction::SetFpsCap(new_cap));
     }
     let msg = new_cap.map_or_else(
         || "FPS cap disabled".to_owned(),
@@ -102,7 +102,7 @@ fn run_vsync(args: ParsedArgs, ctx: &CommandContext) -> CommandResult {
         _ => return Err(format!("invalid value '{raw}' — use 'on' or 'off'")),
     };
     if let Ok(mut guard) = ctx.pending_action.lock() {
-        *guard = Some(EngineSettingAction::SetVsync(enabled));
+        *guard = Some(EngineCommandAction::SetVsync(enabled));
     }
     Ok(vec![format!(
         "vsync {}",

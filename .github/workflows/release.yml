@@ -13,16 +13,37 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - name: Verify release version
+        run: bun run check:versions --tag "$GITHUB_REF_NAME"
       - uses: actions/download-artifact@v4
         with:
           pattern: WhateverEditor-*
           merge-multiple: true
+      - name: Hash portable archives
+        run: sha256sum WhateverEditor-windows-x86_64.zip WhateverEditor-linux-x86_64.tar.gz WhateverEditor-macos-arm64.tar.gz > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
+          body_path: docs/releases/${{ github.ref_name }}.md
           files: |
             WhateverEditor-windows-x86_64.zip
             WhateverEditor-linux-x86_64.tar.gz
             WhateverEditor-macos-arm64.tar.gz
+            SHA256SUMS
           fail_on_unmatched_files: true
-          generate_release_notes: true
+      # Releases created by GITHUB_TOKEN do not emit another workflow run.
+      # An explicit workflow dispatch does, and keeps npm on this exact tag.
+      - name: Publish the matching scripting API
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: 'publish.yml',
+              ref: context.ref.replace(/^refs\/tags\//, '')
+            });
