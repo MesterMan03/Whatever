@@ -7,49 +7,6 @@ runs:
       with:
         bun-version: "1.4.4"
 
-    - name: Install Linux native build prerequisites
-      if: runner.os == 'Linux'
-      shell: bash
-      run: |
-        set -euo pipefail
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build nasm perl pkg-config libatomic1 gnupg
-        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/whatever-llvm.gpg >/dev/null
-        echo "deb [signed-by=/usr/share/keyrings/whatever-llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/whatever-llvm.list
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends clang-23 lld-23 llvm-23-dev
-        echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
-
-    - name: Install portable Windows native build prerequisites
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $tools = Join-Path $env:GITHUB_WORKSPACE 'target/build-tools'
-        New-Item -ItemType Directory -Path $tools -Force | Out-Null
-        $llvm = Join-Path $tools 'llvm.tar.zst'
-        curl.exe --fail --silent --show-error --location --output $llvm 'https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/clang%2Bllvm-23.1.1-x86_64-pc-windows-msvc.tar.zst'
-        if ($LASTEXITCODE -ne 0) { throw 'LLVM download failed' }
-        tar.exe -xf $llvm -C $tools
-        if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
-        $nasm = Join-Path $tools 'nasm.zip'
-        curl.exe --fail --silent --show-error --location --output $nasm 'https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip'
-        if ($LASTEXITCODE -ne 0) { throw 'NASM download failed' }
-        Expand-Archive -LiteralPath $nasm -DestinationPath $tools -Force
-
-    - name: Install macOS native build prerequisites
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Homebrew only creates llvm@23 once the unversioned formula moves past 23.
-        formula=llvm
-        major=$(brew info --json=v2 llvm | jq -r '.formulae[0].versions.stable' | cut -d. -f1)
-        if [ "$major" != 23 ]; then formula=llvm@23; fi
-        brew install "$formula" cmake ninja nasm pkgconf autoconf automake libtool ccache coreutils gnu-sed go icu4c libiconv ruby
-        echo "$(brew --prefix "$formula")/bin" >> "$GITHUB_PATH"
-        echo "BUN_TOOLCHAIN_LLVM=$(brew --prefix "$formula")" >> "$GITHUB_ENV"
-
     - name: Install JavaScript build dependencies
       shell: bash
       run: bun install --frozen-lockfile --ignore-scripts
@@ -72,10 +29,53 @@ runs:
           vendor/bun/build/release/bun
           vendor/bun/build/release/bun.exe
         key: bun-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.image }}-${{ steps.fork.outputs.revision }}-${{ hashFiles('tools/build-bun*', '.github/actions/build-mod-host/action.yml') }}
-        # The source revision and runner image already pin the native code/toolchain.
-        # Wrapper and test-only edits can reuse a successfully built native binary.
+        # A verified binary needs no compiler/assembler downloads. The fork and
+        # runner image pin its native code/toolchain across wrapper-only edits.
         restore-keys: |
           bun-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.image }}-${{ steps.fork.outputs.revision }}-
+
+    - name: Install Linux native build prerequisites
+      if: runner.os == 'Linux' && steps.native.outputs.cache-matched-key == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build nasm perl pkg-config libatomic1 gnupg
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/whatever-llvm.gpg >/dev/null
+        echo "deb [signed-by=/usr/share/keyrings/whatever-llvm.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main" | sudo tee /etc/apt/sources.list.d/whatever-llvm.list
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends clang-23 lld-23 llvm-23-dev
+        echo /usr/lib/llvm-23/bin >> "$GITHUB_PATH"
+
+    - name: Install portable Windows native build prerequisites
+      if: runner.os == 'Windows' && steps.native.outputs.cache-matched-key == ''
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $tools = Join-Path $env:GITHUB_WORKSPACE 'target/build-tools'
+        New-Item -ItemType Directory -Path $tools -Force | Out-Null
+        $llvm = Join-Path $tools 'llvm.tar.zst'
+        curl.exe --retry 5 --retry-all-errors --connect-timeout 20 --fail --silent --show-error --location --output $llvm 'https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/clang%2Bllvm-23.1.1-x86_64-pc-windows-msvc.tar.zst'
+        if ($LASTEXITCODE -ne 0) { throw 'LLVM download failed' }
+        & (Join-Path $env:SystemRoot 'System32/tar.exe') -xf $llvm -C $tools
+        if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+        $nasm = Join-Path $tools 'nasm.zip'
+        curl.exe --retry 5 --retry-all-errors --connect-timeout 20 --fail --silent --show-error --location --output $nasm 'https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip'
+        if ($LASTEXITCODE -ne 0) { throw 'NASM download failed' }
+        Expand-Archive -LiteralPath $nasm -DestinationPath $tools -Force
+
+    - name: Install macOS native build prerequisites
+      if: runner.os == 'macOS' && steps.native.outputs.cache-matched-key == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Homebrew only creates llvm@23 once the unversioned formula moves past 23.
+        formula=llvm
+        major=$(brew info --json=v2 llvm | jq -r '.formulae[0].versions.stable' | cut -d. -f1)
+        if [ "$major" != 23 ]; then formula=llvm@23; fi
+        brew install "$formula" cmake ninja nasm pkgconf autoconf automake libtool ccache coreutils gnu-sed go icu4c libiconv ruby
+        echo "$(brew --prefix "$formula")/bin" >> "$GITHUB_PATH"
+        echo "BUN_TOOLCHAIN_LLVM=$(brew --prefix "$formula")" >> "$GITHUB_ENV"
 
     - name: Build native runtime
       if: steps.native.outputs.cache-matched-key == ''
