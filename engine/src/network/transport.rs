@@ -502,13 +502,20 @@ async fn session_run(
     mut recv: RecvStream,
     mut state: Session,
 ) {
-    let Ok(id) = state
-        .ids
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-    else {
-        connection.close(1u8.into(), b"connection IDs exhausted");
-        return;
-    };
+    let mut id = state.ids.load(Ordering::Relaxed);
+    loop {
+        let Some(next) = id.checked_add(1) else {
+            connection.close(1u8.into(), b"connection IDs exhausted");
+            return;
+        };
+        match state
+            .ids
+            .compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => break,
+            Err(current) => id = current,
+        }
+    }
     let id = format!("peer:{}", id + 1);
     let (sender, mut outgoing) = mpsc::channel::<Outgoing>(64);
     let peer = Peer {

@@ -65,7 +65,7 @@ runs:
         echo "revision=$(git -C vendor/bun rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
 
-    - uses: actions/cache@v4
+    - uses: actions/cache/restore@v4
       id: native
       with:
         path: |
@@ -79,6 +79,15 @@ runs:
       env:
         WHATEVER_BUN_JOBS: ${{ runner.os == 'macOS' && '1' || '2' }}
       run: bun run build:bun
+
+    # Save as soon as the costly native build succeeds, even if a later test fails.
+    - uses: actions/cache/save@v4
+      if: steps.native.outputs.cache-hit != 'true'
+      with:
+        path: |
+          vendor/bun/build/release/bun
+          vendor/bun/build/release/bun.exe
+        key: ${{ steps.native.outputs.cache-primary-key }}
 
     - name: Build API and bundled mod host
       shell: bash

@@ -54,12 +54,22 @@ impl PipeWriter {
     }
     pub fn send(&self, mut text: String) -> Result<()> {
         text.push('\n');
-        self.queued
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |size| {
-                size.checked_add(text.len())
-                    .filter(|size| *size <= self.max_bytes)
-            })
-            .map_err(|_| anyhow::anyhow!("mod IPC byte queue is full"))?;
+        let mut queued = self.queued.load(Ordering::Acquire);
+        loop {
+            let reserved = queued
+                .checked_add(text.len())
+                .filter(|size| *size <= self.max_bytes)
+                .ok_or_else(|| anyhow::anyhow!("mod IPC byte queue is full"))?;
+            match self.queued.compare_exchange_weak(
+                queued,
+                reserved,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(current) => queued = current,
+            }
+        }
         self.sender
             .try_send(Line {
                 text,

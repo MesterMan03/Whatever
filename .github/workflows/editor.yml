@@ -48,13 +48,15 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends pkg-config patchelf libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev
-      - uses: ./.github/actions/build-mod-host
-      - name: Format and lint
+      - name: Check Rust formatting and lints
         shell: bash
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          bun run format:check
+      - uses: ./.github/actions/build-mod-host
+      - name: Check mod formatting
+        shell: bash
+        run: bun run format:check
       - name: Build and test workspace
         shell: bash
         run: |
