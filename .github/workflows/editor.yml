@@ -65,7 +65,7 @@ jobs:
           cargo test --workspace --locked
           bun run test:network
           bun run test:runtime
-          bun run test:server
+          bun run test:server --bail=1
           bun run test:mods
           bun run test:project
           cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored

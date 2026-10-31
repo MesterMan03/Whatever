@@ -27,6 +27,10 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
     let profile = CString::new(format!(
         r#"(version 1)
 (deny default)
+; libignition opens the root directory and reads these settings before dyld.
+; The literal permits only the directory itself, not arbitrary file contents.
+(allow file-read* (literal "/"))
+(allow sysctl-read (sysctl-name "kern.bootargs") (sysctl-name "security.mac.lockdown_mode_state"))
 (allow file-read* (subpath "/usr") (subpath "/System") (subpath "/Library") (subpath "/private/etc") (subpath "/private/tmp") (subpath "/private/var/folders"))
 (allow file-read* (literal "{executable}") (subpath "{mod_root}"))
 ; dyld needs executable mappings as well as reads of the host and system cache.
