@@ -281,7 +281,9 @@ manual dispatch. Version releases promote its exact archives only after all thre
 platforms pass on the tagged commit on `main`. Missing or expired artifacts block
 publication; the release workflow also supports retrying an existing tag through
 manual dispatch. The pinned native Bun binary is
-cached by fork revision, platform and build configuration. Artifacts include:
+cached by fork revision, platform and build configuration. Optimized Rust outputs
+are cached by platform, compiler and Cargo configuration immediately after the
+release build, before packaging starts. Artifacts include:
 
 - Native editor, wmod and launcher template.
 - `engine/Whatever`, the separate `engine/runtime` mod host, required libraries.

@@ -37,12 +37,19 @@ jobs:
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
+        id: rust
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           key: portable-editor
           cache-on-failure: true
+      - name: Restore optimized build outputs
+        uses: actions/cache/restore@v4
+        id: release-cache
+        with:
+          path: target/release
+          key: editor-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', '.cargo/config*') }}
       - name: Linux desktop and packaging dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -74,6 +81,12 @@ jobs:
       - name: Build release workspace
         shell: bash
         run: cargo build --workspace --release --locked
+      - name: Save optimized build outputs before packaging
+        if: steps.release-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target/release
+          key: ${{ steps.release-cache.outputs.cache-primary-key }}
       - name: Assemble, relocate, smoke-test and archive editor
         shell: bash
         run: bun run package:editor

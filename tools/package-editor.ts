@@ -356,9 +356,14 @@ try {
   rmSync(temporary, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
 }
 const archive = output + (process.platform === "win32" ? ".zip" : ".tar.gz");
+// Git Bash can put GNU tar ahead of Windows bsdtar. GNU tar interprets a drive
+// letter in an absolute archive path as a remote host.
+const tar = process.platform === "win32"
+  ? join(process.env.SystemRoot || "C:/Windows", "System32/tar.exe")
+  : "tar";
 run(
   process.platform === "win32"
-    ? ["tar.exe", "-a", "-c", "-f", archive, "-C", dirname(output), basename(output)]
-    : ["tar", "-czf", archive, "-C", dirname(output), basename(output)],
+    ? [tar, "-a", "-c", "-f", archive, "-C", dirname(output), basename(output)]
+    : [tar, "-czf", archive, "-C", dirname(output), basename(output)],
 );
 console.log("Packaged " + archive);
