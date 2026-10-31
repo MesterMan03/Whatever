@@ -72,9 +72,13 @@ runs:
           vendor/bun/build/release/bun
           vendor/bun/build/release/bun.exe
         key: bun-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.image }}-${{ steps.fork.outputs.revision }}-${{ hashFiles('tools/build-bun*', '.github/actions/build-mod-host/action.yml') }}
+        # The source revision and runner image already pin the native code/toolchain.
+        # Wrapper and test-only edits can reuse a successfully built native binary.
+        restore-keys: |
+          bun-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.image }}-${{ steps.fork.outputs.revision }}-
 
     - name: Build native runtime
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.native.outputs.cache-matched-key == ''
       shell: bash
       env:
         WHATEVER_BUN_JOBS: ${{ runner.os == 'macOS' && '1' || '2' }}
@@ -98,3 +102,11 @@ runs:
     - name: Test bundled mod host
       shell: bash
       run: bun run test:host
+    - name: Preserve runtime for failed host diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: runtime-diagnostics-${{ runner.os }}-${{ runner.arch }}
+        path: runtime/dist/whatever-mod-host*
+        if-no-files-found: ignore
+        retention-days: 3

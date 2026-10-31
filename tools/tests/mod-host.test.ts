@@ -22,6 +22,8 @@ afterAll(() => rmSync(standaloneDirectory, { recursive: true, force: true }));
 async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean, tickInput: {keys_pressed:string[];mouse_delta:[number,number];mouse_captured?:boolean} = {keys_pressed:[],mouse_delta:[0,0]}) {
   const directory = mkdtempSync(join(tmpdir(), "whatever-host-"));
   let tickTimer: ReturnType<typeof setInterval> | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  let stopChild: (() => Promise<void>) | undefined;
   try {
     const host = standaloneHost;
     const root = join(directory, "mod");
@@ -34,7 +36,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
     for (const [name, target] of Object.entries(links)) {
       symlinkSync(join(directory, target), join(root, name), process.platform === "win32" ? "junction" : "dir");
     }
-    const child = Bun.spawn([host, join(root, entryName), root, mode], {
+    const active = Bun.spawn([host, join(root, entryName), root, mode], {
       cwd: directory,
       env: {
         PATH: "",
@@ -47,16 +49,38 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 10_000,
     });
+    stopChild = async () => { if (active.exitCode === null) { active.kill(9); await active.exited; } };
+    let timedOut = false;
+    let transportError: unknown;
+    const send = (message: object) => {
+      if (active.exitCode !== null || timedOut) return;
+      try {
+        active.stdin.write(JSON.stringify(message) + "\n");
+        const flushed = active.stdin.flush();
+        if (flushed instanceof Promise) void flushed.catch(error => {
+          transportError = error;
+          if (active.exitCode === null) active.kill(9);
+        });
+      } catch (error) {
+        transportError = error;
+        if (active.exitCode === null) active.kill(9);
+      }
+    };
+    deadline = setTimeout(() => {
+      timedOut = true;
+      clearInterval(tickTimer);
+      if (active.exitCode === null) active.kill(9);
+    }, 10_000);
     const messages: Array<Record<string, any>> = [];
     const batches: Array<Record<string, any>> = [];
     let tickNumber = 0;
-    const tick = () => child.stdin.write(JSON.stringify({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, mouse_captured: true, ...tickInput }) + "\n");
+    const tick = () => send({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, mouse_captured: true, ...tickInput });
     const output = (async () => {
       let remaining = "";
-      for await (const chunk of child.stdout) {
-        remaining += new TextDecoder().decode(chunk);
+      const decoder = new TextDecoder();
+      for await (const chunk of active.stdout) {
+        remaining += decoder.decode(chunk, {stream:true});
         let newline: number;
         while ((newline = remaining.indexOf("\n")) >= 0) {
           const line = remaining.slice(0, newline);
@@ -65,25 +89,31 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
           if (packet.type === "CommandBatch") batches.push(packet);
           for (const message of packet.type === "CommandBatch" ? packet.commands : [packet]) {
             messages.push(message);
-            if (onMessage?.(message, value => child.stdin.write(JSON.stringify(value)+"\n"))) continue;
+            if (onMessage?.(message, send)) continue;
             if (message.type === "RuntimeReady") {
-              child.stdin.write(JSON.stringify({ type: "Init", mod_id: "fixture", engine_version: runtimeManifest.version, mode }) + "\n");
+              send({ type: "Init", mod_id: "fixture", engine_version: runtimeManifest.version, mode });
               tick();
               tickTimer = setInterval(tick, 10);
             } else if (message.type === "EntityCreate") {
-              child.stdin.write(JSON.stringify({ type: "EntityCreated", request_id: message.request_id, entity_id: "0:0" }) + "\n");
+              send({ type: "EntityCreated", request_id: message.request_id, entity_id: "0:0" });
             } else if (message.type === "Log" && message.message === "fixture-done") {
               clearInterval(tickTimer);
-              child.stdin.write(JSON.stringify({ type: "Shutdown", exit_code: 0 }) + "\n");
+              send({ type: "Shutdown", exit_code: 0 });
             }
           }
         }
       }
     })();
-    const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited, output]);
-    return { messages, batches, stderr, exitCode, signalCode: child.signalCode };
+    const [stderr, exitCode] = await Promise.all([new Response(active.stderr).text(), active.exited, output]);
+    if (timedOut || transportError || (exitCode !== 0 && !messages.some(message => message.type === "RuntimeFailed"))) {
+      throw new Error(JSON.stringify({entryName, timedOut, transportError:String(transportError ?? ""), exitCode,
+        signal:active.signalCode, tickNumber, stderr, messages:messages.slice(-12), batches:batches.slice(-2)}, null, 2));
+    }
+    return { messages, batches, stderr, exitCode, signalCode: active.signalCode };
   } finally {
     clearInterval(tickTimer);
+    clearTimeout(deadline);
+    await stopChild?.();
     rmSync(directory, { recursive: true, force: true });
   }
 }
@@ -287,12 +317,13 @@ describe("bundled mod host", () => {
   });
   test("runs a CommonJS entry without exposing trusted parents or cache entries", async () => {
     const result = await runHost('const { Engine } = require("@whatever-engine/api");' +
-      'Engine.on("init", () => {' +
+      'Engine.on("init", () => { try {' +
       'if (module.parent !== null) throw new Error("trusted parent exposed");' +
       'for (const key of Object.keys(require.cache)) {' +
       'if (key.startsWith("node:") || key.includes("$bunfs")) throw new Error("trusted cache exposed"); }' +
       'try { module.require("node:fs"); throw new Error("UNEXPECTED"); }' +
       'catch (error) { Engine.log("info", String(error)); }' +
+      '} catch (error) { Engine.log("error", String(error)); }' +
       'Engine.log("info", "fixture-done"); });', {}, {}, "index.cjs");
     const logs = result.messages.filter(message => message.type === "Log").map(message => message.message);
     expect(logs[0]).toStartWith("TypeError: Whatever module policy denied:");
