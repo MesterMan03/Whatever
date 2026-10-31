@@ -2,7 +2,7 @@
 
 Each scripted mod runs in an engine-owned `whatever-mod-host` subprocess. The executable contains the pinned Whatever Bun fork, the trusted bootstrap, and `@whatever-engine/api`. The engine never searches PATH for Bun and never falls back to stock Bun.
 
-The submodule tracks the `codex/whatever-runtime` branch of [Whatever-mod-runtime](https://github.com/MesterMan03/Whatever-mod-runtime), with the upstream Bun repository retained locally as `upstream`. It is pinned to `80772ef5fb64e0fdc242881782ec625a21cf15e4` (Bun v1.4.4) in `vendor/bun`, including the committed native policy and Windows build adjustments. `vendor/patches/bun-whatever.patch` exports those changes relative to `f7607a3d350b9c9488d41eab6a18d6cac74794e6` for review and reproduction. Run `bun run prepare:bun` to initialize and verify the pinned fork. Preparation refuses a different revision or conflicting policy edits.
+The submodule tracks the `codex/whatever-runtime` branch of [Whatever-mod-runtime](https://github.com/MesterMan03/Whatever-mod-runtime), with the upstream Bun repository retained locally as `upstream`. It is pinned to `12ad6221f3a931151c0be16f10c556eb15b4030c` (Bun v1.4.4) in `vendor/bun`, including the committed native policy and Windows build adjustments. `vendor/patches/bun-whatever.patch` exports those changes relative to `f7607a3d350b9c9488d41eab6a18d6cac74794e6` for review and reproduction. Run `bun run prepare:bun` to initialize and verify the pinned fork. Preparation refuses a different revision or conflicting policy edits.
 
 The patch also keeps code-generation source arguments relative to the checkout to fit Windows command limits and pins builtin-table manifests to LF endings. Preparation normalizes existing CRLF copies of those manifests without changing their data.
 
@@ -16,6 +16,8 @@ Local JavaScript, TypeScript and JSON imports are allowed inside the current mod
 
 All other package names, `node:` and `bun:` modules, package subpaths, package import aliases, and network/data/blob module URLs are denied. Checks cover static import records before optimization, ESM resolution and fetching, dynamic imports, and CommonJS resolution before consulting its cache. A mod's package.json, tsconfig aliases or bundled dependencies cannot grant runtime privileges. Pure JavaScript copied into a mod's own local source is still mod code and runs under the same restrictions.
 
+Unix policy path checks use Bun's caller-buffer realpath wrapper, avoiding libc-owned allocations crossing Bun's allocator boundary.
+
 The trusted bootstrap registers the engine API before enabling the native policy. A mod-local copy of that package cannot replace it. Mod bundlers should leave this package external.
 
 There are no elevated permissions or mod-configurable grants yet. Future allowed modules and permissions must be added explicitly; an unknown module stays denied.
@@ -26,7 +28,7 @@ The native transition retains an explicit allowlist of ordinary JavaScript langu
 
 Other globals are replaced with immutable undefined values. In particular, mods receive no `Bun`, `process`, `fetch`, `WebSocket`, `Worker` or `ShadowRealm`. Unknown globals added by future Bun releases are denied unless reviewed and added to the list.
 
-The bootstrap captures native stdin/stdout pipe handles for its private IPC transport before this transition, clears the CommonJS cache of trusted bootstrap modules, and hides CommonJS parent references. Policy activation is irreversible for the process. Scripts cannot widen or reset it.
+The bootstrap captures native stdin/stdout pipe handles for its private IPC transport before this transition, clears the CommonJS cache of trusted bootstrap modules, and hides CommonJS parent references. Cache enumeration and direct lookups also enforce the native mod-root allowlist, including the ESM registry fallback and cache proxies created before lockdown. Embedded executable paths are hidden on every platform. Policy activation is irreversible for the process. Scripts cannot widen or reset it.
 
 ## Host startup
 

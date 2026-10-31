@@ -7,7 +7,7 @@ import runtimeManifest from "../../runtime/package.json";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const hostName = "whatever-mod-host" + (process.platform === "win32" ? ".exe" : "");
-const builtHost = join(repository, "runtime/dist", hostName);
+const builtHost = process.env.WHATEVER_TEST_HOST ?? join(repository, "runtime/dist", hostName);
 if (!existsSync(builtHost)) throw new Error("Build the native mod host with bun run build:host before running these tests.");
 
 let standaloneDirectory: string;
@@ -52,9 +52,10 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
     });
     stopChild = async () => { if (active.exitCode === null) { active.kill(9); await active.exited; } };
     let timedOut = false;
+    let shuttingDown = false;
     let transportError: unknown;
     const send = (message: object) => {
-      if (active.exitCode !== null || timedOut) return;
+      if (active.exitCode !== null || timedOut || shuttingDown) return;
       try {
         active.stdin.write(JSON.stringify(message) + "\n");
         const flushed = active.stdin.flush();
@@ -99,6 +100,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
             } else if (message.type === "Log" && message.message === "fixture-done") {
               clearInterval(tickTimer);
               send({ type: "Shutdown", exit_code: 0 });
+              shuttingDown = true;
             }
           }
         }
@@ -320,7 +322,7 @@ describe("bundled mod host", () => {
       'Engine.on("init", () => { try {' +
       'if (module.parent !== null) throw new Error("trusted parent exposed");' +
       'for (const key of Object.keys(require.cache)) {' +
-      'if (key.startsWith("node:") || key.includes("$bunfs")) throw new Error("trusted cache exposed"); }' +
+      'if (key.startsWith("node:") || key.includes("$bunfs") || key.includes("~BUN")) throw new Error("trusted cache exposed: " + key); }' +
       'try { module.require("node:fs"); throw new Error("UNEXPECTED"); }' +
       'catch (error) { Engine.log("info", String(error)); }' +
       '} catch (error) { Engine.log("error", String(error)); }' +

@@ -62,6 +62,31 @@ index 42d818467..39c1c27b9 100644
    if (stripComponents > 0) args.push(`--strip-components=${stripComponents}`);
  
    const result = spawnSync(tarExe, args, {
+diff --git a/src/js/builtins/CommonJS.ts b/src/js/builtins/CommonJS.ts
+index 40bdeecf8..83c2d2983 100644
+--- a/src/js/builtins/CommonJS.ts
++++ b/src/js/builtins/CommonJS.ts
+@@ -279,8 +279,9 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
+   const isBuiltinKey = (key: string | symbol) =>
+     typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
+   // An executable that `bun build --compile --aot` made never lists its own files, which run once: the cache holds the files that were loaded from outside of the executable, as in a bundled executable.
+-  const hidesFiles = $isHiddenFromRequireCache();
+-  const isHidden = (key: string | symbol) => hidesFiles && $isHiddenFromRequireCache(key);
++  // Lockdown can activate after a trusted bootstrap has created this proxy.
++  // Consult the native policy on access, including the ESM registry fallback.
++  const isHidden = (key: string | symbol) => $isHiddenFromRequireCache(key);
+   const hasKey = (key: string) =>
+     !isHidden(key) && (requireMap.$has(key) || (!isBuiltinKey(key) && $esmRegistryHasEvaluated(key, owner)));
+   var proxy = new Proxy(inner, {
+@@ -325,7 +326,7 @@ export function createRequireCache(requireMap: RequireMap, owner?: JSCommonJSMod
+           $arrayPush(array, key);
+         }
+       }
+-      if (!hidesFiles) return array;
++      if (!$isHiddenFromRequireCache()) return array;
+       var shown: string[] = [];
+       for (var index = 0; index < array.length; index++) {
+         if (!isHidden(array[index])) $arrayPush(shown, array[index]);
 diff --git a/src/jsc/bindings/ImportMetaObject.cpp b/src/jsc/bindings/ImportMetaObject.cpp
 index c56527dd4..93bddd595 100644
 --- a/src/jsc/bindings/ImportMetaObject.cpp
@@ -194,7 +219,7 @@ index 000000000..e2604a7ff
 +} // namespace Bun
 \ No newline at end of file
 diff --git a/src/jsc/bindings/ZigGlobalObject.cpp b/src/jsc/bindings/ZigGlobalObject.cpp
-index 68e9dae42..56f60ca88 100644
+index 68e9dae42..5a3deb7a8 100644
 --- a/src/jsc/bindings/ZigGlobalObject.cpp
 +++ b/src/jsc/bindings/ZigGlobalObject.cpp
 @@ -1,6 +1,7 @@
@@ -205,7 +230,26 @@ index 68e9dae42..56f60ca88 100644
  #include "CodeGenerationFromStrings.h"
  #include "BunModuleRegistry.h"
  #include "BuiltinModuleKeys.h"
-@@ -2413,6 +2414,62 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
+@@ -1048,6 +1049,18 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * glo
+ 
+ JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+ {
++    if (Bun__whateverIsLocked()) {
++        if (!callFrame->argumentCount())
++            return JSValue::encode(jsBoolean(true));
++        auto keyValue = callFrame->uncheckedArgument(0);
++        if (!keyValue.isString())
++            return JSValue::encode(jsBoolean(true));
++        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
++        auto key = asString(keyValue)->value(globalObject);
++        RETURN_IF_EXCEPTION(scope, {});
++        auto specifier = Bun::toString(key);
++        return JSValue::encode(jsBoolean(!Bun__whateverAllowsResolved(&specifier)));
++    }
+     if (!Bun::hasCompiledModules()) [[likely]]
+         return JSValue::encode(jsBoolean(false));
+     if (!callFrame->argumentCount())
+@@ -2413,6 +2426,62 @@ JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSV
      return JSValue::encode(debugIDs);
  }
  #endif
@@ -268,7 +312,7 @@ index 68e9dae42..56f60ca88 100644
  
  void GlobalObject::finishCreation(VM& vm)
  {
-@@ -2881,7 +2938,9 @@ void GlobalObject::finishCreation(VM& vm)
+@@ -2881,7 +2950,9 @@ void GlobalObject::finishCreation(VM& vm)
               init.set(obj);
           } },
          { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
@@ -279,7 +323,7 @@ index 68e9dae42..56f60ca88 100644
           } },
          { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
               init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-@@ -3940,7 +3999,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+@@ -3940,7 +4011,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
      if (key.isString()) {
          auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
          RETURN_IF_EXCEPTION(scope, {});
@@ -288,7 +332,7 @@ index 68e9dae42..56f60ca88 100644
              Latin1CString narrowed;
              std::span<const Latin1Character> chars;
              if (moduleName->is8Bit())
-@@ -3968,6 +4027,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+@@ -3968,6 +4039,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
          keyString = key.toWTFString(globalObject);
          RETURN_IF_EXCEPTION(scope, {});
      }
@@ -297,7 +341,7 @@ index 68e9dae42..56f60ca88 100644
      WTF::String referrerString;
      if (referrer && referrer.isString()) {
          referrerString = referrer.toWTFString(globalObject);
-@@ -3997,6 +4058,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
+@@ -3997,6 +4070,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
      }
      auto resolved = res.result.value.transferToWTFString();
      auto query = queryZ.transferToWTFString();
@@ -306,7 +350,7 @@ index 68e9dae42..56f60ca88 100644
  
      if (!query.isEmpty()) {
          return Identifier::fromString(vm, makeString(resolved, query));
-@@ -4008,7 +4071,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
+@@ -4008,7 +4083,7 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
  {
      // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
      auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
@@ -315,7 +359,7 @@ index 68e9dae42..56f60ca88 100644
          auto* string = uncheckedDowncast<JSString>(key);
          if (!string->isRope()) {
              auto view = string->tryGetValue();
-@@ -4139,6 +4202,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
+@@ -4139,6 +4214,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
      if (scope.exception()) [[unlikely]]
          return rejectedInternalPromise(globalObject, scope.exception()->value());
  
@@ -325,7 +369,7 @@ index 68e9dae42..56f60ca88 100644
      if (moduleKey.endsWith(".node"_s)) {
          return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
      }
-@@ -4593,7 +4659,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
+@@ -4593,7 +4671,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
      auto scope = DECLARE_THROW_SCOPE(vm);
  
      bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
@@ -409,13 +453,34 @@ index 000000000..69aa670bf
 +}
 diff --git a/src/jsc/whatever_policy.rs b/src/jsc/whatever_policy.rs
 new file mode 100644
-index 000000000..a26e2b255
+index 000000000..c39b6bdd2
 --- /dev/null
 +++ b/src/jsc/whatever_policy.rs
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,196 @@
 +use std::path::{Component, Path, PathBuf};
 +
 +pub(crate) const API_MODULE: &str = "@whatever-engine/api";
++
++// Rust's Unix canonicalize calls realpath(path, NULL), then libc::free. Bun
++// interposes free, but glibc's realpath may allocate through __libc_malloc.
++// Supply the storage ourselves so no libc-owned allocation crosses allocators.
++#[cfg(unix)]
++fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
++    use std::ffi::{CString, OsString};
++    use std::os::unix::ffi::{OsStrExt, OsStringExt};
++
++    let source = CString::new(path.as_os_str().as_bytes())
++        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
++    let mut resolved = bun_core::PathBuffer::ZEROED;
++    let bytes = bun_sys::realpath(bun_core::ZStr::from_cstr(&source), &mut resolved)
++        .map_err(|error| std::io::Error::from_raw_os_error(error.errno as i32))?;
++    Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
++}
++
++#[cfg(not(unix))]
++fn canonicalize(path: &Path) -> std::io::Result<PathBuf> {
++    path.canonicalize()
++}
 +
 +pub(crate) struct ModulePolicy {
 +    root: PathBuf,
@@ -423,7 +488,7 @@ index 000000000..a26e2b255
 +
 +impl ModulePolicy {
 +    pub(crate) fn new(root: &Path) -> std::io::Result<Self> {
-+        let root = root.canonicalize()?;
++        let root = canonicalize(root)?;
 +        if !root.is_dir() {
 +            return Err(std::io::Error::other("mod root must be a directory"));
 +        }
@@ -454,7 +519,7 @@ index 000000000..a26e2b255
 +        if !path.is_absolute() || has_node_modules(path) {
 +            return false;
 +        }
-+        let Ok(resolved) = path.canonicalize() else {
++        let Ok(resolved) = canonicalize(path) else {
 +            return false;
 +        };
 +        resolved.starts_with(&self.root)
@@ -674,15 +739,47 @@ index e4605260e..2cb1d3854 100644
              && (has_loaded || is_in_preload)
              && concurrent_loader.is_java_script_like()
 diff --git a/test/js/bun/resolve/resolve.test.ts b/test/js/bun/resolve/resolve.test.ts
-index bee8739d8..dccda6e4a 100644
+index bee8739d8..8f30991fe 100644
 --- a/test/js/bun/resolve/resolve.test.ts
 +++ b/test/js/bun/resolve/resolve.test.ts
-@@ -2255,3 +2255,42 @@ test.concurrent.each(["import", "require"])(
+@@ -2255,3 +2255,74 @@ test.concurrent.each(["import", "require"])(
      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
    },
  );
 +
 +describe("Whatever native module policy", () => {
++  test("hides trusted ESM entries from a cache proxy created before lockdown", async () => {
++    using directory = tempDir("whatever-cache", {
++      "trusted.mjs": "export const secret = 42;",
++      "mod/entry.cjs": `
++        const cache = require.cache;
++        if (Object.keys(cache).some(key => key.includes("trusted.mjs"))) throw Error("trusted ESM key exposed");
++        const local = require("./local.cjs");
++        if (local !== 7 || !cache[require.resolve("./local.cjs")]) throw Error("local cache unavailable");
++        module.exports = "hidden";
++      `,
++      "mod/local.cjs": "module.exports = 7;",
++    });
++    const trusted = join(String(directory), "trusted.mjs");
++    const root = join(String(directory), "mod");
++    const source = 'const write = process.stdout.write.bind(process.stdout);' +
++      'await import(' + JSON.stringify(pathToFileURL(trusted).href) + ');' +
++      'const cache = require.cache; const key = Object.keys(cache).find(key => key.includes("trusted.mjs"));' +
++      'if (!key) throw Error("trusted fixture was not cached");' +
++      'Bun.__whateverLockdown(' + JSON.stringify(root) + ');' +
++      'if (cache[key] !== undefined || key in cache || Object.getOwnPropertyDescriptor(cache,key)) throw Error("trusted cache lookup exposed");' +
++      'const value = await import(' + JSON.stringify(pathToFileURL(join(root, "entry.cjs")).href) + ');' +
++      'write(value.default);';
++    await using child = Bun.spawn({
++      cmd: [bunExe(), "--no-env-file", "--no-install", "-e", source],
++      env: bunEnv,
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
++    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hidden", stderr: "", exitCode: 0 });
++  });
++
 +  test("allows local modules after irreversible lockdown", async () => {
 +    using directory = tempDir("whatever-local", {
 +      "entry.js": 'import value from "./local.js"; export default value;',

@@ -37,6 +37,10 @@ on:
       - ".github/workflows/mod-runtime.yml"
   workflow_dispatch:
 
+concurrency:
+  group: mod-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   runtime:
     strategy:

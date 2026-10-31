@@ -99,6 +99,10 @@ runs:
         bun run build:runtime
         bun run build:host
 
+    - name: Smoke-test host startup and IPC
+      shell: bash
+      run: bun test tools/tests/mod-host.test.ts --test-name-pattern 'runs outside the engine tree' --timeout 30000
+
     - name: Test bundled mod host
       shell: bash
       run: bun run test:host
@@ -107,6 +111,9 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: runtime-diagnostics-${{ runner.os }}-${{ runner.arch }}
-        path: runtime/dist/whatever-mod-host*
+        path: |
+          runtime/dist/whatever-mod-host*
+          vendor/bun/build/release/bun
+          vendor/bun/build/release/bun.exe
         if-no-files-found: ignore
         retention-days: 3

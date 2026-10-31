@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extension = process.platform === "win32" ? ".exe" : "";
 const overrideIndex = process.argv.indexOf("--bun");
+const outputIndex = process.argv.indexOf("--output");
 const debugRuntime = process.argv.includes("--debug-runtime");
 if (overrideIndex >= 0 && !process.argv[overrideIndex + 1]) throw new Error("--bun needs a fork executable path.");
+if (outputIndex >= 0 && !process.argv[outputIndex + 1]) throw new Error("--output needs an executable path.");
 const candidates = overrideIndex >= 0
   ? [resolve(process.argv[overrideIndex + 1] ?? "")]
   : [
@@ -33,7 +35,9 @@ if (await run(["--no-env-file", "--no-install", "-p", "typeof Bun.__whateverLock
   throw new Error("The selected Bun binary lacks the native Whatever lockdown policy.");
 }
 
-const output = join(root, "runtime/dist/whatever-mod-host" + extension);
+const output = outputIndex >= 0
+  ? resolve(process.argv[outputIndex + 1] ?? "")
+  : join(root, "runtime/dist/whatever-mod-host" + extension);
 const temporary = join(dirname(output), "whatever-mod-host.building" + extension);
 mkdirSync(dirname(output), { recursive: true });
 try {

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const checkout = join(root, "vendor/bun");
-const base = "80772ef5fb64e0fdc242881782ec625a21cf15e4";
+const base = "12ad6221f3a931151c0be16f10c556eb15b4030c";
 const patch = join(root, "vendor/patches/bun-whatever.patch");
 
 function git(args: string[], cwd = checkout, quiet = false) {
