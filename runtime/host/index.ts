@@ -5,15 +5,11 @@ import { pathToFileURL } from "node:url";
 import * as api from "../src/index.ts";
 import manifest from "../package.json";
 import { _configureMode } from "../src/environment.ts";
+import { _write as write } from "../src/transport.ts";
 
 const exit = (process as typeof process & { reallyExit(code: number): never }).reallyExit.bind(
   process,
 );
-const stdout = Bun.stdout.writer();
-const write = (data: string) => {
-  stdout.write(data);
-  stdout.flush();
-};
 const inspect = Bun.inspect;
 const lockdown = (
   Bun as typeof Bun & {

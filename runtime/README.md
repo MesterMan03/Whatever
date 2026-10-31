@@ -4,6 +4,8 @@ The npm package contains the scripting bundle and TypeScript declarations. The n
 
 TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC protocol between the engine and Bun script subprocesses.
 
+The bundled host delivers complete UTF-8 batches over ordinary engine pipes; its transport handles remain private.
+
 ## Usage
 
 ```ts

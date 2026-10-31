@@ -15,6 +15,12 @@ for editor types. Other packages and all Node/Bun built-in modules are denied by
 default. Local JS/TS/JSON modules must resolve inside the current mod directory.
 See [the runtime policy](SANDBOX.md) for the module and global allowlists.
 
+The trusted host captures fixed stdin/stdout operations before activating the policy.
+Its NDJSON reader uses asynchronous descriptor reads and its writer completes every
+UTF-8 batch, including partial writes, before returning. These private operations
+work with the ordinary OS pipes created by the Rust player and do not expose file
+descriptors or built-in modules to mods.
+
 ---
 
 ## `Engine`

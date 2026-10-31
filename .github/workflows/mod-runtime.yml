@@ -53,6 +53,10 @@ jobs:
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mod-runtime
+          cache-on-failure: true
       - uses: ./.github/actions/build-mod-host
       - name: Install Linux engine prerequisites
         if: runner.os == 'Linux'
@@ -70,3 +74,16 @@ jobs:
           bun run test:project
           cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
           cargo test -p whatever-engine --locked network_messenger -- --ignored
+      - name: Preserve failed player and IPC diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-diagnostics-${{ runner.os }}
+          retention-days: 3
+          path: |
+            target/ci-server-failures/
+            target/debug/Whatever.exe
+            target/debug/Whatever
+            target/debug/*.dll
+            runtime/dist/whatever-mod-host*
+          if-no-files-found: ignore

@@ -126,6 +126,13 @@ function fixture(body: string) {
     '\nEngine.log("info", "fixture-done");\n});\n';
 }
 
+test("delivers UTF-8 batches larger than the OS pipe buffer without truncation", async () => {
+  const payload = "λ🙂汉".repeat(24000);
+  const result = await runHost(fixture(`Engine.log("info", ${JSON.stringify(payload)});`));
+  expect(result.exitCode).toBe(0);
+  expect(result.messages.find(message => message.type === "Log" && message.message === payload)).toBeDefined();
+});
+
 test("uncaptured ticks clear async subscribers' pending mouse motion", async()=>{
   let input={keys_pressed:[] as string[],mouse_delta:[7,3] as [number,number],mouse_captured:true};
   const result=await runHost(`import { Engine, File } from "@whatever-engine/api";

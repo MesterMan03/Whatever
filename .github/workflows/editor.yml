@@ -42,6 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: portable-editor
+          cache-on-failure: true
       - name: Linux desktop and packaging dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -84,3 +85,17 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
           compression-level: 0
+      - name: Preserve failed player and IPC diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-diagnostics-${{ matrix.platform }}
+          retention-days: 3
+          path: |
+            target/ci-server-failures/
+            target/debug/Whatever.exe
+            target/debug/Whatever
+            target/debug/*.dll
+            runtime/dist/whatever-mod-host*
+            ~/Library/Logs/DiagnosticReports/*mod-host*
+          if-no-files-found: ignore

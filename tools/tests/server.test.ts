@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, cpSync } from "node:fs";
+import { join, dirname, resolve, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
@@ -21,7 +21,7 @@ async function runServer(source:string, options:{shutdownCommand?:string;expecte
     put("mods/client_only/wrong.ts",'throw new Error("client-only mod executed");');
     put("mods/server_only/mod.toml",'[mod]\nid="server_only"\nname="Server"\nversion="1.0.0"\nsides=["server"]\n[script]\nentry="server.ts"\n');
     put("mods/server_only/server.ts", options.serverSource ?? 'import { Engine } from "@whatever-engine/api"; Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));');
-    const args=[binary,"--mods",join(directory,"mods"),...(options.mode?["--mode",options.mode]:[])];
+    const args=[binary,"--debug=ipc","--mods",join(directory,"mods"),...(options.mode?["--mode",options.mode]:[])];
     child=Bun.spawn(args,{cwd:directory,env:{...process.env,RUST_LOG:"whatever_engine=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:"",ALSA_CONFIG_PATH:join(directory,"no-audio.conf")},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:15_000});
     const active=child;
     let stdout="";
@@ -39,7 +39,16 @@ async function runServer(source:string, options:{shutdownCommand?:string;expecte
       }
     })();
     const [stderr,code]=await Promise.all([new Response(active.stderr as ReadableStream).text(),active.exited,read]);
-    if(code!==(options.expectedCode??0))throw new Error("Server exited "+code+"\n"+stdout+"\nSTDERR:\n"+stderr);
+    if(code!==(options.expectedCode??0) || ((options.expectedCode??0)===0 && !stopped)) {
+      const diagnostics=join(repository,"target/ci-server-failures",basename(directory));
+      mkdirSync(dirname(diagnostics),{recursive:true});
+      cpSync(directory,diagnostics,{recursive:true});
+      writeFileSync(join(diagnostics,"stdout.log"),stdout);
+      writeFileSync(join(diagnostics,"stderr.log"),stderr);
+      const log=join(directory,"logs/latest.log");
+      const trace=existsSync(log)?readFileSync(log,"utf8").slice(-16000):"No IPC log produced.";
+      throw new Error("Server exited "+code+" (fixture finished: "+stopped+")\n"+stdout+"\nSTDERR:\n"+stderr+"\nIPC TRACE:\n"+trace);
+    }
     return {stdout,stderr,code,signal:active.signalCode,shutdownMs:stopped?performance.now()-stopTime:Infinity};
   } finally {
     if(child && child.exitCode===null){child.kill();await child.exited;}
