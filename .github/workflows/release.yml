@@ -29,6 +29,7 @@ jobs:
         run: sha256sum WhateverEditor-windows-x86_64.zip WhateverEditor-linux-x86_64.tar.gz WhateverEditor-macos-arm64.tar.gz > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
+          name: Whatever ${{ github.ref_name }} - Native editor, physics and multiplayer
           body_path: docs/releases/${{ github.ref_name }}.md
           files: |
             WhateverEditor-windows-x86_64.zip
