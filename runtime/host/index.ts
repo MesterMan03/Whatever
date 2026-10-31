@@ -1,6 +1,8 @@
+import { inspectComponents } from "./components.ts";
+import { _registerComponent } from "../src/component.ts";
 import { plugin } from "bun";
 import { realpathSync } from "node:fs";
-import { relative, isAbsolute, sep } from "node:path";
+import { relative, isAbsolute, sep, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as api from "../src/index.ts";
 import manifest from "../package.json";
@@ -25,7 +27,7 @@ try {
     write(
       JSON.stringify({
         runtime: "whatever-mod-host",
-        protocol: 8,
+        protocol: 10,
         native_policy: 1,
         bun_version: Bun.version,
         api_version: manifest.version,
@@ -33,8 +35,14 @@ try {
     );
     exit(0);
   }
-  const [entryArg, rootArg, mode = "client"] = process.argv.slice(2);
-  if (!entryArg || !rootArg || ![4, 5].includes(process.argv.length)) {
+  if (process.argv[2] === "--component-metadata") {
+    const [root, owner] = process.argv.slice(3);
+    if (!root || !owner) throw new Error("--component-metadata needs a mod root and ID");
+    write(JSON.stringify(inspectComponents(root, owner)) + "\n");
+    exit(0);
+  }
+  const [entryArg, rootArg, mode = "client", owner = "fixture"] = process.argv.slice(2);
+  if (!entryArg || !rootArg || ![4, 5, 6].includes(process.argv.length)) {
     throw new Error("Usage: whatever-mod-host <entry> <mod-root> [client|server]");
   }
   if (mode !== "client" && mode !== "server") throw new Error("Invalid runtime mode");
@@ -46,6 +54,7 @@ try {
     throw new Error("The script entry must be inside its mod directory.");
   }
   const entryUrl = pathToFileURL(entry).href;
+  const components = inspectComponents(root, owner);
 
   plugin({
     name: "whatever-engine-api",
@@ -75,8 +84,12 @@ try {
   if (lockdown(root) !== 1) {
     throw new Error("The native runtime policy version is unsupported.");
   }
+  for (const definition of components) {
+    const module = await import(pathToFileURL(realpathSync(resolve(root, definition.source))).href);
+    _registerComponent(module[definition.export], definition);
+  }
   await import(entryUrl);
-  write(JSON.stringify({ type: "RuntimeReady", protocol: 8 }) + "\n");
+  write(JSON.stringify({ type: "RuntimeReady", protocol: 10 }) + "\n");
 } catch (error) {
   write(
     JSON.stringify({

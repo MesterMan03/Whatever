@@ -25,6 +25,8 @@ use winit::{
 mod actions;
 #[path = "browser.rs"]
 mod browser;
+#[path = "component_fields.rs"]
+mod component_fields;
 #[path = "component_handles.rs"]
 mod component_handles;
 #[path = "entity_picker.rs"]
@@ -173,6 +175,7 @@ struct Editor {
     hierarchy_press: Option<egui::Pos2>,
     should_quit: bool,
     fatal: Option<String>,
+    next_redraw: std::time::Instant,
 }
 
 impl Editor {
@@ -233,6 +236,7 @@ impl Editor {
             hierarchy_press: None,
             should_quit: false,
             fatal: None,
+            next_redraw: std::time::Instant::now(),
         };
         match project {
             Some(Ok(project)) => {
@@ -304,31 +308,39 @@ impl Editor {
             );
         }
         self.poll_live();
-        let live_before = self
-            .live
-            .as_ref()
-            .and_then(|_| self.document.as_ref().map(|d| d.scene.clone()));
-        for action in self
+        let actions = self
             .menus
             .as_ref()
             .map(|menus| menus.poll())
-            .unwrap_or_default()
-        {
-            if self.has_dialog() {
-                continue;
-            }
-
-            let result = self.action(action);
-            self.report(result);
-        }
+            .unwrap_or_default();
         let input = self
             .state
             .as_mut()
             .context("input state")?
             .take_egui_input(self.window.as_ref().context("window")?);
+        let editing = !actions.is_empty()
+            || !input.events.is_empty()
+            || self.gizmo_drag.is_some()
+            || self.inspector_dirty;
+        let live_before = editing
+            .then(|| {
+                self.live
+                    .as_ref()
+                    .and_then(|_| self.document.as_ref().map(|d| d.scene.clone()))
+            })
+            .flatten();
+        for action in actions {
+            if self.has_dialog() {
+                continue;
+            }
+            let result = self.action(action);
+            self.report(result);
+        }
         let ctx = self.ctx.clone();
         let output = ctx.run(input, |ctx| self.ui(ctx));
-        if let Some(before) = live_before {
+        if let Some(before) = live_before
+            && (self.preview_dirty || self.document.as_ref().is_some_and(|d| d.dirty))
+        {
             let result = self.live_changes(&before);
             self.report(result);
         }
@@ -342,6 +354,8 @@ impl Editor {
             );
         if self.preview_dirty && self.live.is_none() {
             let mut world = World::new();
+            world.component_types = self.world.component_types.clone();
+            world.allow_missing_components_for_editor();
             if let Some(doc) = &self.document
                 && let Err(error) = doc.scene.instantiate(&mut world)
             {
@@ -385,6 +399,14 @@ impl Editor {
                 host.visible(host_visible);
             }
         }
+        let covered = self.player_host.is_some()
+            && self.view == live::View::Play
+            && !self.player_detached
+            && !self.has_dialog()
+            && !self.ctx.memory(|m| m.any_popup_open());
+        if !covered {
+            self.sync_live_renderer();
+        }
         let game_camera = if self.view == live::View::Play {
             self.live.as_ref().and_then(|s| s.camera).and_then(|id| {
                 if !self.world.is_active(&id) {
@@ -403,32 +425,38 @@ impl Editor {
             .map(|(pose, _)| Vec3::from(pose.position))
             .unwrap_or_else(|| self.camera_position());
         let renderer = self.renderer.as_mut().context("renderer")?;
-        renderer.update_lighting(&engine::renderer::collect_lights(&self.world));
+        // Avoid two synchronized swapchains blocking the parent and child input queues.
+        renderer.ctx.set_vsync(self.player_host.is_none());
+        if !covered {
+            renderer.update_lighting(&engine::renderer::collect_lights(&self.world));
+        }
         let ppp = output.pixels_per_point;
         let viewport = viewport::physical_viewport(
             self.viewport,
             ppp,
             [renderer.ctx.config.width, renderer.ctx.config.height],
         );
-        let vp = viewport.and_then(|[_, _, width, height]| {
-            if self.view == live::View::Play {
-                return game_camera.as_ref().map(|(pose, camera)| {
-                    engine::renderer::view_proj_from_entity(
-                        pose,
-                        camera,
+        let vp = viewport
+            .filter(|_| !covered)
+            .and_then(|[_, _, width, height]| {
+                if self.view == live::View::Play {
+                    return game_camera.as_ref().map(|(pose, camera)| {
+                        engine::renderer::view_proj_from_entity(
+                            pose,
+                            camera,
+                            width as f32 / height as f32,
+                        )
+                    });
+                }
+                Some(
+                    Mat4::perspective_rh(
+                        45_f32.to_radians(),
                         width as f32 / height as f32,
-                    )
-                });
-            }
-            Some(
-                Mat4::perspective_rh(
-                    45_f32.to_radians(),
-                    width as f32 / height as f32,
-                    0.01,
-                    100000.0,
-                ) * Mat4::look_at_rh(position, self.target, Vec3::Y),
-            )
-        });
+                        0.01,
+                        100000.0,
+                    ) * Mat4::look_at_rh(position, self.target, Vec3::Y),
+                )
+            });
         let egui = EguiOutput {
             paint_jobs: ctx.tessellate(output.shapes, ppp),
             textures_delta: output.textures_delta,
@@ -512,6 +540,12 @@ impl ApplicationHandler for Editor {
             let _ = state.on_window_event(window, &event);
         }
         match event {
+            WindowEvent::Focused(true)
+                if self.project.is_some() && self.live.is_none() && !self.has_dialog() =>
+            {
+                let result = self.refresh_component_types();
+                self.report(result);
+            }
             WindowEvent::CloseRequested => {
                 let result = self.action(Action::Quit);
                 self.report(result);
@@ -522,6 +556,8 @@ impl ApplicationHandler for Editor {
                 }
             }
             WindowEvent::RedrawRequested => {
+                self.next_redraw =
+                    std::time::Instant::now() + std::time::Duration::from_secs_f64(1.0 / 60.0);
                 if let Err(error) = self.redraw() {
                     self.status = format!("{error:#}");
                 }
@@ -540,8 +576,11 @@ impl ApplicationHandler for Editor {
             event_loop.exit();
         }
     }
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(self.next_redraw));
+        if std::time::Instant::now() >= self.next_redraw
+            && let Some(window) = &self.window
+        {
             window.request_redraw();
         }
     }

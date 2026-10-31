@@ -2,7 +2,7 @@
 export type RuntimeMode = "client" | "server";
 
 /** Base interface for all components. */
-export interface Component {
+export interface NativeComponentData {
   id: string;
 }
 

@@ -32,12 +32,12 @@ The bootstrap captures native stdin/stdout pipe handles for its private IPC tran
 
 ## Host startup
 
-1. The engine locates the host beside its executable. Debug builds may also use `runtime/dist/whatever-mod-host` from the source checkout.
-2. It checks the host identity, pinned Bun version, native policy version, IPC protocol and API version.
+1. The engine locates the host beside its executable. Debug builds may also use `runtime/dist/whatever-mod-host` from the source checkout. Development discovery skips incompatible candidates so a stale adjacent copy cannot hide a compatible rebuilt host. Release builds reject an incompatible bundled host without using another candidate.
+2. Every selected host must pass checks for its identity, pinned Bun version, native policy version, IPC protocol and API version. If none is compatible, the error lists the rejected paths and their expected/reported versions.
 3. The host runs with a cleared environment, retaining only Windows system-directory and temporary-directory variables when present, plus a fixed `BUN_DEBUG_QUIET_LOGS=1` to keep native debug diagnostics off IPC stdout. It receives no inherited PATH, Bun/Node options or application secrets.
 4. Compiled hosts disable automatic dotenv, bunfig, package.json and tsconfig loading. Runtime package installation, macros and native addons are disabled.
 5. The bootstrap registers the embedded API, installs its console, activates the native policy, and loads the mod.
-6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 8 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
+6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 10 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
 
 A missing or incompatible host is an engine startup error. A host built with stock Bun refuses to load any mod.
 
@@ -88,3 +88,13 @@ size limited and the GUI uses a latest-state snapshot mailbox. Entity mutations
 are validated atomically on the simulation worker before physics. Mod hosts
 retain their cleared environment and receive neither variable; this adds no
 script import, network, global or native-module permissions.
+
+
+Component metadata inspection uses the same bundled executable in an engine-owned
+`--component-metadata <mod-root> <mod-id>` mode. It parses local JS/TS source with
+an embedded TypeScript compiler and embedded declarations, without importing mod
+modules, evaluating defaults, loading project configuration or executing plugins.
+Symlinks, node_modules and external resolution are excluded and source size/file
+counts are bounded. Normal hosts inspect before native lockdown, then load the
+discovered component modules under the unchanged module policy. The public API
+exposes schemas and lifecycle classes, not the compiler or privileged inspector.

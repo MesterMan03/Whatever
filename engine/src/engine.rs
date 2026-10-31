@@ -96,6 +96,7 @@ impl Engine {
         })
     }
     fn frame(&mut self) {
+        let frame_start = Instant::now();
         #[cfg(windows)]
         if self.input.mouse_captured
             && std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
@@ -265,6 +266,15 @@ impl Engine {
             }
         }
         self.world.transforms = authoritative;
+        if let Some(renderer) = &self.renderer
+            && let Ok(mut slot) = self.simulation.shared.frame_timings.lock()
+        {
+            let mut sample = renderer.timings.clone();
+            sample.cpu_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+            sample.vsync = self.vsync;
+            sample.fps_cap = self.fps_cap;
+            *slot = Some(sample);
+        }
     }
 
     /// Derive a view-projection matrix and world-space camera position from the

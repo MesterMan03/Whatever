@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Whatever"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "whatever-engine",
@@ -4735,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "whatever-editor"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "egui",
@@ -4756,7 +4756,7 @@ dependencies = [
 
 [[package]]
 name = "whatever-engine"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4798,7 +4798,7 @@ dependencies = [
 
 [[package]]
 name = "whatever-launcher"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "wide"
@@ -5294,7 +5294,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wmod"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "inquire",

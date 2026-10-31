@@ -10,7 +10,7 @@ use std::{
 };
 
 struct Line {
-    text: String,
+    text: Arc<str>,
     queued: Arc<AtomicUsize>,
 }
 impl Drop for Line {
@@ -54,6 +54,9 @@ impl PipeWriter {
     }
     pub fn send(&self, mut text: String) -> Result<()> {
         text.push('\n');
+        self.send_shared(Arc::from(text))
+    }
+    pub fn send_shared(&self, text: Arc<str>) -> Result<()> {
         let mut queued = self.queued.load(Ordering::Acquire);
         loop {
             let reserved = queued

@@ -2,58 +2,33 @@
   "version": 1,
   "entities": [
     {
-      "name": "Debug scene",
-      "script_id": "root",
+      "name": "Triangle",
+      "script_id": "triangle",
       "components": {
+        "core:mesh_renderer": {
+          "mesh": "debug://meshes/triangle.json",
+          "shader": "core://shaders/sprite.wgsl",
+          "texture": "debug://textures/sample.png"
+        },
         "core:transform": {
           "position": [
-            0,
-            0,
-            0
+            0.0,
+            0.0,
+            0.0
           ],
           "rotation": [
-            0,
-            0,
-            0,
-            1
+            1.0,
+            0.0,
+            0.0,
+            -4.371138828673793e-8
           ],
           "scale": [
-            1,
-            1,
-            1
+            2.0,
+            2.0,
+            2.0
           ]
         }
-      },
-      "children": [
-        {
-          "name": "Triangle",
-          "script_id": "triangle",
-          "components": {
-            "core:mesh_renderer": {
-              "mesh": "debug://meshes/triangle.json",
-              "shader": "core://shaders/mesh_lit.wgsl"
-            },
-            "core:transform": {
-              "position": [
-                0,
-                0,
-                0
-              ],
-              "rotation": [
-                0,
-                0,
-                0,
-                1
-              ],
-              "scale": [
-                2,
-                2,
-                2
-              ]
-            }
-          }
-        }
-      ]
+      }
     },
     {
       "name": "Ambient",

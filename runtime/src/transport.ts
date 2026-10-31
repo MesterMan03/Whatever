@@ -28,3 +28,12 @@ export function _write(data: string): void {
 export const _exit = (process as unknown as { reallyExit(code: number): never }).reallyExit.bind(
   process,
 );
+
+const hrtime = process.hrtime.bigint.bind(process.hrtime);
+const memory = process.memoryUsage.bind(process);
+const epoch = hrtime();
+export const _now = (): number => Number(hrtime() - epoch) / 1e6;
+export const _memory = (): { heap_used: number; rss: number } => {
+  const m = memory();
+  return { heap_used: m.heapUsed, rss: m.rss };
+};

@@ -388,6 +388,10 @@ impl PhysicsRegistry {
             if !world.transforms.contains_key(&id.index) {
                 self.moved.insert(id);
             }
+            if !world.transforms.contains_key(&id.index) {
+                world.mark_component(id, "core:transform");
+                world.mark_hierarchy(id);
+            }
             world.transforms.entry(id.index).or_default();
             if let Some(parent) = world.get_parent(&id) {
                 let scale = world.world_transform(&parent).unwrap_or_default().scale;
@@ -682,6 +686,18 @@ impl PhysicsRegistry {
                 body.recompute_mass_properties_from_colliders(&native.native.colliders);
             }
         }
+        let mut status_ids: Vec<_> = world
+            .custom
+            .get(STATUS)
+            .into_iter()
+            .flat_map(|entries| entries.keys().copied())
+            .collect();
+        status_ids.extend(statuses.keys().map(|id| id.index));
+        for index in status_ids {
+            if let Some(id) = world.allocator.live_id(index) {
+                world.mark_component(id, STATUS);
+            }
+        }
         world.custom.insert(
             STATUS.into(),
             statuses
@@ -746,12 +762,20 @@ impl PhysicsRegistry {
         })
     }
     fn refresh_states(&self, world: &mut World) {
+        let old_states: Vec<_> = world.rigid_body_states.keys().copied().collect();
         world.rigid_body_states.clear();
         world.rigid_body_states.extend(
             self.bodies
                 .keys()
                 .filter_map(|&id| self.body_state(id).ok().map(|state| (id.index, state))),
         );
+        let mut state_ids = old_states;
+        state_ids.extend(world.rigid_body_states.keys().copied());
+        for index in state_ids {
+            if let Some(id) = world.allocator.live_id(index) {
+                world.mark_component(id, "core:rigid_body_state");
+            }
+        }
     }
     pub fn step(&mut self, world: &mut World, delta: f64) -> anyhow::Result<Vec<EntityId>> {
         self.synchronize(world)?;

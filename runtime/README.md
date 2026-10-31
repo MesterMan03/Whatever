@@ -35,11 +35,20 @@ Other package imports, including `node:` and `bun:` modules, are denied initiall
 - `Engine.setFpsCap(fps | null)` — set FPS cap; `null` = uncapped
 - `Engine.setVsync(enabled)` — enable or disable vertical sync
 - `Engine.setMainCamera(entityOrId)` — designate a live or pending entity as the active camera
-- `Engine.getMainCamera()` → `Pending<Entity | null>`
+- `Engine.getMainCamera()` → `Entity | null`
+- `Engine.requestMainCamera()` → `Pending<Entity | null>`
 - `Engine.clearCamera()` — remove the active camera (screen goes black with a warning)
 
 Tick payloads include `mouse_captured`; `mouse_delta` is `[0, 0]` while uncaptured.
 Pending mouse motion is discarded on release, including for busy async handlers.
+
+### `Profiler`
+
+- `Profiler.now()` → monotonic milliseconds
+- `Profiler.latest()` → `DeepReadonly<TickTimings> | null`
+- `Profiler.runtime()` → previous host tick/snapshot/script timings
+- `Profiler.memory()` → read-only heap and RSS bytes
+- `SceneSnapshot.revision`, `.has(id)`, `.get(id)`, `.entities()`
 
 ### `Window`
 
@@ -58,44 +67,78 @@ Sandboxed per-mod file I/O. Paths must not contain `..`.
 ### `Pending<T>` / `PendingEntity`
 
 - `pending.get()` → `Promise<T>` — wait for the recorded result; never flushes or repeats work
-- `PendingEntity` — an entity reference with chainable mutations before its native ID exists; queries return their own `Pending<T>`
+- `PendingEntity` — an entity reference with chainable mutations before its native ID exists; reads are synchronous; explicit `request*` methods return `Pending<T>`
 
 All API commands are submitted automatically once per tick. See [tick timing and migration](../docs/SCRIPTING.md#tick-order-and-command-batches).
 
+### `Component`
+
+- `class MyComponent extends Component` — exported classes define custom components
+- `static readonly type = "mod_id:name"` — optional stable identity; defaults to `mod_id:ClassName`
+- `component.entity` → `Entity`; `component.id` → component type ID
+- `start()` / `tick(deltaSeconds)` → `void | Promise<void>`
+- `onEnable()` / `onDisable()` / `destroy()` → `void`
+- `field(type, default, { label?, tooltip? })` → inferred field value
+
+### Shared schemas
+
+- `Type.I32/F64/VarInt.with({ min?, max? })`
+- `Type.Bool`, `Type.String.with({ maxLength? })`
+- `Type.Array(element, { maxLength? })`, `Type.Optional(inner)`, `Struct(fields)`
+- `Type.Nullable(inner)`, `Type.Enum(choices)`, `Type.Tuple(...elements)`
+- `Type.Entity`, `Type.Asset`
+- `Infer<typeof descriptor>`, `DataType<T>`, `ComponentClass<T>`, `ComponentData<T>`, `FieldEditor`
+
 ### `Entity`
 
-A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntities`, `Scene.query`, and `Scene.spawnSprite`. For built-in component types the data parameter/return is automatically typed; for custom component types a generic `T` can be supplied.
+A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntities`, `Scene.query`, and `Scene.spawnSprite`. Native component IDs and custom component classes infer their return types.
 
-- `entity.id` — opaque entity ID string
+- `entity.id` — generation-aware ID; provisional until creation is confirmed
+- `entity.exists`, `entity.isPending`, `entity.name`
+- `entity.hasComponent(kind)` → `boolean`
+- `entity.getActive()` → `boolean`
+- `entity.editComponent(kind, callback)` → `this`
+- `entity.setEulerDegrees(x, y, z)` → `this`
+- `entity.requestComponent(kind)` → `Pending<T | null>`
+- `entity.requestParent()` → `Pending<Entity | null>`
+- `entity.requestChildren()` → `Pending<Entity[]>`
 - `entity.destroy()` — fire-and-forget
-- `entity.setComponent(component_type, data)` / `entity.setComponent(component)` → `this` — typed for built-in components
-- `entity.removeComponent(component_type)` → `this`
-- `entity.getComponent(component_type)` → `Pending<T | null>` — typed for built-in components
+- `entity.setComponent(component)` → `this` — registered native/custom class instances only
+- `entity.removeComponent(componentIdOrClass)` → `this`
+- `entity.getComponent(componentIdOrClass)` → `ComponentSnapshot<T> | null` — typed for built-in components
 - `entity.move(position)` → `this` — update `core:transform` position, preserve rotation/scale
 - `entity.setParent(parent | null)` → `this` — accepts entities, references or IDs
-- `entity.getParent()` → `Pending<Entity | null>` — return the parent entity
-- `entity.getChildren()` → `Pending<Entity[]>` — return all direct children
+- `entity.getParent()` → `Entity | null` — return the parent entity
+- `entity.getChildren()` → `readonly Entity[]` — return all direct children
 
 ### `EntityRef` / `EntityReference`
 
 - `new EntityRef(entityOrId)` / `Scene.ref(entityOrId)` — typed references in nested component data
-- `reference.id` — opaque ID; unavailable while its target is pending
+- `reference.id` — opaque ID, provisional until its target is confirmed
 - `ComponentValue` — component JSON with typed entity references
-- `ComponentRegistry` / `ComponentSetRegistry` — augment custom component read/write types
+- `entity.addTag(tag)` / `entity.removeTag(tag)` → `this`
+- `entity.getTags()` → `readonly string[]`
+- `entity.hasTag(tag)` → `boolean`
 
 ### `Scene`
 
 Entity and component management. Methods that accept a raw `entity_id` string are provided for cases where only an ID is available; prefer `Entity` methods when possible.
 
+- `Scene.revision` → `number`
+- `Scene.find(id)` → `Entity | null`
+- `Scene.snapshot()` → `SceneSnapshot`
+- `Scene.requestComponent(id, kind)` → `Pending<T | null>`
+- `Scene.requestQuery(kinds)` → `Pending<QueryResult<Entity>[]>`
 - `Scene.createEntity()` → `PendingEntity`
 - `Scene.loadScene(path)` → `Promise<LoadedScene>`
 - `Scene.ref(entityOrId)` → `EntityRef`
 - `Scene.destroyEntity(entity_id)` — fire-and-forget
-- `Scene.listEntities()` → `Pending<Entity[]>`
-- `Scene.setComponent(entity_id, component_type, data)` — fire-and-forget; typed for built-in components
+- `Scene.listEntities()` → `readonly Entity[]`
 - `Scene.removeComponent(entity_id, component_type)` — fire-and-forget
-- `Scene.getComponent(entity_id, component_type)` → `Pending<T | null>` — typed for built-in components
-- `Scene.query(component_types)` → `Pending<QueryResult<Entity>[]>` — each row has `entity: Entity` and `components`
+- `Scene.getComponent(entity_id, component_type)` → `ComponentSnapshot<T> | null` — typed for built-in components
+- `Scene.findByTag(tag, { includeDisabled? })` → `readonly Entity[]`
+- `Scene.findByTags({ all?, any?, none?, includeDisabled? })` → `readonly Entity[]`
+- `Scene.query(componentIdsOrClasses)` → `readonly { entity: Entity; components: Readonly<Record<string, any>> }[]` — each row has `entity: Entity` and `components`
 - `Scene.spawnSprite(texture, shader, position, scale?)` → `PendingEntity` — convenience
 - `Scene.spawnMesh(mesh, shader, position, options?)` → `PendingEntity` — convenience
 - `Scene.spawnText(text, position, options)` → `PendingEntity` — convenience
@@ -104,10 +147,10 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.addDirectionalLight(direction, color?, intensity?)` → `PendingEntity` — convenience
 - `Scene.addPointLight(position, color?, intensity?, range?)` → `PendingEntity` — convenience
 - `Scene.setParent(entity_id, parent_id | null)` — fire-and-forget
-- `Scene.getParent(entity_id)` → `Pending<string | null>`
-- `Scene.getChildren(entity_id)` → `Pending<string[]>`
+- `Scene.getParent(entity_id)` → `string | null`
+- `Scene.getChildren(entity_id)` → `readonly string[]`
 
-Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` returns immutable fields. Mutable class helpers are available in `editComponent` drafts and ordered `requestComponent` results.
 
 ### `LoadedScene`
 
@@ -287,7 +330,7 @@ Tick handler failures are logged and stop the faulty mod; exited processes are r
 
 - `Entity.clone(options?: CloneOptions): PendingEntity`
 - `Entity.setEnabled(enabled: boolean): this`
-- `Entity.getEnabled(): Pending<boolean>`
+- `Entity.getEnabled(): boolean`
 - `Scene.initialScene(): LoadedScene | null`
 - `LoadedScene.path: string`
 - `Physics.Joint.fixed({ connectedBody, ...options }): Physics.Joint`
@@ -296,4 +339,4 @@ Tick handler failures are logged and stop the faulty mod; exited processes are r
 - `Physics.Joint.spherical({ connectedBody, ...options }): Physics.Joint`
 - `Physics.Joint.generic({ connectedBody, ...options }): Physics.Joint`
 
-- `Entity.getComponent("core:world_transform"): Pending<BuiltInComponents.Transform | null>` — read-only inherited transform
+- `Entity.getComponent("core:world_transform"): ComponentSnapshot<BuiltInComponents.Transform> | null` — read-only inherited transform

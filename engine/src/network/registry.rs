@@ -150,6 +150,7 @@ impl NetworkRegistry {
                 );
                 let mut budget = MAX_NODES;
                 data.schema.validate_definition(0, &mut budget)?;
+                data.schema.validate_network()?;
                 data.schema.normalize(&data.initial)?;
                 ensure!(
                     serde_json::to_vec(&data.initial)?.len() <= MAX_BYTES,

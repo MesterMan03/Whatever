@@ -33,9 +33,9 @@ export async function createDemoScene(
   const loaded = adopt ? startup : await Scene.loadScene(path);
   if (adopt) adoptedStartup = true;
   const [spawn, collider, baseTransform] = await Promise.all([
-    loaded.get("cube_spawn").getComponent("core:world_transform").get(),
-    loaded.get("base_cube").getComponent("core:collider").get(),
-    loaded.get("base_cube").getComponent("core:transform").get(),
+    loaded.get("cube_spawn").getComponent("core:world_transform"),
+    loaded.get("base_cube").requestComponent("core:collider").get(),
+    loaded.get("base_cube").getComponent("core:transform"),
   ]);
   if (!collider || !baseTransform) throw new Error("Base Cube needs a Collider and Transform");
   if (!spawn) throw new Error("Cube Spawn Point needs a Transform");
@@ -73,8 +73,8 @@ export function spawnCubes(scene: DemoScene, count: number): void {
       .clone({ enabled: true })
       .setParent(null)
       .setComponent(transform)
-      .removeComponent("physics_demo:cube_template")
-      .setComponent("physics_demo:cube", {})
+      .removeTag("physics_demo:cube_template")
+      .addTag("physics_demo:cube")
       .setComponent(
         new Physics.Collider({
           ...scene.collider,

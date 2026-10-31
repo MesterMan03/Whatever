@@ -16,3 +16,6 @@ pub use editor::{
     read_only,
 };
 pub use editor_transport::{EditorClient, EditorServer};
+
+mod performance;
+pub use performance::{FrameTimings, TickTimings};

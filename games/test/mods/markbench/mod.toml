@@ -1,0 +1,12 @@
+[mod]
+id = "markbench"
+name = "Markbench"
+version = "0.1.0"
+description = "Deterministic engine stress workloads and native performance reports"
+sides = ["client", "server"]
+
+[dependencies]
+core = "*"
+
+[script]
+entry = "scripts/index.ts"

@@ -98,10 +98,11 @@ export const spriteCommand: CommandSpec = {
       [1, 1, 3],
     ).get();
     for (const previous of previousSprites) {
-      const transform = await previous.getComponent("core:transform").get();
+      const transform = await previous.getComponent("core:transform");
       if (transform) {
-        transform.addX(1.5).rotateY(15).rotateZ(2);
-        previous.setComponent(transform);
+        previous.editComponent("core:transform", (draft) => {
+          draft.addX(1.5).rotateY(15).rotateZ(2);
+        });
       }
     }
     previousSprites.add(entity);

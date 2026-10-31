@@ -1,0 +1,43 @@
+---
+import { Code } from "@astrojs/starlight/components";
+const base = import.meta.env.BASE_URL;
+const code = `import { Component, Type, field } from "@whatever-engine/api";
+
+export class Health extends Component {
+  static readonly type = "my_game:health";
+  value = field(Type.I32.with({ min: 0 }), 100);
+
+  override start() {
+    this.entity.addTag("damageable");
+  }
+}`;
+---
+<div class="start-panel">
+  <div>
+    <span class="eyebrow">Everything is a mod</span>
+    <h2>A little code.<br />A lot of possibility.</h2>
+    <p>Author scenes in the native editor. Add behavior with TypeScript components. Let the engine handle rendering, physics, networking, and the sandbox.</p>
+    <p>The <code>core</code> mod ships assets and metadata. Your mod brings the game.</p>
+  </div>
+  <Code code={code} lang="ts" title="scripts/health.ts" />
+</div>
+<span class="eyebrow">Find your way</span>
+<h2>From first entity to your own API.</h2>
+<div class="doc-paths">
+  <a class="doc-path" href={`${base}getting-started/first-mod/`}>
+    <span class="path-number">01 / LEARN</span>
+    <strong>Make your first mod ↗</strong>
+    <span>Create a project, load a scene, and get a cube moving. Then add components of your own.</span>
+  </a>
+  <a class="doc-path" href={`${base}reference/api/overview/`}>
+    <span class="path-number">02 / BUILD</span>
+    <strong>Find the right API ↗</strong>
+    <span>Entities, scenes, physics, audio, networking, and the details of asynchronous command execution.</span>
+  </a>
+  <a class="doc-path" href={`${base}protocol/specification/`}>
+    <span class="path-number">03 / GO DEEPER</span>
+    <strong>Speak the protocol ↗</strong>
+    <span>The actual NDJSON contract, lifecycle, snapshots, and native message catalogue for compatible implementations.</span>
+  </a>
+</div>
+<p class="docs-footnote">These docs describe the current source tree. The API reference and native message catalogue are rebuilt from repository sources every time the site builds.</p>

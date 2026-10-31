@@ -25,6 +25,8 @@ pub struct SceneEntity {
     #[serde(default)]
     pub components: BTreeMap<String, Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<SceneEntity>,
 }
 
@@ -41,6 +43,7 @@ impl Default for SceneEntity {
             name: String::new(),
             script_id: None,
             components: Default::default(),
+            tags: Vec::new(),
             children: Vec::new(),
         }
     }
@@ -86,7 +89,9 @@ impl SceneDocument {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
-        self.instantiate(&mut World::new()).map(|_| ())
+        let mut world = World::new();
+        world.allow_missing_components = true;
+        self.instantiate(&mut world).map(|_| ())
     }
 
     pub fn load(vfs: &dyn Vfs, path: &str, world: &mut World) -> anyhow::Result<LoadedScene> {
@@ -146,6 +151,7 @@ impl SceneDocument {
                     },
                 );
                 world.set_enabled(&ids[index], entity.enabled);
+                world.set_tags(&ids[index], entity.tags.clone())?;
                 if let Some(parent) = parent {
                     ensure!(
                         world.set_parent(ids[index], Some(ids[*parent])),
@@ -218,6 +224,24 @@ mod tests {
         }]}))
         .expect("scene");
         let mut world = World::new();
+        crate::ecs::register_test_component(
+            &mut world,
+            "test:link",
+            &[
+                (
+                    "target",
+                    crate::schema::Schema::Nullable {
+                        inner: Box::new(crate::schema::Schema::Entity),
+                    },
+                    Value::Null,
+                ),
+                (
+                    "text",
+                    crate::schema::Schema::String { max_length: None },
+                    json!(""),
+                ),
+            ],
+        );
         let first = document.instantiate(&mut world).expect("first");
         let second = document.instantiate(&mut world).expect("second");
         assert_ne!(first.entity_ids, second.entity_ids);

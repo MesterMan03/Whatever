@@ -55,7 +55,7 @@ try {
   });
   const [infoText, code] = await Promise.all([new Response(check.stdout).text(), check.exited]);
   const info = JSON.parse(infoText);
-  if (code !== 0 || info.runtime !== "whatever-mod-host" || info.protocol !== 8 || info.native_policy !== 1) {
+  if (code !== 0 || info.runtime !== "whatever-mod-host" || info.protocol !== 10 || info.native_policy !== 1) {
     throw new Error("The compiled mod host failed its native-policy self check.");
   }
   if (!debugRuntime && String(info.bun_version).split(/[.-]/).includes("debug")) {

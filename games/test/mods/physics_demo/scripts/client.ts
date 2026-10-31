@@ -33,7 +33,7 @@ async function start(seed?: number): Promise<string> {
   const token = ++generation;
   starting = true;
   try {
-    const camera = await Engine.getMainCamera().get();
+    const camera = await Engine.getMainCamera();
     if (token !== generation) return "Physics playground start cancelled.";
     previousCamera = camera;
     yaw = 0;

@@ -71,6 +71,7 @@ pub struct Shared {
     pub input: Mutex<RuntimeInput>,
     pub presentation: Mutex<Option<Presentation>>,
     pub stop: AtomicBool,
+    pub frame_timings: Mutex<Option<super::FrameTimings>>,
     pub editor_snapshot: Mutex<Option<std::sync::Weak<super::editor_transport::EditorMailbox>>>,
 }
 pub struct SimulationHandle {
@@ -84,6 +85,7 @@ impl SimulationHandle {
             input: Mutex::new(RuntimeInput::default()),
             presentation: Mutex::new(None),
             stop: AtomicBool::new(false),
+            frame_timings: Mutex::new(None),
             editor_snapshot: Mutex::new(None),
         });
         let (commands, rx) = mpsc::channel();

@@ -10,8 +10,20 @@ use std::collections::HashMap;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct World {
+    #[serde(skip)]
+    pub(crate) scene_changes: super::snapshot::SceneChanges,
     #[serde(default)]
     pub names: HashMap<u32, String>,
+    #[serde(default)]
+    pub tags: HashMap<u32, Vec<String>>,
+    #[serde(default)]
+    pub component_types: std::collections::BTreeMap<String, super::ComponentDefinition>,
+    #[serde(default)]
+    pub component_instances: HashMap<String, HashMap<u32, u64>>,
+    #[serde(default)]
+    next_component_instance: u64,
+    #[serde(skip)]
+    pub(crate) allow_missing_components: bool,
     #[serde(default)]
     pub root_order: Vec<EntityId>,
     pub disabled: std::collections::HashSet<u32>,
@@ -36,7 +48,13 @@ pub struct World {
 impl World {
     pub fn new() -> Self {
         World {
+            scene_changes: Default::default(),
             names: HashMap::new(),
+            tags: HashMap::new(),
+            component_types: Default::default(),
+            component_instances: Default::default(),
+            next_component_instance: 0,
+            allow_missing_components: false,
             root_order: Vec::new(),
             disabled: Default::default(),
             rigid_body_states: HashMap::new(),
@@ -58,6 +76,7 @@ impl World {
     pub fn create_entity(&mut self) -> EntityId {
         let id = self.allocator.alloc();
         self.root_order.push(id);
+        self.scene_changes.created.insert(id);
         id
     }
 
@@ -72,44 +91,38 @@ impl World {
             return false;
         }
 
-        // Detach from current parent first.
+        if let Some(parent) = parent_id {
+            if !self.allocator.is_alive(&parent) || parent == child_id {
+                return false;
+            }
+            let mut cursor = parent;
+            for _ in 0..=self.allocator.len() {
+                if cursor == child_id {
+                    return false;
+                }
+                match self.get_parent(&cursor) {
+                    Some(next) => cursor = next,
+                    None => break,
+                }
+            }
+        }
+        self.mark_hierarchy(child_id);
+        if let Some(old_parent) = self.get_parent(&child_id) {
+            self.mark_metadata(old_parent);
+        }
+        if let Some(parent) = parent_id {
+            self.mark_metadata(parent);
+        }
         if let Some(old_parent) = self.parents.remove(&child_id.index)
             && let Some(siblings) = self.children.get_mut(&old_parent.index)
         {
             siblings.retain(|&idx| idx != child_id.index);
         }
-
         let Some(parent_id) = parent_id else {
             self.root_order.retain(|id| *id != child_id);
             self.root_order.push(child_id);
             return true;
         };
-
-        if !self.allocator.is_alive(&parent_id) {
-            tracing::warn!(entity_id = %parent_id, "set_parent: parent entity is stale");
-            return false;
-        }
-        if parent_id.index == child_id.index {
-            tracing::warn!(entity_id = %child_id, "set_parent: entity cannot be its own parent");
-            return false;
-        }
-
-        // Cycle check: walk up from the proposed parent; if we reach child_id it's a cycle.
-        let mut cursor = parent_id.index;
-        for _ in 0..self.allocator.len() {
-            let Some(ancestor) = self.parents.get(&cursor) else {
-                break;
-            };
-            if ancestor.index == child_id.index {
-                tracing::warn!(
-                    child = %child_id,
-                    parent = %parent_id,
-                    "set_parent: would create a cycle"
-                );
-                return false;
-            }
-            cursor = ancestor.index;
-        }
 
         self.root_order.retain(|id| *id != child_id);
         self.parents.insert(child_id.index, parent_id);
@@ -233,6 +246,9 @@ impl World {
             }
         }
 
+        if let Some(parent) = self.get_parent(&id) {
+            self.mark_metadata(parent);
+        }
         // Detach the root from its own parent.
         if let Some(old_parent) = self.parents.remove(&id.index)
             && let Some(siblings) = self.children.get_mut(&old_parent.index)
@@ -244,11 +260,13 @@ impl World {
         for idx in to_destroy {
             let eid = self.allocator.live_id(idx);
             if let Some(eid) = eid {
+                self.scene_changes.removed.insert(eid);
                 self.disabled.remove(&idx);
                 self.root_order.retain(|id| *id != eid);
                 self.allocator.free(eid);
             }
             self.names.remove(&idx);
+            self.tags.remove(&idx);
             self.transforms.remove(&idx);
             self.rigid_body_states.remove(&idx);
             self.sprite_renderers.remove(&idx);
@@ -258,6 +276,9 @@ impl World {
             self.ambient_lights.remove(&idx);
             self.directional_lights.remove(&idx);
             self.point_lights.remove(&idx);
+            for instances in self.component_instances.values_mut() {
+                instances.remove(&idx);
+            }
             for type_map in self.custom.values_mut() {
                 type_map.remove(&idx);
             }
@@ -278,7 +299,40 @@ impl World {
             tracing::warn!(entity_id = %id, type_id, "ComponentSet on stale entity");
             return false;
         }
+        let data = if let Some(definition) = self.component_types.get(type_id) {
+            match definition.normalize(&data) {
+                Ok(data) => data,
+                Err(error) => {
+                    tracing::warn!(%type_id, %error, "component rejected");
+                    return false;
+                }
+            }
+        } else if !type_id.starts_with("core:") && !self.allow_missing_components {
+            tracing::warn!(%type_id, "unregistered component rejected");
+            return false;
+        } else {
+            data
+        };
+        self.mark_component(*id, type_id);
+        if type_id == "core:transform" {
+            self.mark_hierarchy(*id);
+        }
         let idx = id.index;
+        if self.component_types.contains_key(type_id)
+            && !self
+                .custom
+                .get(type_id)
+                .is_some_and(|entities| entities.contains_key(&idx))
+        {
+            let Some(next) = self.next_component_instance.checked_add(1) else {
+                return false;
+            };
+            self.next_component_instance = next;
+            self.component_instances
+                .entry(type_id.to_owned())
+                .or_default()
+                .insert(idx, next);
+        }
         match type_id {
             "core:entity" | "core:world_transform" => return false,
             super::COMPONENT_RIGID_BODY_STATE => return false,
@@ -354,12 +408,22 @@ impl World {
                     return false;
                 }
             },
-            _ => {
+            _ if !type_id.starts_with("core:")
+                || matches!(
+                    type_id,
+                    "core:physics_world"
+                        | "core:rigid_body"
+                        | "core:collider"
+                        | "core:joint"
+                        | "core:physics_status"
+                ) =>
+            {
                 self.custom
                     .entry(type_id.to_owned())
                     .or_default()
                     .insert(idx, data);
             }
+            _ => return false,
         }
         true
     }
@@ -369,7 +433,14 @@ impl World {
         if !self.allocator.is_alive(id) {
             return false;
         }
+        self.mark_component(*id, type_id);
+        if type_id == "core:transform" {
+            self.mark_hierarchy(*id);
+        }
         let idx = id.index;
+        if let Some(instances) = self.component_instances.get_mut(type_id) {
+            instances.remove(&idx);
+        }
         match type_id {
             "core:entity" | "core:world_transform" | super::COMPONENT_RIGID_BODY_STATE => false,
             COMPONENT_TRANSFORM => self.transforms.remove(&idx).is_some(),

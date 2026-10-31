@@ -67,6 +67,7 @@ fn encode_value(schema: &Schema, value: &Value, out: &mut Vec<u8>) -> Result<()>
                 encode_value(&field.schema, &value[&field.name], out)?;
             }
         }
+        _ => bail!("type is not supported in network packets"),
     }
     ensure!(out.len() <= MAX_BYTES, "packet exceeds {MAX_BYTES} bytes");
     Ok(())
@@ -172,6 +173,7 @@ impl Reader<'_> {
                 }
                 Value::Object(values)
             }
+            _ => bail!("type is not supported in network packets"),
         })
     }
 }

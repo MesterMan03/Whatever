@@ -4,6 +4,7 @@ id = "bigbullshit"
 mods = [
     "mods/core",
     "mods/debug",
+    "mods/markbench",
     "mods/network_example",
     "mods/physics_demo",
 ]
@@ -11,6 +12,7 @@ mods = [
 [build]
 exclude_mods = [
     "debug",
+    "markbench",
     "network_example",
 ]
 company = "Gedanken Gespielt"

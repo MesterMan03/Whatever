@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.astro/
+src/content/docs/reference/
+src/content/docs/protocol/specification.md
+src/content/docs/protocol/messages.md

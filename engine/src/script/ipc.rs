@@ -68,6 +68,17 @@ impl From<&ModManifest> for ModManifestDto {
 #[serde(tag = "type")]
 #[allow(dead_code)]
 pub enum EngineMessage {
+    Performance {
+        sample: Box<crate::runtime::TickTimings>,
+    },
+    SceneDelta {
+        delta: crate::ecs::SceneDelta,
+    },
+    EntityTagsResponse {
+        request_id: String,
+        tags: Vec<String>,
+        error: Option<String>,
+    },
     SceneLoaded {
         request_id: String,
         scene: Option<crate::scene::LoadedScene>,
@@ -359,7 +370,28 @@ pub enum ScriptMessage {
         request_id: String,
         entity_id: String,
     },
+    EntityTagAdd {
+        entity_id: String,
+        tag: String,
+    },
+    EntityTagRemove {
+        entity_id: String,
+        tag: String,
+    },
+    EntityTagsGet {
+        request_id: String,
+        entity_id: String,
+    },
+    EntityTagQuery {
+        request_id: String,
+        query: crate::ecs::TagQuery,
+    },
     /// Fire-and-forget: sets a component on an entity.
+    ComponentPatch {
+        entity_id: String,
+        component_type: String,
+        data: serde_json::Value,
+    },
     ComponentSet {
         entity_id: String,
         component_type: String,
@@ -489,4 +521,13 @@ mod tests {
         );
         assert!(serde_json::from_value::<ScriptPacket>(json!({"type":"CommandBatch","tick_number":7,"commands":[{"type":"RuntimeReady","protocol":6}]})).is_err());
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentInstance {
+    pub instance_id: String,
+    pub entity_id: String,
+    pub component_type: String,
+    pub data: serde_json::Value,
+    pub active: bool,
 }

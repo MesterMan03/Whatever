@@ -32,9 +32,10 @@ mod native {
                 && let RawWindowHandle::Win32(handle) = handle.as_raw()
             {
                 unsafe {
-                    let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(HWND(
-                        handle.hwnd.get() as _,
-                    ));
+                    let target = HWND(handle.hwnd.get() as _);
+                    if windows::Win32::UI::Input::KeyboardAndMouse::GetFocus() != target {
+                        let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(target);
+                    }
                 }
             }
         }
@@ -101,7 +102,7 @@ mod native {
             }
             self.visible = Some(visible);
             unsafe {
-                let _ = ShowWindow(self.window, if visible { SW_SHOWNA } else { SW_HIDE });
+                let _ = ShowWindowAsync(self.window, if visible { SW_SHOWNA } else { SW_HIDE });
             }
         }
         pub fn layout(&mut self, rect: egui::Rect, scale: f32) {
@@ -123,7 +124,7 @@ mod native {
                     (rect.top() * scale) as i32,
                     (rect.width() * scale).max(1.0) as i32,
                     (rect.height() * scale).max(1.0) as i32,
-                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS | SWP_FRAMECHANGED,
+                    SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS,
                 );
             }
         }

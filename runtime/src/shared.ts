@@ -1,3 +1,4 @@
+import { stageCommand, submitSceneCommands, resolveCommandReferences } from "./scene-store.ts";
 import type { EventName, JsonValue, ModManifest } from "./types.ts";
 
 import { _write } from "./transport.ts";
@@ -54,6 +55,11 @@ export const _entityChildrenCallbacks = new Map<
   { resolve: (v: string[]) => void; reject: (e: Error) => void }
 >();
 
+export const _tagCallbacks = new Map<
+  string,
+  { resolve(tags: string[]): void; reject(error: Error): void }
+>();
+
 const _counter = { n: 0 };
 export const _startupScene: { data: LoadedSceneData | null } = { data: null };
 export interface LoadedSceneData {
@@ -75,12 +81,31 @@ let commands: string[] = [];
 
 /** Record immediately, including a snapshot of mutable arguments, in call order. */
 export function _send(msg: any): void {
-  commands.push(_stringify(msg));
+  const encoded = _stringify(msg);
+  if (
+    [
+      "SetMainCamera",
+      "EntityCreate",
+      "EntityClone",
+      "EntityDestroy",
+      "EntityMove",
+      "EntitySetEnabled",
+      "EntitySetParent",
+      "EntityTagAdd",
+      "EntityTagRemove",
+      "ComponentSet",
+      "ComponentPatch",
+      "ComponentRemove",
+    ].includes(msg.type)
+  )
+    stageCommand(encoded);
+  commands.push(encoded);
 }
 
 /** Private automatic tick listener. Even an empty buffer acknowledges submission. */
 export function _flush(tick_number: number): void {
-  const batch = commands;
+  const batch = commands.map(resolveCommandReferences);
+  submitSceneCommands(tick_number);
   commands = [];
   _write(
     '{"type":"CommandBatch","tick_number":' +

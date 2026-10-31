@@ -2,8 +2,12 @@ mod components;
 mod entity;
 mod lifecycle;
 mod references;
+mod registry;
+mod tags;
 mod world;
 pub use references::{referenced_entity, resolve_references};
+pub use registry::{ComponentDefinition, ComponentField, FieldEditor};
+pub use tags::{MAX_ENTITY_TAGS, TagQuery, validate_tag, validate_tags};
 
 #[allow(unused_imports)]
 pub use components::{
@@ -15,3 +19,9 @@ pub use components::{
 pub use components::{COMPONENT_RIGID_BODY_STATE, RigidBodyState};
 pub use entity::EntityId;
 pub use world::World;
+
+#[cfg(test)]
+pub(crate) use registry::register_test_component;
+
+mod snapshot;
+pub use snapshot::{EntityDelta, EntityMetadata, EntitySnapshot, SceneDelta, ScenePublisher};

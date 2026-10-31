@@ -18,6 +18,8 @@ pub struct EntityEdit {
     pub id: String,
     pub name: Option<String>,
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
     pub components: BTreeMap<String, Vec<ValueEdit>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,6 +153,7 @@ pub fn apply_editor_batch(
     for (id, node, parent) in entries {
         candidate.names.insert(id.index, node.name);
         candidate.set_enabled(&id, node.enabled);
+        candidate.set_tags(&id, node.tags)?;
         ensure!(candidate.set_parent(id, parent), "invalid parent");
         for (kind, mut data) in node.components {
             if read_only(&kind) {
@@ -168,6 +171,7 @@ pub fn apply_editor_batch(
     }
     for change in &batch.parents {
         let id = entity(&candidate, &change.id)?;
+        candidate.mark_metadata(id);
         let parent = change
             .parent
             .as_deref()
@@ -185,6 +189,9 @@ pub fn apply_editor_batch(
         }
         if let Some(enabled) = change.enabled {
             candidate.set_enabled(&id, enabled);
+        }
+        if let Some(tags) = &change.tags {
+            candidate.set_tags(&id, tags.clone())?;
         }
         for (kind, edits) in &change.components {
             ensure!(!read_only(kind), "{kind} is read-only");
@@ -219,6 +226,9 @@ pub fn apply_editor_batch(
             .filter(|id| candidate.is_alive(id));
         if order.parent.is_some() && parent.is_none() {
             continue;
+        }
+        if let Some(parent) = parent {
+            candidate.mark_metadata(parent);
         }
         let mut ids = Vec::new();
         for text in &order.children {
@@ -299,6 +309,7 @@ pub fn editor_scene(world: &World) -> SceneDocument {
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| format!("Entity {id}")),
             enabled: world.enabled(&id),
+            tags: world.entity_tags(&id).unwrap_or_default(),
             components: kinds
                 .iter()
                 .filter_map(|kind| {
@@ -357,6 +368,7 @@ mod tests {
             id: id.to_string(),
             name: Some("Live cube".into()),
             enabled: Some(false),
+            tags: Some(vec!["live".into()]),
             components: BTreeMap::from([(
                 "core:transform".into(),
                 vec![ValueEdit {
@@ -368,6 +380,11 @@ mod tests {
         apply_editor_batch(&mut w, &batch).expect("edit");
         assert_eq!(w.transforms[&id.index].position, [10.0, 7.0, 30.0]);
         assert!(!w.enabled(&id));
+        assert_eq!(w.entity_tags(&id).expect("tags"), vec!["live"]);
+        batch.edits[0].tags = Some((0..33).map(|i| format!("tag{i}")).collect());
+        assert!(apply_editor_batch(&mut w, &batch).is_err());
+        assert_eq!(w.entity_tags(&id).expect("unchanged tags"), vec!["live"]);
+        batch.edits[0].tags = None;
         batch.edits[0]
             .components
             .insert("core:rigid_body_state".into(), vec![]);
@@ -503,6 +520,7 @@ mod tests {
                         id: body.to_string(),
                         name: Some("stale".into()),
                         enabled: None,
+                        tags: None,
                         components: BTreeMap::new()
                     }],
                     ..Default::default()

@@ -50,9 +50,7 @@ wrap raw ID strings with `Scene.ref(id)`. References also work as scene parents 
 The reserved wire object `{ "$entity": "..." }` is private to ECS serialization.
 Ordinary strings are never interpreted as embedded references.
 
-Extend the public `ComponentRegistry` and `ComponentSetRegistry` interfaces to type
-custom component reads and writes. Read types may use `Entity`; input types may use
-`Physics.EntityInput`. Only the reserved reference representation receives native resolution.
+Export a class extending `Component` to define typed custom fields. Entity fields may use `Entity | null` or the shared `Type.Entity` descriptor. Attach class instances and retrieve custom components by class. Only the reserved reference representation receives native resolution.
 
 Removing a physics component removes its native object. Removing a body also removes
 dependent native colliders/joints, while their ECS components remain inspectable and
@@ -131,7 +129,7 @@ const roof = Scene.createEntity().setComponent(new Physics.Collider({
 const sensor = Scene.createEntity().setComponent(new Physics.Collider({
   body: car, shape: Physics.Shape.sphere(5), sensor: true, density: 0,
   events: ["collision"],
-})).setComponent("game:proximity_sensor", {});
+})).addTag("game:proximity_sensor");
 ```
 
 These are one native body and three independently queryable/removable collider entities.
@@ -181,7 +179,7 @@ const hinge = Scene.createEntity().setComponent(Physics.Joint.revolute({
   anchorA: [0, 0, 0], anchorB: [-0.5, 0, 0],
   axisA: [0, 1, 0], axisB: [0, 1, 0],
   limits: { min: -Math.PI / 2, max: Math.PI / 2 },
-})).setComponent("game:door_hinge", {});
+})).addTag("game:door_hinge");
 ```
 
 Factories are `fixed`, `revolute`, `prismatic`, `spherical`, and `generic`; each takes

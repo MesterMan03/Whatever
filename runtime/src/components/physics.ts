@@ -1,4 +1,4 @@
-import { Entity, _componentHydrators, hydrateReferences } from "./ecs.ts";
+import { Entity, _componentHydrators, _registerNativeComponent, hydrateReferences } from "./ecs.ts";
 import { Engine } from "./engine.ts";
 import { EntityRef, type EntityReference } from "../references.ts";
 import { _pending, type Pending } from "../pending.ts";
@@ -370,3 +370,8 @@ declare module "./ecs.ts" {
     "core:joint": Physics.JointOptions & { type?: Options.PhysicsJointType };
   }
 }
+
+_registerNativeComponent(Physics.World, Physics.WORLD_ID);
+_registerNativeComponent(Physics.RigidBody, Physics.BODY_ID);
+_registerNativeComponent(Physics.Collider, Physics.COLLIDER_ID);
+_registerNativeComponent(Physics.Joint, Physics.JOINT_ID);

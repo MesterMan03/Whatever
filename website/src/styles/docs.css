@@ -1,0 +1,75 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root {
+  --sl-font: "DM Sans", system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --sl-color-accent-low: #25391c;
+  --sl-color-accent: #a6df64;
+  --sl-color-accent-high: #d6f4b4;
+  --sl-color-white: #f0f1ed;
+  --sl-color-gray-1: #d7dad1;
+  --sl-color-gray-2: #adb4a6;
+  --sl-color-gray-3: #798273;
+  --sl-color-gray-4: #465041;
+  --sl-color-gray-5: #2c3328;
+  --sl-color-gray-6: #1b2019;
+  --sl-color-black: #11150f;
+  --sl-color-bg-nav: #151a12;
+  --sl-color-bg-sidebar: #151a12;
+  --sl-content-width: 49rem;
+  --sl-sidebar-width: 18rem;
+  --sl-text-h1: 2.8rem;
+}
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e6f3d7;
+  --sl-color-accent: #3e6e1b;
+  --sl-color-accent-high: #294c10;
+  --sl-color-white: #15200f;
+  --sl-color-gray-1: #26351f;
+  --sl-color-gray-2: #46533f;
+  --sl-color-gray-3: #687260;
+  --sl-color-gray-4: #9ba691;
+  --sl-color-gray-5: #d5decc;
+  --sl-color-gray-6: #eef2e9;
+  --sl-color-black: #fcfdf9;
+  --sl-color-bg-nav: #f8faf4;
+  --sl-color-bg-sidebar: #f8faf4;
+}
+body { -webkit-font-smoothing: antialiased; }
+h1, h2, h3 { letter-spacing: -.035em; font-weight: 650; }
+.site-title { color: var(--sl-color-white); font-size: 1.3rem; letter-spacing: -.04em; }
+.site-title img { height: 2rem; }
+.sidebar-content { padding-top: 1.5rem; }
+.sidebar-content .top-level > li { margin-bottom: 1.25rem; }
+.sidebar-content .large { font-size: .81rem; font-weight: 650; }
+.sidebar-content a { font-size: .82rem; }
+[aria-current="page"] { border-radius: .35rem; font-weight: 600; }
+.sl-markdown-content { line-height: 1.8; }
+.sl-markdown-content :is(th, td) { font-size: .85rem; }
+.expressive-code { margin-block: 1.7rem; }
+.expressive-code figure { border-radius: .65rem; }
+.hero { padding-block: 3.8rem 2.5rem; }
+.hero h1 { font-size: clamp(2.8rem, 6vw, 5rem); line-height: 1.04; letter-spacing: -.065em; max-width: 12ch; }
+.hero .tagline { font-size: 1.1rem; line-height: 1.7; max-width: 36rem; color: var(--sl-color-gray-2); }
+.hero .sl-link-button { border-radius: .4rem; font-size: .9rem; font-weight: 600; }
+.hero .primary { background: #c0f677; border-color: #c0f677; color: #172015; }
+.hero .secondary { border-color: var(--sl-color-gray-4); color: var(--sl-color-white); }
+.eyebrow { font-family: var(--sl-font-mono); font-size: .68rem; letter-spacing: .12em; color: var(--sl-color-accent-high); text-transform: uppercase; }
+.start-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; border-block: 1px solid var(--sl-color-gray-5); padding-block: 2.1rem; margin-bottom: 3rem; }
+.start-panel > * { margin: 0; min-width: 0; }
+.start-panel h2 { margin-top: .5rem; font-size: 1.8rem; }
+.start-panel p { color: var(--sl-color-gray-2); font-size: .95rem; }
+.start-panel code { font-size: .8rem; }
+.doc-paths { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-block: 1.6rem 3rem; }
+.doc-path { margin: 0 !important; padding: 1.45rem; border: 1px solid var(--sl-color-gray-5); border-radius: .65rem; background: var(--sl-color-gray-6); text-decoration: none; transition: border-color .15s, transform .15s; }
+.doc-path:hover { border-color: var(--sl-color-accent); transform: translateY(-2px); }
+.doc-path .path-number { display: block; font-family: var(--sl-font-mono); font-size: .7rem; color: var(--sl-color-accent-high); }
+.doc-path strong { display: block; font-size: 1.1rem; color: var(--sl-color-white); margin-block: .8rem .5rem; }
+.doc-path span:last-child { display: block; color: var(--sl-color-gray-2); font-size: .88rem; line-height: 1.7; }
+.docs-footnote { font-size: .8rem; color: var(--sl-color-gray-3); padding-top: 1.6rem; border-top: 1px solid var(--sl-color-gray-5); }
+@media (max-width: 50rem) {
+  .start-panel { grid-template-columns: 1fr; gap: .5rem; }
+  .doc-paths { grid-template-columns: 1fr; }
+  .hero { padding-top: 2rem; }
+}
+@media (prefers-reduced-motion: reduce) { .doc-path { transition: none; } .doc-path:hover { transform: none; } }

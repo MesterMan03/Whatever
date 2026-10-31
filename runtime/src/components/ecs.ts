@@ -1,11 +1,35 @@
+import {
+  activeEntity,
+  worldTransform,
+  canonical,
+  committedComponents,
+  immutable,
+  listEntityIds,
+  queryEntityIds,
+  queryTagIds,
+  readEntity,
+  sceneRevision,
+  SceneSnapshot,
+  type ComponentSnapshot,
+} from "../scene-store.ts";
+import {
+  Component,
+  _serializeComponent,
+  _componentId,
+  _hydrateComponent,
+  _componentDraft,
+  _componentFields,
+  type ComponentClass,
+} from "../component.ts";
 import { _startupScene } from "../shared.ts";
-import type { Component, QueryResult } from "../types.ts";
+import type { NativeComponentData, QueryResult } from "../types.ts";
 import { _pending, type Pending } from "../pending.ts";
 import { EntityRef, type EntityReference, type ComponentValue } from "../references.ts";
 import {
   _send,
   nextReqId,
   _entityCallbacks,
+  _tagCallbacks,
   _entityListCallbacks,
   _componentGetCallbacks,
   _componentQueryCallbacks,
@@ -21,8 +45,8 @@ export namespace BuiltInComponents {
   export const TEXT_RENDERER_ID = "core:text_renderer";
   export const CAMERA_ID = "core:camera";
 
-  /** Transform component. Returned by `getComponent("core:transform")` as a live class instance. */
-  export class Transform implements Component {
+  /** Transform component. Returned by `getComponent("core:transform")` as immutable data. */
+  export class Transform implements NativeComponentData {
     readonly id = TRANSFORM_ID;
     position: [number, number, number];
     rotation: [number, number, number, number];
@@ -243,8 +267,8 @@ export namespace BuiltInComponents {
   export const DIRECTIONAL_LIGHT_ID = "core:directional_light";
   export const POINT_LIGHT_ID = "core:point_light";
 
-  /** SpriteRenderer component. Returned by `getComponent("core:sprite_renderer")` as a live class instance. */
-  export class SpriteRenderer implements Component {
+  /** SpriteRenderer component. Returned by `getComponent("core:sprite_renderer")` as immutable data. */
+  export class SpriteRenderer implements NativeComponentData {
     readonly id = SPRITE_RENDERER_ID;
     texture: string;
     /** VFS path to a WGSL shader that satisfies the engine shader contract. */
@@ -279,7 +303,7 @@ export namespace BuiltInComponents {
    * - `.obj`         — Wavefront OBJ (materials ignored)
    * - `.glb`/`.gltf` — glTF 2.0, first mesh/primitive, geometry only
    */
-  export class MeshRenderer implements Component {
+  export class MeshRenderer implements NativeComponentData {
     readonly id = MESH_RENDERER_ID;
     /** VFS path to the mesh file. */
     mesh: string;
@@ -325,7 +349,7 @@ export namespace BuiltInComponents {
    * The camera looks in the **-Z** direction of its local frame.
    * Position and orientation are derived from the entity's `core:transform`.
    */
-  export class Camera implements Component {
+  export class Camera implements NativeComponentData {
     readonly id = CAMERA_ID;
     /** Vertical field-of-view in **degrees**. Default: `45`. */
     fovy_degrees: number;
@@ -364,7 +388,7 @@ export namespace BuiltInComponents {
   }
 
   /** TextRenderer component. Renders a string at the entity's world-space Transform position. */
-  export class TextRenderer implements Component {
+  export class TextRenderer implements NativeComponentData {
     readonly id = TEXT_RENDERER_ID;
     text: string;
     /** VFS path to a TTF/OTF font. */
@@ -420,7 +444,7 @@ export namespace BuiltInComponents {
   }
 
   /** AmbientLight component. Multiple ambient lights are additive. */
-  export class AmbientLight implements Component {
+  export class AmbientLight implements NativeComponentData {
     readonly id = AMBIENT_LIGHT_ID;
     /** RGB colour, each channel in `[0.0, 1.0]`. Defaults to white. */
     color: [number, number, number];
@@ -449,7 +473,7 @@ export namespace BuiltInComponents {
   }
 
   /** DirectionalLight component. Simulates an infinitely distant light source (e.g. the sun). */
-  export class DirectionalLight implements Component {
+  export class DirectionalLight implements NativeComponentData {
     readonly id = DIRECTIONAL_LIGHT_ID;
     /** Normalised direction the light travels *towards* (world space). */
     direction: [number, number, number];
@@ -497,7 +521,7 @@ export namespace BuiltInComponents {
    * PointLight component. Emits light in all directions from the entity's `core:transform` position.
    * Attenuation is quadratic, falling off to zero at `range` units.
    */
-  export class PointLight implements Component {
+  export class PointLight implements NativeComponentData {
     readonly id = POINT_LIGHT_ID;
     /** RGB colour, each channel in `[0.0, 1.0]`. Defaults to white. */
     color: [number, number, number];
@@ -606,35 +630,53 @@ export function hydrateReferences(value: any): any {
   return value;
 }
 
-function _setComponentImpl<K extends keyof ComponentSetRegistry>(
-  entity_id: string,
-  component_type: K,
-  data: ComponentSetRegistry[K],
-): void;
-function _setComponentImpl<K extends string>(
-  entity_id: string,
-  component_type: K,
-  data: K extends keyof ComponentSetRegistry
-    ? ComponentSetRegistry[K]
-    : K extends keyof ComponentRegistry
-      ? never
-      : ComponentValue,
-): void;
-function _setComponentImpl(entity_id: string, component_type: string, data: any): void {
-  // Destructure to exclude `id` without mutating the caller's object.
-  const { id: _id, ...rest } = data;
-  _send({ type: "ComponentSet", entity_id, component_type, data: rest });
+type NativeComponent = ComponentRegistry[Extract<
+  keyof ComponentSetRegistry,
+  keyof ComponentRegistry
+>];
+const nativeClasses = new Map<Function, string>([
+  [BuiltInComponents.Transform, "core:transform"],
+  [BuiltInComponents.SpriteRenderer, "core:sprite_renderer"],
+  [BuiltInComponents.MeshRenderer, "core:mesh_renderer"],
+  [BuiltInComponents.Camera, "core:camera"],
+  [BuiltInComponents.TextRenderer, "core:text_renderer"],
+  [BuiltInComponents.AmbientLight, "core:ambient_light"],
+  [BuiltInComponents.DirectionalLight, "core:directional_light"],
+  [BuiltInComponents.PointLight, "core:point_light"],
+]);
+/** @internal */
+export function _registerNativeComponent(ctor: Function, id: string): void {
+  nativeClasses.set(ctor, id);
+}
+function _setComponentImpl(entity_id: string, component: NativeComponent | Component): void {
+  if (!component || typeof component !== "object")
+    throw new Error("setComponent requires a component class instance");
+  if (component instanceof Component) {
+    _send({
+      type: "ComponentSet",
+      entity_id,
+      component_type: component.id,
+      data: _serializeComponent(component),
+    });
+    return;
+  }
+  const component_type = nativeClasses.get(component.constructor);
+  if (!component_type)
+    throw new Error("setComponent requires a registered component class instance");
+  const { id: _id, ...data } = component;
+  _send({ type: "ComponentSet", entity_id, component_type, data });
 }
 
 function _getComponentImpl<K extends keyof ComponentRegistry>(
   entity_id: string,
   component_type: K,
 ): Pending<ComponentRegistry[K] | null>;
-function _getComponentImpl<T extends Component = Component>(
+function _getComponentImpl<T extends Component>(
   entity_id: string,
-  component_type: string,
+  component_type: ComponentClass<T>,
 ): Pending<T | null>;
-function _getComponentImpl(entity_id: string, component_type: string): Pending<any> {
+function _getComponentImpl(entity_id: string, selector: string | ComponentClass): Pending<any> {
+  const component_type = typeof selector === "string" ? selector : _componentId(selector);
   return _pending(
     new Promise((resolve, reject) => {
       const request_id = nextReqId();
@@ -643,7 +685,10 @@ function _getComponentImpl(entity_id: string, component_type: string): Pending<a
     }).then((data) => {
       if (data === null) return null;
       const hydrator = _componentHydrators[component_type];
-      return hydrator ? hydrator(hydrateReferences(data)) : hydrateReferences(data);
+      return (
+        _hydrateComponent(entity_id, component_type, data) ??
+        (hydrator ? hydrator(hydrateReferences(data)) : hydrateReferences(data))
+      );
     }),
   );
 }
@@ -654,13 +699,93 @@ export interface CloneOptions {
   recursive?: boolean;
 }
 
+function snapshotComponent<K extends keyof ComponentRegistry>(
+  id: string,
+  kind: K,
+): ComponentSnapshot<ComponentRegistry[K]> | null;
+function snapshotComponent<T extends Component>(
+  id: string,
+  kind: ComponentClass<T>,
+): ComponentSnapshot<T> | null;
+function snapshotComponent(id: string, kind: any): any {
+  return readComponent(id, kind);
+}
+const snapshotValues = new WeakMap<object, Map<string | ComponentClass, any>>();
+function readComponent(entity_id: string, selector: string | ComponentClass): any {
+  const kind = typeof selector === "string" ? selector : _componentId(selector);
+  const entity = readEntity(entity_id);
+  if (!entity) return null;
+  if (kind === "core:entity")
+    return immutable({
+      id: kind,
+      enabled: entity.metadata.enabled,
+      active: activeEntity(entity_id),
+    });
+  const raw = kind === "core:world_transform" ? worldTransform(entity_id) : entity.components[kind];
+  if (raw === undefined) return null;
+  let cached = snapshotValues.get(raw);
+  if (!cached) {
+    cached = new Map();
+    snapshotValues.set(raw, cached);
+  }
+  if (!cached.has(selector))
+    cached.set(
+      selector,
+      immutable({
+        ...(typeof selector === "string"
+          ? (_componentHydrators[kind]?.(hydrateReferences(raw)) ?? hydrateReferences(raw))
+          : _componentFields(selector, raw)),
+        id: kind,
+      }),
+    );
+  return cached.get(selector);
+}
+
 export class Entity {
   constructor(protected _entityId: string) {}
   get id(): string {
-    return this._entityId;
+    return canonical(this._entityId);
   }
   toJSON(): { $entity: string } {
-    return { $entity: this._entityId };
+    return { $entity: this.id };
+  }
+
+  /** Add a case-sensitive tag. Duplicate additions are harmless; at most 32 tags per entity. */
+  addTag(tag: string): this {
+    validateTag(tag);
+    _send({ type: "EntityTagAdd", entity_id: this._entityId, tag });
+    return this;
+  }
+  removeTag(tag: string): this {
+    validateTag(tag);
+    _send({ type: "EntityTagRemove", entity_id: this._entityId, tag });
+    return this;
+  }
+  get exists(): boolean {
+    return readEntity(this._entityId) !== null;
+  }
+  get isPending(): boolean {
+    return this.id.startsWith("pending:");
+  }
+  get name(): string | null {
+    return readEntity(this._entityId)?.metadata.name ?? null;
+  }
+  hasComponent(selector: keyof ComponentRegistry | ComponentClass): boolean {
+    const entity = readEntity(this._entityId);
+    const kind = typeof selector === "string" ? selector : _componentId(selector);
+    return (
+      entity !== null &&
+      (kind === "core:entity" ||
+        kind === "core:world_transform" ||
+        Object.hasOwn(entity.components, kind))
+    );
+  }
+  getTags(): readonly string[] {
+    return readEntity(this._entityId)?.metadata.tags ?? Object.freeze([]);
+  }
+  hasTag(tag: string): boolean {
+    validateTag(tag);
+    return this.getTags().includes(tag);
   }
 
   /** Clone components and descendants, remapping references within the clone. */
@@ -671,58 +796,87 @@ export class Entity {
     _send({ type: "EntitySetEnabled", entity_id: this._entityId, enabled });
     return this;
   }
-  getEnabled(): Pending<boolean> {
-    return _pending(
-      _getComponentImpl(this._entityId, "core:entity")
-        .get()
-        .then((state) => state?.enabled ?? false),
-    );
+  getEnabled(): boolean {
+    return readEntity(this._entityId)?.metadata.enabled ?? false;
+  }
+  getActive(): boolean {
+    return activeEntity(this._entityId);
   }
   /** Destroy this entity and all its components. Fire-and-forget. */
   destroy(): void {
     _send({ type: "EntityDestroy", entity_id: this._entityId });
   }
 
-  /** Set a component on this entity. Fire-and-forget. */
-  setComponent<K extends keyof ComponentSetRegistry>(
-    component_type: K,
-    data: ComponentSetRegistry[K],
-  ): this;
-  setComponent(component: Component): this;
-  setComponent<K extends string>(
-    component_type: K,
-    data: K extends keyof ComponentSetRegistry
-      ? ComponentSetRegistry[K]
-      : K extends keyof ComponentRegistry
-        ? never
-        : ComponentValue,
-  ): this;
-  setComponent(component_type_or_component: string | Component, data?: any): this {
-    if (typeof component_type_or_component === "object") {
-      _setComponentImpl(
-        this._entityId,
-        component_type_or_component.id,
-        component_type_or_component as any,
-      );
-    } else {
-      _setComponentImpl(this._entityId, component_type_or_component, data);
-    }
+  /** Attach or replace a registered component instance. */
+  setComponent(component: NativeComponent | Component): this {
+    _setComponentImpl(this._entityId, component);
     return this;
   }
 
   /** Remove a component from this entity. Fire-and-forget. */
-  removeComponent(component_type: string): this {
+  removeComponent(selector: keyof ComponentRegistry | ComponentClass): this {
+    const component_type = typeof selector === "string" ? selector : _componentId(selector);
     _send({ type: "ComponentRemove", entity_id: this._entityId, component_type });
     return this;
   }
 
-  /** Get a component's data. Returns `null` if the component is not set. */
+  /** Read immutable component data immediately from the scene revision and local writes. */
   getComponent<K extends keyof ComponentRegistry>(
-    component_type: K,
+    kind: K,
+  ): ComponentSnapshot<ComponentRegistry[K]> | null;
+  getComponent<T extends Component>(kind: ComponentClass<T>): ComponentSnapshot<T> | null;
+  getComponent(kind: keyof ComponentRegistry | ComponentClass): any {
+    return readComponent(this._entityId, kind);
+  }
+  /** Request data at this command's position in the native batch. */
+  requestComponent<K extends keyof ComponentRegistry>(
+    kind: K,
   ): Pending<ComponentRegistry[K] | null>;
-  getComponent<T extends Component = Component>(component_type: string): Pending<T | null>;
-  getComponent(component_type: string): Pending<any> {
-    return _getComponentImpl(this._entityId, component_type);
+  requestComponent<T extends Component>(kind: ComponentClass<T>): Pending<T | null>;
+  requestComponent(kind: any): Pending<any> {
+    return _getComponentImpl(this._entityId, kind);
+  }
+  /** Edit a detached draft; only changed fields are sent to the engine. The callback must be synchronous. */
+  editComponent<K extends keyof ComponentSetRegistry & keyof ComponentRegistry>(
+    kind: K,
+    edit: (draft: ComponentRegistry[K]) => void,
+  ): this;
+  editComponent<T extends Component>(kind: ComponentClass<T>, edit: (draft: T) => void): this;
+  editComponent(kind: any, edit: (draft: any) => unknown): this {
+    const id = typeof kind === "string" ? kind : _componentId(kind);
+    const raw = readEntity(this._entityId)?.components[id];
+    if (!raw) throw new Error(`Entity has no component '${id}'`);
+    const copy = JSON.parse(JSON.stringify(raw));
+    const draft =
+      typeof kind === "string" ? _componentHydrators[id]?.(copy) : _componentDraft(kind, copy);
+    if (!draft) throw new Error(`Component '${id}' is read-only`);
+    const serialize = () =>
+      typeof kind === "string" ? JSON.parse(JSON.stringify(draft)) : _serializeComponent(draft);
+    const before = serialize();
+    const result = edit(draft);
+    if (result && typeof (result as any).then === "function")
+      throw new Error("Component edits must be synchronous");
+    const after = serialize();
+    delete before.id;
+    delete after.id;
+    const data: Record<string, unknown> = {};
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)]))
+      if (JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+        data[key] = after[key] ?? null;
+    if (Object.keys(data).length)
+      _send({ type: "ComponentPatch", entity_id: this._entityId, component_type: id, data });
+    return this;
+  }
+  /** Replace just the rotation, preserving position and scale from other commands. */
+  setEulerDegrees(x: number, y: number, z: number): this {
+    const rotation = new BuiltInComponents.Transform().setEulerDegrees(x, y, z).rotation;
+    _send({
+      type: "ComponentPatch",
+      entity_id: this._entityId,
+      component_type: "core:transform",
+      data: { rotation },
+    });
+    return this;
   }
 
   /**
@@ -749,22 +903,19 @@ export class Entity {
     return this;
   }
 
-  /** Return the parent `Entity`, or `null` if this entity has no parent. */
-  getParent(): Pending<Entity | null> {
+  requestParent(): Pending<Entity | null> {
     return _pending(
       new Promise((resolve, reject) => {
         const request_id = nextReqId();
         _entityParentCallbacks.set(request_id, {
-          resolve: (id) => resolve(id !== null ? new Entity(id) : null),
+          resolve: (id) => resolve(id ? new Entity(id) : null),
           reject,
         });
         _send({ type: "EntityGetParent", request_id, entity_id: this._entityId });
       }),
     );
   }
-
-  /** Return all direct children of this entity. */
-  getChildren(): Pending<Entity[]> {
+  requestChildren(): Pending<Entity[]> {
     return _pending(
       new Promise((resolve, reject) => {
         const request_id = nextReqId();
@@ -774,6 +925,15 @@ export class Entity {
         });
         _send({ type: "EntityGetChildren", request_id, entity_id: this._entityId });
       }),
+    );
+  }
+  getParent(): Entity | null {
+    const id = readEntity(this._entityId)?.metadata.parent;
+    return id ? new Entity(id) : null;
+  }
+  getChildren(): readonly Entity[] {
+    return Object.freeze(
+      (readEntity(this._entityId)?.metadata.children ?? []).map((id) => new Entity(id)),
     );
   }
 }
@@ -801,9 +961,7 @@ export class PendingEntity extends Entity {
   }
 
   override get id(): string {
-    if (this._entityId.startsWith("pending:"))
-      throw new Error("Entity ID is pending; await get() first");
-    return this._entityId;
+    return canonical(this._entityId);
   }
 
   get(): Promise<Entity> {
@@ -838,7 +996,44 @@ export class LoadedScene {
   }
 }
 
+export interface TagQuery {
+  all?: readonly string[];
+  any?: readonly string[];
+  none?: readonly string[];
+  includeDisabled?: boolean;
+}
+function validateTag(tag: string): void {
+  if (
+    typeof tag !== "string" ||
+    !tag.trim() ||
+    new TextEncoder().encode(tag).length > 128 ||
+    /[\p{Cc}]/u.test(tag)
+  )
+    throw new Error("Tags must contain 1–128 UTF-8 bytes and no control characters");
+}
+
 export const Scene = {
+  get revision(): number {
+    return sceneRevision();
+  },
+  snapshot(): SceneSnapshot {
+    return new SceneSnapshot();
+  },
+  find(id: string): Entity | null {
+    return readEntity(id) ? new Entity(canonical(id)) : null;
+  },
+  findByTag(tag: string, options: { includeDisabled?: boolean } = {}): readonly Entity[] {
+    return Scene.findByTags({ all: [tag], ...options });
+  },
+  findByTags(query: TagQuery): readonly Entity[] {
+    for (const tags of [query.all, query.any, query.none]) {
+      if (tags && (tags.length > 32 || new Set(tags).size !== tags.length))
+        throw new Error("Tag filters accept at most 32 unique tags");
+      tags?.forEach(validateTag);
+    }
+    return Object.freeze(queryTagIds(query).map((id) => new Entity(id)));
+  },
+
   /** The optional core startup scene, already live before init. */
   initialScene(): LoadedScene | null {
     return _startupScene.data ? new LoadedScene(_startupScene.data) : null;
@@ -871,32 +1066,47 @@ export const Scene = {
   },
 
   /** Return all living entities. */
-  listEntities(): Pending<Entity[]> {
-    return _pending(
-      new Promise((resolve, reject) => {
-        const request_id = nextReqId();
-        _entityListCallbacks.set(request_id, {
-          resolve: (ids) => resolve(ids.map((id) => new Entity(id))),
-          reject,
-        });
-        _send({ type: "EntityListRequest", request_id });
-      }),
-    );
+  listEntities(): readonly Entity[] {
+    return Object.freeze(listEntityIds().map((id) => new Entity(id)));
   },
 
-  /** Set a component on an entity by ID. Fire-and-forget. */
-  setComponent: _setComponentImpl,
-
   /** Remove a component from an entity. Fire-and-forget. */
-  removeComponent(entity_id: string, component_type: string): void {
+  removeComponent(entity_id: string, selector: keyof ComponentRegistry | ComponentClass): void {
+    const component_type = typeof selector === "string" ? selector : _componentId(selector);
     _send({ type: "ComponentRemove", entity_id, component_type });
   },
 
   /** Get a component's data by entity ID. Returns `null` if the component is not set. */
-  getComponent: _getComponentImpl,
+  getComponent: snapshotComponent,
+  requestComponent: _getComponentImpl,
+
+  query(
+    selectors: readonly (keyof ComponentRegistry | ComponentClass)[],
+  ): readonly { entity: Entity; components: Readonly<Record<string, any>> }[] {
+    const kinds = selectors.map((selector) =>
+      typeof selector === "string" ? selector : _componentId(selector),
+    );
+    return Object.freeze(
+      queryEntityIds(kinds).map((id) =>
+        Object.freeze({
+          entity: new Entity(id),
+          components: Object.freeze(
+            Object.fromEntries(
+              selectors.map((selector, i) => [kinds[i], readComponent(id, selector)]),
+            ),
+          ),
+        }),
+      ),
+    );
+  },
 
   /** Query all entities that have every listed component type. */
-  query(component_types: string[]): Pending<QueryResult<Entity>[]> {
+  requestQuery(
+    selectors: readonly (keyof ComponentRegistry | ComponentClass)[],
+  ): Pending<QueryResult<Entity>[]> {
+    const component_types = selectors.map((selector) =>
+      typeof selector === "string" ? selector : _componentId(selector),
+    );
     return _pending(
       new Promise((resolve, reject) => {
         const request_id = nextReqId();
@@ -908,7 +1118,11 @@ export const Scene = {
                 components: Object.fromEntries(
                   Object.entries(r.components).map(([k, v]) => {
                     const hydrator = _componentHydrators[k];
-                    return [k, hydrator ? hydrator(hydrateReferences(v)) : hydrateReferences(v)];
+                    return [
+                      k,
+                      _hydrateComponent(r.entity_id, k, v) ??
+                        (hydrator ? hydrator(hydrateReferences(v)) : hydrateReferences(v)),
+                    ];
                   }),
                 ),
               })),
@@ -931,8 +1145,8 @@ export const Scene = {
     scale: [number, number, number] = [1, 1, 1],
   ): PendingEntity {
     return Scene.createEntity()
-      .setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale })
-      .setComponent("core:sprite_renderer", { texture, shader });
+      .setComponent(new BuiltInComponents.Transform({ position, rotation: [0, 0, 0, 1], scale }))
+      .setComponent(new BuiltInComponents.SpriteRenderer({ texture, shader }));
   },
 
   /**
@@ -950,14 +1164,18 @@ export const Scene = {
     },
   ): PendingEntity {
     return Scene.createEntity()
-      .setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] })
-      .setComponent("core:text_renderer", {
-        text,
-        shader: options.shader,
-        font: options.font,
-        font_size: options.font_size ?? 24,
-        color: options.color ?? [1, 1, 1, 1],
-      });
+      .setComponent(
+        new BuiltInComponents.Transform({ position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] }),
+      )
+      .setComponent(
+        new BuiltInComponents.TextRenderer({
+          text,
+          shader: options.shader,
+          font: options.font,
+          font_size: options.font_size ?? 24,
+          color: options.color ?? [1, 1, 1, 1],
+        }),
+      );
   },
 
   /**
@@ -971,16 +1189,20 @@ export const Scene = {
     options: { texture?: string | null; scale?: [number, number, number] } = {},
   ): PendingEntity {
     return Scene.createEntity()
-      .setComponent("core:transform", {
-        position,
-        rotation: [0, 0, 0, 1],
-        scale: options.scale ?? [1, 1, 1],
-      })
-      .setComponent("core:mesh_renderer", {
-        mesh,
-        shader,
-        texture: options.texture ?? null,
-      });
+      .setComponent(
+        new BuiltInComponents.Transform({
+          position,
+          rotation: [0, 0, 0, 1],
+          scale: options.scale ?? [1, 1, 1],
+        }),
+      )
+      .setComponent(
+        new BuiltInComponents.MeshRenderer({
+          mesh,
+          shader,
+          texture: options.texture ?? null,
+        }),
+      );
   },
 
   /**
@@ -1000,25 +1222,12 @@ export const Scene = {
   },
 
   /** Return the parent entity ID, or `null` if the entity has no parent. */
-  getParent(entity_id: string): Pending<string | null> {
-    return _pending(
-      new Promise((resolve, reject) => {
-        const request_id = nextReqId();
-        _entityParentCallbacks.set(request_id, { resolve, reject });
-        _send({ type: "EntityGetParent", request_id, entity_id });
-      }),
-    );
+  getParent(entity_id: string): string | null {
+    return readEntity(entity_id)?.metadata.parent ?? null;
   },
 
-  /** Return the IDs of all direct children of the given entity. */
-  getChildren(entity_id: string): Pending<string[]> {
-    return _pending(
-      new Promise((resolve, reject) => {
-        const request_id = nextReqId();
-        _entityChildrenCallbacks.set(request_id, { resolve, reject });
-        _send({ type: "EntityGetChildren", request_id, entity_id });
-      }),
-    );
+  getChildren(entity_id: string): readonly string[] {
+    return readEntity(entity_id)?.metadata.children ?? Object.freeze([]);
   },
 
   /**
@@ -1030,7 +1239,7 @@ export const Scene = {
     intensity: number = 0.1,
   ): PendingEntity {
     const entity = Scene.createEntity();
-    entity.setComponent("core:ambient_light", { color, intensity });
+    entity.setComponent(new BuiltInComponents.AmbientLight({ color, intensity }));
     return entity;
   },
 
@@ -1044,7 +1253,7 @@ export const Scene = {
     intensity: number = 1.0,
   ): PendingEntity {
     const entity = Scene.createEntity();
-    entity.setComponent("core:directional_light", { direction, color, intensity });
+    entity.setComponent(new BuiltInComponents.DirectionalLight({ direction, color, intensity }));
     return entity;
   },
 
@@ -1059,8 +1268,10 @@ export const Scene = {
     range: number = 10,
   ): PendingEntity {
     const entity = Scene.createEntity();
-    entity.setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
-    entity.setComponent("core:point_light", { color, intensity, range });
+    entity.setComponent(
+      new BuiltInComponents.Transform({ position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] }),
+    );
+    entity.setComponent(new BuiltInComponents.PointLight({ color, intensity, range }));
     return entity;
   },
 };

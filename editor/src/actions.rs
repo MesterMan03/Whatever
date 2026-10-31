@@ -332,7 +332,32 @@ impl Editor {
         }
         Ok(())
     }
+    pub(super) fn refresh_component_types(&mut self) -> anyhow::Result<()> {
+        let Some(project) = &self.project else {
+            return Ok(());
+        };
+        let manifests = project.manifests()?;
+        let scripted: Vec<_> = manifests
+            .iter()
+            .filter(|(_, manifest)| manifest.script.is_some())
+            .collect();
+        let mut world = World::new();
+        if !scripted.is_empty() {
+            let host = engine::script::find_host()?;
+            for (root, manifest) in scripted {
+                for definition in
+                    engine::script::inspect_components(&host, root, &manifest.meta.id)?
+                {
+                    world.register_component(&manifest.meta.id, definition)?;
+                }
+            }
+        }
+        self.world.component_types = world.component_types;
+        self.preview_dirty = true;
+        Ok(())
+    }
     pub(super) fn refresh_resources(&mut self) -> anyhow::Result<()> {
+        self.refresh_component_types()?;
         self.resources.clear();
         for (root, manifest) in self
             .project
@@ -478,6 +503,7 @@ impl Editor {
             return Ok(());
         }
         let entity = self.inspector_entity.clone().context("select an entity")?;
+        let component_types = self.world.component_types.clone();
         let doc = self.document.as_mut().context("open a scene")?;
         let mut candidate = doc.scene.clone();
         let old_id =
@@ -520,7 +546,13 @@ impl Editor {
             self.inspector_entity = entity_at(&candidate.entities, &doc.selected).cloned();
         }
         if !doc.transient
-            && let Err(error) = candidate.validate()
+            && let Err(error) = (|| -> anyhow::Result<()> {
+                candidate.validate()?;
+                let mut world = World::new();
+                world.component_types = component_types;
+                candidate.instantiate(&mut world)?;
+                Ok(())
+            })()
         {
             self.inspector_error = Some(format!("{error:#}"));
             return Err(error);
@@ -537,7 +569,15 @@ impl Editor {
             self.live.is_none(),
             "Play edits are temporary; stop Play before saving a scene"
         );
+        self.refresh_component_types()?;
         self.commit_inspector()?;
+        let mut world = World::new();
+        world.component_types = self.world.component_types.clone();
+        self.document
+            .as_ref()
+            .context("open a scene")?
+            .scene
+            .instantiate(&mut world)?;
         self.document.as_mut().context("open a scene")?.save()?;
         self.status = "Scene saved".into();
         Ok(())

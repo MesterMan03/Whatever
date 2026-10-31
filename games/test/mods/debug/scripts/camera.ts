@@ -29,15 +29,15 @@ Engine.on("init", async () => {
 
 // --- Tick: camera controller -------------------------------------------------
 
-Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
+Engine.on("tick", ({ mouse_delta, keys_pressed, delta_seconds }) => {
   // Entities aren't ready until after init resolves.
   if (!cameraRig || !cameraEntity) return;
 
-  const [activeCamera, rigTransform, camTransform] = await Promise.all([
-    Engine.getMainCamera().get(),
-    cameraRig.getComponent("core:transform").get(),
-    cameraEntity.getComponent("core:transform").get(),
-  ]);
+  const [activeCamera, rigTransform, camTransform] = [
+    Engine.getMainCamera(),
+    cameraRig.getComponent("core:transform"),
+    cameraEntity.getComponent("core:transform"),
+  ];
   // Another mod can take over the view, e.g. the physics playground. Its input
   // must not also move this inactive camera or change the view restored later.
   if (activeCamera?.id !== cameraEntity.id || !rigTransform || !camTransform) return;
@@ -96,20 +96,21 @@ Engine.on("tick", async ({ mouse_delta, keys_pressed, delta_seconds }) => {
     moveZ /= hLen;
   }
 
-  rigTransform.position[0] += moveX * MOVE_SPEED * delta_seconds;
-  rigTransform.position[1] += moveY * MOVE_SPEED * delta_seconds;
-  rigTransform.position[2] += moveZ * MOVE_SPEED * delta_seconds;
+  cameraRig.editComponent("core:transform", (draft) => {
+    draft.position[0] += moveX * MOVE_SPEED * delta_seconds;
+    draft.position[1] += moveY * MOVE_SPEED * delta_seconds;
+    draft.position[2] += moveZ * MOVE_SPEED * delta_seconds;
 
-  // Rig yaw is the horizontal rotation; the camera inherits this
-  // through the parent-child relationship.
-  rigTransform.setEulerRadians(0, yaw, 0);
-
-  cameraRig.setComponent(rigTransform);
+    // Rig yaw is the horizontal rotation; the camera inherits this
+    // through the parent-child relationship.
+    draft.setEulerRadians(0, yaw, 0);
+  });
 
   // ---- Camera: pitch (local X-axis rotation) ------------------------------
 
   // The camera entity is a child of the rig, so it already inherits
   // the yaw.  We only need to apply the vertical pitch in local space.
-  camTransform.setEulerRadians(pitch, 0, 0);
-  cameraEntity.setComponent(camTransform);
+  cameraEntity.editComponent("core:transform", (draft) => {
+    draft.setEulerRadians(pitch, 0, 0);
+  });
 });

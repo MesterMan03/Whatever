@@ -123,7 +123,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
 }
 
 function fixture(body: string) {
-  return 'import { Engine, Scene } from "@whatever-engine/api";\n' +
+  return 'import { Engine, Scene, BuiltInComponents } from "@whatever-engine/api";\n' +
     'Engine.on("init", async () => {\n' + body +
     '\nEngine.log("info", "fixture-done");\n});\n';
 }
@@ -172,6 +172,9 @@ describe("bundled mod host", () => {
           if(message.type==="EntityCreate") {
             reply({type:"EntityCreated",request_id:message.request_id,entity_id:`${entityIndex++}:0`});return true;
           }
+          if(message.type==="SetMainCamera") {
+            reply({type:"SceneDelta",delta:{revision:1,base_revision:0,tick_number:1,reset:true,camera:active?"1:0":"9:0",created:[0,1].map(index=>({id:`${index}:0`,metadata:{name:"",enabled:true,active:true,parent:index===1?"0:0":null,children:index===0?["1:0"]:[],tags:[]},components:{"core:transform":{position:[0,0,0],rotation:[0,0,0,1],scale:[1,1,1]}},instances:{}})),changed:[],removed:[]}});return true;
+          }
           if(message.type==="GetMainCamera") {
             reply({type:"MainCameraResponse",request_id:message.request_id,entity_id:active?"1:0":"9:0"});return true;
           }
@@ -185,7 +188,7 @@ describe("bundled mod host", () => {
       expect(result.exitCode).toBe(0);expect(result.stderr).toBe("");
       expect(result.messages.filter(message=>message.type==="EntityCreate")).toHaveLength(2);
       expect(result.messages.some(message=>message.type==="ComponentSet" && message.component_type==="core:sprite_renderer")).toBe(false);
-      const movement=result.messages.filter(message=>message.type==="ComponentSet" && message.component_type==="core:transform" && message.entity_id==="0:0");
+      const movement=result.messages.filter(message=>message.type==="ComponentPatch" && message.component_type==="core:transform" && message.entity_id==="0:0");
       if(active) {
         expect(movement.length).toBeGreaterThan(0);
         expect(movement.some(message=>message.data.position[1]>0 && message.data.position[2]<0)).toBe(true);
@@ -223,8 +226,8 @@ describe("bundled mod host", () => {
   test("records dependent entity commands eagerly in one implicit tick buffer", async () => {
     const result = await runHost(fixture(
       'const parent=Scene.createEntity();' +
-      'const child=Scene.createEntity().setComponent("fixture:value",{value:1}).setParent(parent);' +
-      'const selected=child.getComponent("fixture:value");' +
+      'const child=Scene.createEntity().setComponent(new BuiltInComponents.Transform()).setParent(parent);' +
+      'const selected=child.requestComponent("core:transform");' +
       'if(typeof selected.then!=="undefined")throw new Error("unexpected thenable");'
     ));
     const batch = result.batches.find(packet => packet.commands.some((command: any) => command.type === "EntityCreate"));
@@ -426,4 +429,80 @@ test("registered SDK peers keep typed data, ordered writes and disconnect state"
   expect(result.exitCode).toBe(0);expect(result.stderr).toBe("");
   expect(writes.map(w=>w.data)).toEqual([{name:"Alex",tags:[]},{name:"Alex",tags:["player"]}]);
   expect(result.messages.filter(m=>m.type==="Log"&&m.level==="error")).toHaveLength(0);
+});
+
+
+test("custom component classes retain identity and run lifecycle hooks through disable and removal", async () => {
+  let value = 0;
+  let reenabled = false;
+  let removed = false;
+  let revision = 0;
+  const snapshot = (reply: (message: object) => void, active: boolean, removed = false) => reply({ type: "SceneDelta", delta: { revision: ++revision, base_revision: 0, reset: true, tick_number: 0, camera: null, created: removed ? [] : [{ id: "0:0", metadata: { name: "", enabled: active, active, parent: null, children: [], tags: [] }, components: { "fixture:counter": { value } }, instances: { "fixture:counter": "1" } }], removed: [], changed: [] } });
+  const result = await runHost(`
+    import { Component, Engine, Scene, Type, field } from "@whatever-engine/api";
+    export class Counter extends Component {
+      static readonly type = "fixture:counter";
+      value = field(Type.I32.with({min: 0}), 0);
+      private calls = 0;
+      override onEnable() { Engine.log("info", "enabled"); }
+      override onDisable() { Engine.log("info", "disabled"); }
+      override start() { Engine.log("info", "started"); }
+      override tick(dt: number) {
+        this.calls++;
+        this.value++;
+        if (this.calls === 3) this.entity.removeComponent(Counter);
+      }
+      override destroy() { Engine.log("info", "destroyed"); Engine.log("info", "fixture-done"); }
+    }
+    Engine.on("init", () => Scene.createEntity().setComponent(new Counter()));
+  `, {}, {}, "index.ts", "server", (message, reply) => {
+    if (message.type === "ComponentSet") { snapshot(reply, true); return true; }
+    if (message.type === "ComponentPatch") {
+      if (removed) return true;
+      value = message.data.value;
+      if (value === 2 && !reenabled) {
+        snapshot(reply, false);
+        setTimeout(() => { reenabled = true; snapshot(reply, true); }, 30);
+      } else snapshot(reply, true);
+      return true;
+    }
+    if (message.type === "ComponentRemove") { removed = true; snapshot(reply, false, true); return true; }
+    return false;
+  });
+  const logs = result.messages.filter(m => m.type === "Log").map(m => m.message);
+  expect(logs).toEqual(["enabled", "started", "disabled", "enabled", "disabled", "destroyed", "fixture-done"]);
+  const writes = result.messages.filter(m => ["ComponentSet", "ComponentPatch"].includes(m.type));
+  expect(writes[0]?.data).toEqual({ value: 0 });
+  expect(writes.some(m => Object.hasOwn(m.data, "calls"))).toBe(false);
+});
+
+test("entity tags work with pending entities and query filters", async () => {
+  const result = await runHost(fixture(`
+    const entity = Scene.createEntity().addTag("enemy").addTag("walking").removeTag("dead");
+    const tags = await entity.getTags();
+    if (tags.join() !== "enemy,walking") throw new Error("tag list");
+    const entities = await Scene.findByTags({all:["enemy"],any:["flying","walking"],none:["dead"]});
+    if (entities[0]?.id !== entity.id) throw new Error("tag query");
+    try { entity.addTag(""); throw new Error("accepted blank tag"); } catch (error) { if (String(error).includes("accepted blank")) throw error; }
+    try { entity.setComponent({id:"fixture:random",value:1} as any); throw new Error("accepted raw data"); } catch (error) { if (String(error).includes("accepted raw")) throw error; }
+  `), {}, {}, "index.ts", "server", (message, reply) => {
+    if (message.type === "EntityTagsGet") { reply({type:"EntityTagsResponse",request_id:message.request_id,tags:["enemy"],error:null}); return true; }
+    if (message.type === "EntityTagQuery") { reply({type:"EntityListResponse",request_id:message.request_id,entity_ids:["0:0"]}); return true; }
+    return false;
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.messages.some(m => m.type === "EntityTagAdd" && m.entity_id.startsWith("pending:"))).toBe(true);
+  expect(result.messages.some(m => ["EntityTagsGet","EntityTagQuery"].includes(m.type))).toBe(false);
+});
+
+
+test("component fields reuse shared Struct definitions in the compiled host", async () => {
+  const result = await runHost(`
+    import {Component,Engine,Scene,Struct,Type,field} from "@whatever-engine/api";
+    const settings = Struct({speed:Type.F64.with({min:0}),active:Type.Bool});
+    export class Settings extends Component {value=field(settings,{speed:2,active:true});}
+    Engine.on("init",()=>{Scene.createEntity().setComponent(new Settings());Engine.log("info","fixture-done");});
+  `);
+  expect(result.exitCode).toBe(0);
+  expect(result.messages.find(message=>message.type==="ComponentSet")?.data).toEqual({value:{speed:2,active:true}});
 });

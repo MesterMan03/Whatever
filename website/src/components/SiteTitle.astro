@@ -1,0 +1,9 @@
+---
+import Default from "@astrojs/starlight/components/SiteTitle.astro";
+---
+<div class="brand"><Default {...Astro.props} /><span class="brand-label">MODDING DOCS</span></div>
+<style>
+  .brand { display: flex; align-items: center; gap: 1.1rem; }
+  .brand-label { font-family: var(--sl-font-mono); font-size: .62rem; letter-spacing: .12em; color: var(--sl-color-gray-2); border-left: 1px solid var(--sl-color-gray-5); padding-left: 1.1rem; white-space: nowrap; }
+  @media (max-width: 50rem) { .brand-label { display: none; } }
+</style>

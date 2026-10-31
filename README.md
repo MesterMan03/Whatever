@@ -65,6 +65,7 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
     runtime/            Simulation worker, tick clock, modes and headless runner
       editor.rs         Atomic runtime edits and hierarchy projection
       editor_transport.rs  Private authenticated editor/player connection
+      performance.rs    Native CPU phase and frame timings
     scene/              Versioned scene documents and atomic instantiation
     project/            Mod collections, scaffolding and managed game builds
       build.rs          Installed support discovery and automatic source builds
@@ -73,7 +74,11 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
     renderer/           wgpu, cameras, meshes, sprites, text and shared world rendering
       render.rs         Renderer, pipelines and render passes
       world.rs          Shared ECS-to-render updates for player and editor
-    ecs/                Generational entities, components, hierarchy and references
+    schema/             Shared value schemas and native validation
+    ecs/                Generational entities, typed components, hierarchy, references and tags
+      registry.rs       Registered custom component schemas and defaults
+      snapshot.rs       Mutation journals and revisioned scene deltas
+      tags.rs           Bounded entity tags and queries
       lifecycle.rs      Inherited enabled state and deep entity cloning
     presentation/       Frame deadlines, measured FPS and render-only pose interpolation
       frame_clock.rs    Phase-preserving FPS cap and time-weighted frame counter
@@ -102,6 +107,7 @@ editor/                 Separate native editor application (own Cargo.toml)
   src/menus.rs          Native menus and keyboard shortcuts
   src/preferences.rs    Text editor preferences, recent projects and welcome screen
   src/mod_editor.rs     Mod metadata and script creation
+  src/component_fields.rs  Schema-generated custom component inspectors
   src/component_handles.rs  Collider and joint handles in the scene viewer
   src/ui.rs             Workspace panels, browser, viewport and project settings
   src/inspector.rs      Typed core components and custom component editing
@@ -118,12 +124,18 @@ wmod/                   CLI companion using the same shared project tooling
 games/                  Ordinary game mod collections
   test/                 Development/test game; default player project in source builds
     whatever.wproject   Test project identity, mod selection and build settings
-    mods/               Its own core, debug, network_example and physics_demo mods
+    mods/               Its own core, debug, markbench, network_example and physics_demo mods
+    mods/markbench/     Deterministic workloads, scoring and reports
     mods_user/          User-local development mods (gitignored)
   graviton/             Separate game collection
 runtime/                @whatever-engine/api TypeScript package
   host/                 Trusted bootstrap bundled with the API into the native host
+    components.ts       Read-only class/field metadata extraction
   src/                  Public namespaces, IPC, pending results and typed references
+    schema.ts           Shared Type descriptors and value validation
+    component.ts        Custom Component classes and lifecycle scheduling
+    scene-store.ts      Revisioned immutable scene data and local command overlays
+    profiler.ts         Native tick/frame measurements and monotonic clock
   dist/                 Built API bundle, declarations and native mod host (gitignored)
 vendor/
   bun/                  Pinned Whatever Bun fork
@@ -134,6 +146,7 @@ tools/                  Fork/host builds, generated assets and integration tests
 .github/workflows/
   editor.yml            Build, test and portable archives on Windows/Linux/macOS
   release.yml           Publish the same tested archives on version tags
+  docs.yml              Build/check modding docs and deploy main to GitHub Pages
 docs/
   releases/             Curated GitHub release notes
   EDITOR.md             Projects, native editor, CLI and branded deployment layout
@@ -141,7 +154,30 @@ docs/
   PHYSICS.md            Native physics configuration and lifecycle
   SHADER.md             Shader contract, mesh formats and patterns
   SANDBOX.md            Native mod-host restrictions
+  IPC.md                Native mod-host wire contract for compatible implementations
+website/                Astro Starlight modding documentation site
+  src/content/docs/     Authored tutorials and guides; references generated from docs/
+  scripts/              Reference generation and built-site link verification
+  astro.config.mjs      Theme, navigation and configurable deployment base
 ```
+
+## Modding documentation website
+
+The [Astro Starlight](https://starlight.astro.build/) site includes a first-mod tutorial,
+editor and component guides, the full scripting reference, and the native IPC
+specification with a message catalogue generated from the Rust definitions.
+
+```sh
+bun run docs:install
+bun run docs:dev
+# Build static HTML, the search index, and verify internal links:
+bun run docs:build
+```
+
+The existing `docs/*.md` references remain the source of truth. See
+[website/README.md](website/README.md) for authoring and GitHub Pages setup.
+The docs workflow checks pull requests and deploys `main` after Pages is enabled
+with **GitHub Actions** as its source.
 
 ## Editor and game builds
 
@@ -257,7 +293,7 @@ bun run build:runtime
 
 ## Debug suite and network API example
 
-The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`games/test/mods/debug`](games/test/mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. The Mandelbrot benchmark now measures the mod's Bun thread through `dev benchmark`.
+The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`games/test/mods/debug`](games/test/mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. [Markbench](games/test/mods/markbench/README.md) replaces the Mandelbrot test with deterministic engine workloads, native timings and automatic scores. Run `markbench run quick` or `markbench run standard`.
 
 [`games/test/mods/network_example`](games/test/mods/network_example/README.md) is a QUIC messenger with separate client/server entries and a shared typed specification. Start a headless server and run `netdemo host 4444`; in each client (F2), run `netdemo connect localhost:4444`. Clients receive increasing player IDs and can use `netdemo tell 2 "hello"`, `netdemo say "hello everyone"`, `netdemo players` and `netdemo ping` (QUIC datagram). The demo defaults to TOFU; add `strict` after the address to require a trusted certificate. See [Network API](docs/SCRIPTING.md#network) for transport, trust and client-data details.
 
@@ -320,3 +356,9 @@ contents, platform requirements and live Scene/Play editing.
 Rust components inherit `[workspace.package].version`. `bun run check:versions`
 checks them, their lockfile entries and the npm workspace/API versions together;
 release tags must match too. Game and mod versions are independent.
+
+We skipped releasing `0.5.0` on the way from `0.4.0` to `0.6.0`, so now it's a
+tradition: Whatever release versions never contain the digit `5`, including
+prerelease and build identifiers. We always go from `4` to `6`: `0.14.0` jumps to
+`0.16.0`, `1.4.0` to `1.6.0`, and `0.6.4` to `0.6.6`. The version check enforces
+this for the shared engine, tools and scripting API releases.

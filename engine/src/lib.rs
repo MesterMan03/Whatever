@@ -15,6 +15,7 @@ pub mod renderer;
 pub mod runtime;
 pub mod sandbox;
 pub mod scene;
+pub mod schema;
 pub mod script;
 pub mod vfs;
 pub mod watchdog;

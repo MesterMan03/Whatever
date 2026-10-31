@@ -11,7 +11,7 @@ Open F2 on the client or type commands into server stdin. Use `help dev`, `help 
 - `dev file`: per-mod broker roundtrip with cleanup.
 - `dev message debug`: inter-mod request/reply to one loaded mod.
 - `dev sandbox`: import/global allowlists and file-containment checks.
-- `dev benchmark 128`: single-thread Bun Mandelbrot benchmark; replaces the old native `markbench` experiment.
+- `markbench run quick` / `markbench run standard`: comprehensive stress tests in the separate [Markbench mod](../markbench/README.md).
 - `dev sprite`: original sprite/transform probe, using `debug://textures/sample.png`.
 - `dev text "hello"`: text renderer probe.
 - `dev suggest value`: deterministic custom completion probe.

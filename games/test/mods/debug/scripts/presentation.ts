@@ -70,20 +70,17 @@ export const presentationCommands: CommandSpec[] = [
         type: "string",
         required: true,
         suggest: async () => {
-          const text = textEntity
-            ? await textEntity.getComponent("core:text_renderer").get()
-            : null;
-          return text ? [`"${text.getText()}"`] : [];
+          const text = textEntity ? await textEntity.getComponent("core:text_renderer") : null;
+          return text ? [`"${text.text}"`] : [];
         },
       },
     ],
     handler: async ({ text }) => {
-      const component = textEntity
-        ? await textEntity.getComponent("core:text_renderer").get()
-        : null;
+      const component = textEntity ? await textEntity.getComponent("core:text_renderer") : null;
       if (component && textEntity) {
-        component.setText(text as string);
-        textEntity.setComponent(component);
+        textEntity.editComponent("core:text_renderer", (draft) => {
+          draft.text = text as string;
+        });
         return "Text updated";
       }
       textEntity = await Scene.spawnText(text as string, [5, 2, 0], {
@@ -92,10 +89,11 @@ export const presentationCommands: CommandSpec[] = [
         font_size: 50,
         color: [0.5, 0.2, 0.2, 0.8],
       }).get();
-      const transform = await textEntity.getComponent("core:transform").get();
+      const transform = await textEntity.getComponent("core:transform");
       if (transform) {
-        transform.rotateZ(-15);
-        textEntity.setComponent(transform);
+        textEntity.editComponent("core:transform", (draft) => {
+          draft.rotateZ(-15);
+        });
       }
       return `Spawned text ${textEntity.id}`;
     },

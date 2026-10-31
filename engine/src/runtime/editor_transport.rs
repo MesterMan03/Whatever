@@ -95,6 +95,7 @@ pub struct EditorServer {
     sender: mpsc::SyncSender<Request>,
     worker: Option<JoinHandle<()>>,
     sequence: u64,
+    inspecting: AtomicBool,
 }
 impl EditorServer {
     pub fn listen() -> anyhow::Result<Self> {
@@ -205,10 +206,15 @@ impl EditorServer {
             sender,
             worker: Some(worker),
             sequence: 0,
+            inspecting: AtomicBool::new(false),
         })
     }
     pub fn inspect(&self, active: bool) {
-        let _ = self.sender.try_send(Request::Inspect(active));
+        if self.inspecting.load(Ordering::Relaxed) != active
+            && self.sender.try_send(Request::Inspect(active)).is_ok()
+        {
+            self.inspecting.store(active, Ordering::Relaxed);
+        }
     }
     pub fn edit(&mut self, batch: EditorBatch) -> anyhow::Result<u64> {
         self.sequence += 1;
@@ -340,7 +346,7 @@ impl EditorClient {
                         if let Some(world) = next {
                             write_frame(&mut write_socket, &Update::Snapshot(Box::new(world)))?;
                         }
-                        std::thread::sleep(Duration::from_millis(16));
+                        std::thread::sleep(Duration::from_millis(33));
                     }
                     Ok(())
                 })();
@@ -474,6 +480,7 @@ mod tests {
                     id: id.to_string(),
                     name: Some("Edited live".into()),
                     enabled: Some(false),
+                    tags: None,
                     components: BTreeMap::new(),
                 }],
                 ..Default::default()

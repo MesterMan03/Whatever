@@ -41,6 +41,7 @@ impl Node {
             presentation: Default::default(),
             stop: std::sync::atomic::AtomicBool::new(false),
             editor_snapshot: Default::default(),
+            frame_timings: Default::default(),
         });
         let (commands, receiver) = mpsc::channel();
         let mut simulation =

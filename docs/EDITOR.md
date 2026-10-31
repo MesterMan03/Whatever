@@ -60,9 +60,7 @@ The Inspector provides forms for Transform (including Euler rotation), cameras,
 mesh/sprite/text rendering, all lights, physics worlds, rigid bodies, colliders
 and joints. Asset fields offer VFS choices and a Browse dialog; selecting an asset
 outside the collection imports it into the active mod. Adding a rigid body uses
-an authored physics world, creating one if necessary. Custom mod components can
-be added by namespaced type. Advanced fields and explicit JSON editing preserve
-arbitrary mod data.
+an authored physics world, creating one if necessary. Exported custom Component classes appear in Add Component with schema-generated fields, class defaults, ranges, enum choices and entity/asset selectors. Metadata refreshes when the editor regains focus or through Reload component types; restart Play after source changes. The editor inspects sources without evaluating mod code. Each entity has an editable set of up to 32 tags, including live edits and undo/redo. Missing component data is preserved for repair; unknown or invalid components block saving and execution. Advanced native fields retain explicit JSON editing.
 
 Scene drafts validate before applying. Invalid drafts stay editable and block
 saving. Saves replace the scene through a temporary file; leaving an unsaved scene
@@ -308,3 +306,12 @@ folder>` is useful for a local smoke test, while CI always packages release.
 The repository's test project lives in `games/test`; `cargo run` selects it by
 default in source builds. Open it with `cargo run -p whatever-editor -- games/test`.
 The engine's project-independent template lives in `engine/resources/core`.
+
+Embedded Play avoids synchronizing or drawing a second scene behind the native player
+window. Returning to Scene rebuilds the deferred GPU scene from the latest world.
+Live inspection snapshots are limited to roughly 30 Hz with latest-state mailboxes;
+inspecting-state changes are coalesced. The editor frame loop is paced at 60 Hz,
+and uses an unsynchronized parent swapchain while hosting the player. Child
+visibility uses `ShowWindowAsync`, and repeated focus/layout calls are avoided.
+Live document cloning/diffing runs only on editing input and actual dirty changes.
+See [Microsoft's ShowWindowAsync documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindowasync).

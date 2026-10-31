@@ -18,6 +18,7 @@ pub(super) struct LiveSession {
     selection: Option<String>,
     counter: u64,
     pub camera: Option<EntityId>,
+    pub render_stale: bool,
     grouping: bool,
     awaiting_creation: Option<u64>,
 }
@@ -31,6 +32,7 @@ impl LiveSession {
             selection: None,
             counter: 0,
             camera: None,
+            render_stale: false,
             grouping: false,
             awaiting_creation: None,
         }
@@ -140,9 +142,14 @@ fn difference(before: &SceneDocument, after: &SceneDocument) -> EditorBatch {
             id: id.clone(),
             name: (old.name != node.name).then(|| node.name.clone()),
             enabled: (old.enabled != node.enabled).then_some(node.enabled),
+            tags: (old.tags != node.tags).then(|| node.tags.clone()),
             components,
         };
-        if edit.name.is_some() || edit.enabled.is_some() || !edit.components.is_empty() {
+        if edit.name.is_some()
+            || edit.enabled.is_some()
+            || edit.tags.is_some()
+            || !edit.components.is_empty()
+        {
             result.edits.push(edit);
         }
     }
@@ -391,6 +398,20 @@ impl Editor {
         self.preview_dirty = false;
     }
     fn live_world(&mut self, world: World) {
+        // The native child owns Play rendering. Keep authoritative data for the inspector,
+        // but defer GPU synchronization until the editor's scene becomes visible again.
+        if self.view == View::Play && !self.player_detached {
+            self.world = world;
+            if let Some(session) = &mut self.live {
+                session.render_stale = true;
+            }
+            return;
+        }
+        if self.live.as_ref().is_some_and(|s| s.render_stale) {
+            self.world = world;
+            self.sync_live_renderer();
+            return;
+        }
         let mut commands = HashMap::new();
         let kinds = [
             "core:transform",
@@ -435,6 +456,25 @@ impl Editor {
             }
         }
         self.world = world;
+    }
+    pub(super) fn sync_live_renderer(&mut self) {
+        let Some(session) = &mut self.live else {
+            return;
+        };
+        if !session.render_stale {
+            return;
+        }
+        session.render_stale = false;
+        if let Some(renderer) = &mut self.renderer {
+            renderer.scene = engine::renderer::Scene::new();
+            renderer.text = engine::renderer::GlyphonText::new();
+            for command in engine::script::RenderCommand::upsert_hierarchy(
+                &self.world,
+                self.world.allocator.alive_entity_ids(),
+            ) {
+                engine::renderer::apply_render_command(&command, renderer, &self.world, &self.vfs);
+            }
+        }
     }
     pub(super) fn live_changes(&mut self, before: &SceneDocument) -> anyhow::Result<()> {
         let Some(session) = &mut self.live else {
@@ -543,6 +583,36 @@ mod tests {
         assert_eq!(change.len(), 1);
         assert_eq!(change[0].path, ["position", "1"]);
         assert!(difference(&before, &before).is_empty());
+    }
+    #[test]
+    fn embedded_play_defers_renderer_updates_and_scene_view_consumes_the_latest_world() {
+        let mut editor = Editor::new(None, None);
+        editor.live = Some(LiveSession::new(
+            EditorServer::listen().expect("listen"),
+            None,
+        ));
+        editor.view = View::Play;
+        editor.player_detached = false;
+        let mut world = World::new();
+        let id = world.create_entity();
+        world.set_component(
+            &id,
+            "core:transform",
+            json!({"position":[1,2,3],"rotation":[0,0,0,1],"scale":[1,1,1]}),
+        );
+        editor.live_world(world.clone());
+        assert!(editor.live.as_ref().expect("session").render_stale);
+        assert_eq!(editor.world.transforms[&id.index].position, [1.0, 2.0, 3.0]);
+        world
+            .transforms
+            .get_mut(&id.index)
+            .expect("transform")
+            .position[0] = 9.0;
+        editor.live_world(world.clone());
+        editor.view = View::Scene;
+        editor.live_world(world);
+        assert!(!editor.live.as_ref().expect("session").render_stale);
+        assert_eq!(editor.world.transforms[&id.index].position[0], 9.0);
     }
     #[test]
     fn stop_restores_the_authored_document_and_live_edits_cannot_be_saved() {

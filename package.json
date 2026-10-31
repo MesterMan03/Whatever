@@ -5,6 +5,12 @@
     "runtime"
   ],
   "scripts": {
+    "docs:install": "bun install --cwd website --frozen-lockfile",
+    "docs:generate": "bun run --cwd website generate",
+    "docs:dev": "bun run --cwd website dev",
+    "docs:build": "bun run --cwd website build",
+    "docs:check-examples": "bun run build:runtime && node website/scripts/check-examples.mjs",
+    "docs:preview": "bun run --cwd website preview",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "build:runtime": "bun run --cwd runtime build",
@@ -13,6 +19,9 @@
     "build:host": "bun tools/build-mod-host.ts",
     "test:mods": "bun test tools/tests/shipped-mods.test.ts --timeout 30000",
     "test:network": "bun test tools/tests/network.test.ts && bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.network.json",
+    "test:snapshots": "bun test tools/tests/snapshots.test.ts",
+    "test:markbench": "bun test tools/tests/markbench.test.ts --timeout 60000",
+    "test:components": "bun test tools/tests/components.test.ts",
     "test:runtime": "bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.runtime.json",
     "test:server": "bun test tools/tests/server.test.ts --timeout 30000",
     "test:project": "bun test tools/tests/project.test.ts --timeout 60000",
@@ -26,5 +35,5 @@
   "devDependencies": {
     "@biomejs/biome": "2.6.4"
   },
-  "version": "0.6.0"
+  "version": "0.7.0"
 }

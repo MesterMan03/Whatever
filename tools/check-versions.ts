@@ -14,6 +14,8 @@ export function checkVersions(tag?: string): string {
   };
   const version = workspace.package.version;
   if (typeof version !== "string" || !version) throw Error("Missing workspace package version");
+  if (version.includes("5"))
+    throw Error(`Whatever release versions skip the digit 5: ${version}. Always go from 4 to 6.`);
   const expect = (label: string, actual: unknown) => {
     if (actual !== version) throw Error(`${label}: expected ${version}, received ${String(actual)}`);
   };

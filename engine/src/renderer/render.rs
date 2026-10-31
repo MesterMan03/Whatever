@@ -41,6 +41,8 @@ pub struct EguiOutput {
 
 pub struct Renderer {
     pub ctx: WgpuContext,
+    pub timings: crate::runtime::FrameTimings,
+    last_present: std::time::Instant,
     /// Current surface aspect ratio (width / height).  Updated on resize.
     pub aspect: f32,
     pub scene: Scene,
@@ -177,6 +179,8 @@ impl Renderer {
             lighting_bind_group_layout: lighting_bgl,
             egui_renderer,
             text,
+            timings: Default::default(),
+            last_present: std::time::Instant::now(),
             ctx,
         })
     }
@@ -311,6 +315,8 @@ impl Renderer {
         vfs: &dyn Vfs,
         viewport: Option<[u32; 4]>,
     ) -> anyhow::Result<()> {
+        let frame_start = std::time::Instant::now();
+        let mut draws = 0;
         let vp = camera_vp.unwrap_or(Mat4::IDENTITY);
         let pos = camera_pos.unwrap_or(Vec3::ZERO);
         // 80-byte camera uniform: [view_proj (64 bytes)] + [position (12 bytes)] + [pad (4 bytes)]
@@ -321,11 +327,14 @@ impl Renderer {
             .queue
             .write_buffer(&self.camera_buffer, 0, &cam_data);
 
+        let acquire_start = std::time::Instant::now();
         let output = match self.ctx.surface.get_current_texture() {
             Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return Ok(()),
             Err(e) => return Err(e.into()),
         };
+        let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
+        let encode_start = std::time::Instant::now();
         let view = output.texture.create_view(&Default::default());
         let mut encoder = self
             .ctx
@@ -377,23 +386,25 @@ impl Renderer {
         // Pre-warm any pipelines that are not yet compiled.  This must happen
         // outside the render pass (pipelines cannot be built mid-pass).
         // Collect (path, back_cull) pairs for every drawable that needs a pipeline.
-        let mut pipeline_keys: Vec<(String, bool)> = self
-            .scene
-            .entity_sprites
-            .values()
-            .map(|q| (q.shader_path.clone(), false))
-            .chain(self.text.quads().map(|q| (q.shader_path.clone(), false)))
-            .chain(
-                self.scene
-                    .entity_meshes
-                    .values()
-                    .map(|d| (d.shader_path.clone(), true)),
-            )
-            .collect();
-        pipeline_keys.sort_unstable();
-        pipeline_keys.dedup();
-        for (path, back_cull) in &pipeline_keys {
-            self.get_or_build_pipeline(vfs, path, *back_cull);
+        if camera_vp.is_some() {
+            let mut pipeline_keys: Vec<(String, bool)> = self
+                .scene
+                .entity_sprites
+                .values()
+                .map(|q| (q.shader_path.clone(), false))
+                .chain(self.text.quads().map(|q| (q.shader_path.clone(), false)))
+                .chain(
+                    self.scene
+                        .entity_meshes
+                        .values()
+                        .map(|d| (d.shader_path.clone(), true)),
+                )
+                .collect();
+            pipeline_keys.sort_unstable();
+            pipeline_keys.dedup();
+            for (path, back_cull) in &pipeline_keys {
+                self.get_or_build_pipeline(vfs, path, *back_cull);
+            }
         }
 
         // Main scene pass — sprites, meshes, and text share the same pass.
@@ -420,10 +431,12 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            if let Some([x, y, width, height]) = clipped_viewport(
-                viewport.unwrap_or([0, 0, self.ctx.config.width, self.ctx.config.height]),
-                [self.ctx.config.width, self.ctx.config.height],
-            ) {
+            if camera_vp.is_some()
+                && let Some([x, y, width, height]) = clipped_viewport(
+                    viewport.unwrap_or([0, 0, self.ctx.config.width, self.ctx.config.height]),
+                    [self.ctx.config.width, self.ctx.config.height],
+                )
+            {
                 rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                 rpass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
                 rpass.set_scissor_rect(x, y, width, height);
@@ -463,6 +476,7 @@ impl Renderer {
                             quad.index_buffer.slice(..),
                             wgpu::IndexFormat::Uint16,
                         );
+                        draws += 1;
                         rpass.draw_indexed(0..6, 0, 0..1);
                     }
                 }
@@ -500,6 +514,7 @@ impl Renderer {
                             drawable.index_buffer.slice(..),
                             wgpu::IndexFormat::Uint16,
                         );
+                        draws += 1;
                         rpass.draw_indexed(0..drawable.index_count, 0, 0..1);
                     }
                 }
@@ -532,6 +547,7 @@ impl Renderer {
                     rpass.set_bind_group(1, &quad.bind_group, &[]);
                     rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
                     rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+                    draws += 1;
                     rpass.draw_indexed(0..6, 0, 0..1);
                 }
             }
@@ -560,17 +576,38 @@ impl Renderer {
         }
 
         let main_cmd = encoder.finish();
+        let encode_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
+        let submit_start = std::time::Instant::now();
         self.ctx
             .queue
             .submit(egui_staging.into_iter().chain(std::iter::once(main_cmd)));
 
+        let submit_ms = submit_start.elapsed().as_secs_f64() * 1000.0;
         if let Some(egui) = egui_output {
             for id in &egui.textures_delta.free {
                 self.egui_renderer.free_texture(id);
             }
         }
 
+        let present_start = std::time::Instant::now();
         output.present();
+        let presented = std::time::Instant::now();
+        let frame_ms = presented.duration_since(self.last_present).as_secs_f64() * 1000.0;
+        self.last_present = presented;
+        self.timings = crate::runtime::FrameTimings {
+            frame_number: self.timings.frame_number + 1,
+            frame_ms,
+            acquire_ms,
+            encode_ms,
+            submit_ms,
+            present_ms: present_start.elapsed().as_secs_f64() * 1000.0,
+            cpu_ms: frame_start.elapsed().as_secs_f64() * 1000.0,
+            draw_calls: draws,
+            width: self.ctx.config.width,
+            height: self.ctx.config.height,
+            adapter: self.ctx.adapter_name.clone(),
+            ..Default::default()
+        };
         Ok(())
     }
 

@@ -23,6 +23,8 @@
 
 import { Engine, Scene, BuiltInComponents, type CommandSpec } from "@whatever-engine/api";
 
+import { Spinner } from "./components.ts";
+
 export const renderCommands: CommandSpec[] = [];
 
 // Track spawned entities so `clearspawned` can clean them up.
@@ -144,11 +146,13 @@ renderCommands.push({
     const shaderPath = getShaderPath(shaderName);
 
     const entity = await Scene.createEntity().get();
-    entity.setComponent("core:transform", {
-      position: [0, 0, -3],
-      rotation: [0, 0, 0, 1],
-      scale: [2, 1, 2],
-    });
+    entity.setComponent(
+      new BuiltInComponents.Transform({
+        position: [0, 0, -3],
+        rotation: [0, 0, 0, 1],
+        scale: [2, 1, 2],
+      }),
+    );
     entity.setComponent(
       new BuiltInComponents.SpriteRenderer({ texture: texturePath, shader: shaderPath }),
     );
@@ -298,5 +302,20 @@ renderCommands.push({
     }
     spawned.length = 0;
     return `Destroyed ${count} spawned entity/entities.`;
+  },
+});
+
+renderCommands.push({
+  name: "component",
+  description: "Spawn a cube with the schema-driven Spinner component and a debug tag.",
+  handler: async () => {
+    const entity = await Scene.spawnMesh(
+      "core://meshes/cube.obj",
+      "core://shaders/mesh_lit.wgsl",
+      [0, 0, -3],
+    ).get();
+    entity.setComponent(new Spinner()).addTag("debug:spinner");
+    spawned.push(entity);
+    return "Spinner attached; inspect its Rotation speed field during Play.";
   },
 });

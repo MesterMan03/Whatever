@@ -1,3 +1,17 @@
+import { _performance, _runtimePerformance, type TickTimings } from "./profiler.ts";
+import { _now } from "./transport.ts";
+import {
+  applySceneDelta,
+  resolveEntityAlias,
+  rejectEntityAlias,
+  type SceneDelta,
+} from "./scene-store.ts";
+import {
+  _syncSceneComponents,
+  _tickComponents,
+  _flushComponents,
+  _shutdownComponents,
+} from "./component.ts";
 import {
   handleResponse as handleNetworkResponse,
   handleEvent as handleNetworkEvent,
@@ -8,6 +22,7 @@ import { hydrateReferences } from "./components/ecs.ts";
 import type { JsonValue, ModManifest, EventName, EventPayloads } from "./types.ts";
 import {
   _startupScene,
+  _tagCallbacks,
   _handlers,
   _fileCallbacks,
   _modListCallbacks,
@@ -39,6 +54,9 @@ const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
+  | { type: "Performance"; sample: TickTimings }
+  | { type: "SceneDelta"; delta: SceneDelta }
+  | { type: "EntityTagsResponse"; request_id: string; tags: string[]; error: string | null }
   | {
       type: "SceneLoaded";
       request_id: string;
@@ -156,7 +174,33 @@ let lastTick = 0;
 let initialized = false;
 let failed = false;
 
+let snapshotMs = 0;
 function _dispatch(msg: _EngineMsg): void {
+  if (msg.type === "Performance") {
+    _performance(msg.sample);
+    return;
+  }
+  if (msg.type === "SceneDelta") {
+    const start = _now();
+    try {
+      applySceneDelta(msg.delta);
+    } catch (error) {
+      _send({
+        type: "Log",
+        level: "error",
+        message: "Scene synchronization failed: " + String(error),
+      });
+      failed = true;
+    }
+    snapshotMs = _now() - start;
+    return;
+  }
+  if (msg.type === "EntityTagsResponse") {
+    const callback = _tagCallbacks.get(msg.request_id);
+    _tagCallbacks.delete(msg.request_id);
+    if (callback) msg.error ? callback.reject(new Error(msg.error)) : callback.resolve(msg.tags);
+    return;
+  }
   if (msg.type === "SceneLoaded") {
     const callback = _sceneCallbacks.get(msg.request_id);
     if (callback) {
@@ -206,12 +250,15 @@ function _dispatch(msg: _EngineMsg): void {
   }
 
   if (msg.type === "Tick") {
+    const scriptStart = _now();
     lastTick = msg.tick_number;
     const fail = (error: unknown): void => {
       _send({ type: "Log", level: "error", message: "Tick handler failed: " + String(error) });
       failed = true;
     };
     if (initialized && !failed) {
+      _syncSceneComponents();
+      _tickComponents(msg.delta_seconds);
       for (const handler of _handlers.get("tick") ?? []) {
         const state = tickStates.get(handler) ?? {
           busy: false,
@@ -252,6 +299,12 @@ function _dispatch(msg: _EngineMsg): void {
     }
     // Submission acknowledges this tick, independent of user promises. Continuations
     // and result callbacks record into the next buffer, never the submitted one.
+    _flushComponents();
+    _runtimePerformance({
+      tick_number: msg.tick_number,
+      snapshot_ms: snapshotMs,
+      script_ms: _now() - scriptStart,
+    });
     _flush(msg.tick_number);
     if (failed) _exit(1);
     return;
@@ -307,12 +360,14 @@ function _dispatch(msg: _EngineMsg): void {
   }
 
   if (msg.type === "EntityCreateFailed") {
+    rejectEntityAlias("pending:" + msg.request_id);
     const cb = _entityCallbacks.get(msg.request_id);
     _entityCallbacks.delete(msg.request_id);
     cb?.reject(new Error(msg.error));
     return;
   }
   if (msg.type === "EntityCreated") {
+    resolveEntityAlias("pending:" + msg.request_id, msg.entity_id);
     const cb = _entityCallbacks.get(msg.request_id);
     if (cb) {
       _entityCallbacks.delete(msg.request_id);
@@ -413,6 +468,7 @@ function _dispatch(msg: _EngineMsg): void {
     _startupScene.data = msg.initial_scene ?? null;
     initialized = true;
   }
+  if (msg.type === "Shutdown") _shutdownComponents();
   // Init / Shutdown / any future broadcast-style messages.
   for (const [event, msgType] of Object.entries(_EVENT_SUBSCRIBE) as [EventName, string][]) {
     if (msg.type !== msgType) continue;

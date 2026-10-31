@@ -1,3 +1,4 @@
+import { sceneCamera } from "../scene-store.ts";
 import { _getMode, _requireClient } from "../environment.ts";
 import type { EventName, EventPayloads } from "../types.ts";
 import { _handlers, _send, _EVENT_SUBSCRIBE } from "../shared.ts";
@@ -76,7 +77,12 @@ export const Engine = {
     _requireClient("Engine.clearCamera");
     _send({ type: "SetMainCamera", entity_id: "" });
   },
-  getMainCamera(): Pending<Entity | null> {
+  getMainCamera(): Entity | null {
+    _requireClient("Engine.getMainCamera");
+    const id = sceneCamera();
+    return id ? new Entity(id) : null;
+  },
+  requestMainCamera(): Pending<Entity | null> {
     _requireClient("Engine.getMainCamera");
     const request_id = nextReqId();
     return _pending(

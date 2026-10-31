@@ -92,6 +92,7 @@ impl ScriptHost {
         cmd.arg(&entry)
             .arg(&mod_root)
             .arg(mode.to_string())
+            .arg(mod_id)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -214,6 +215,29 @@ impl ScriptHost {
                 }
             },
         }
+    }
+
+    /// Encode a committed scene delta once and share the immutable bytes across pipe writers.
+    pub fn broadcast_scene(
+        &mut self,
+        delta: crate::ecs::SceneDelta,
+        debug: &mut DebugLogger,
+    ) -> anyhow::Result<usize> {
+        let mut line = serde_json::to_string(&EngineMessage::SceneDelta { delta })?;
+        line.push('\n');
+        let bytes = line.len();
+        let line: std::sync::Arc<str> = line.into();
+        for (id, process) in &mut self.processes {
+            if !process.ready {
+                continue;
+            }
+            debug.ipc(id, "←", &line);
+            if let Err(error) = process.writer.send_shared(std::sync::Arc::clone(&line)) {
+                tracing::warn!(mod_id=%id, %error, "scene publication failed");
+                let _ = process.child.kill();
+            }
+        }
+        Ok(bytes)
     }
 
     /// Bound collection so a continuously writing process cannot prevent a tick.

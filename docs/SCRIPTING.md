@@ -84,7 +84,7 @@ Engine.log("error", "something broke");
 | `level` | `string` | `"info"` \| `"warn"` \| `"error"` |
 | `message` | `string` | Arbitrary log text |
 
-Host protocol 8 requires `mouse_captured` on ticks, so older hosts are rejected and rebuilt.
+Host protocol 10 requires revisioned scene deltas and native performance samples; older hosts are rejected and rebuilt.
 Mouse motion is relative and only delivered while the player owns mouse capture.
 `mouse_captured` is false and `mouse_delta` is `[0, 0]` while uncaptured, while the
 console is open, or while the editor owns input. Release also clears accumulated
@@ -147,9 +147,9 @@ Multiple camera entities can coexist in the scene; only the designated one is
 rendered.  If no camera is set, or if the entity dies, the screen clears to
 black and a warning overlay is displayed.
 
-### `Engine.getMainCamera()` → `Pending<Entity | null>`
+### `Engine.getMainCamera()` → `Entity | null`
 
-Select the current live camera at this command's position. Useful for restoring the
+Read the current camera from the committed revision plus local camera commands. Useful for restoring the
 previous view after a mod temporarily installs a camera. Available on the client only.
 
 ### `Engine.clearCamera()`
@@ -243,120 +243,255 @@ Mods are ordered by dependencies and explicit load constraints, with `core` pref
 
 This establishes a predictable execution order, not automatic deterministic gameplay. Network/input timing, timers and arbitrary asynchronous JavaScript still need controlled inputs for reproducible runs. Do not await engine API requests during top-level module evaluation: the startup handshake happens after evaluation; perform that work in `init` instead.
 
-## `Pending<T>` and `PendingEntity`
+## Scene revisions and synchronous reads
 
-Scene creation and ECS queries record work immediately and return pending handles. They are not promises or thenables. `pending.get()` returns the same result promise on every call; it does not flush, repeat work or change ordering. For callbacks, use `pending.get().then(callback)`.
+Every mod receives a full scene revision before `init`, followed by deltas after
+commands and physics. `Entity` handles resolve into that local scene store:
+`exists`, `name`, `hasComponent`, `getComponent`, `getTags`, `hasTag`, `getEnabled`,
+`getActive`, `getParent`, and `getChildren` are synchronous. `Scene.find`,
+`listEntities`, `query`, `findByTag`, and `findByTags` use the same store. Component
+and tag indices narrow queries; no IPC read is recorded for these methods.
 
-Migration: replace `await Scene.createEntity()` with `await Scene.createEntity().get()`, and add `.get()` to awaited ECS queries and spawn/light helpers. Entity mutation methods record work synchronously and return the entity for chaining.
-
-`Scene.createEntity()` and spawn/light helpers return `PendingEntity`, which also satisfies `Pending<Entity>`. Its entity methods can record mutations and queries before a native ID exists. Mutations (`setComponent`, `removeComponent`, `setParent`, `move`) return `this`; queries return their own `Pending<T>`, so the final `.get()` selects that query's result. Parent links accept another pending entity created earlier in the same batch. The native engine resolves these temporary references only within the originating mod's batch.
+`getComponent` returns `ComponentSnapshot<T> | null`: deeply immutable data with
+no mutable class helpers or lifecycle methods. Custom snapshots expose declared
+fields and `id`; they are distinct from a component's mutable lifecycle `this`.
+Use `entity.editComponent(kind, draft => { ... })` to edit a detached class draft;
+the callback must be synchronous. Only changed top-level fields are patched.
+`entity.setEulerDegrees(x, y, z)` patches rotation without replacing position or scale.
 
 ```ts
-const pendingEntity = Scene.createEntity()
-  .setComponent("game:health", { value: 100 });
-const pendingHealth = pendingEntity.getComponent("game:health");
-const [entity, health] = await Promise.all([
-  pendingEntity.get(),
-  pendingHealth.get(),
-]);
+const transform = this.entity.getComponent("core:transform");
+if (transform) this.entity.setEulerDegrees(0, this.angle, 0);
+this.entity.editComponent(Health, draft => { draft.value = 80; });
 ```
 
-The pending entity's `.id` throws until its creation result arrives; use `.get()` when an actual ID is needed. Keeping the pending reference lets you continue using its entity methods after resolution. Queries issued later or commands recorded by a result callback belong to a later batch. Other namespaces retain their documented promise return types while using the same per-tick buffer.
+The committed revision stays fixed during a tick. Each mod overlays its recorded
+writes so it can read its own pending creates, removals, fields, hierarchy and tags
+immediately. Other mods' writes become visible at the next committed revision.
+World transforms compose local overlay edits using the engine's TRS convention.
+Rejected native commands reconcile back to authoritative data on commit. Retained
+component values never change. `Scene.snapshot()` returns a retained committed
+`SceneSnapshot` with `revision`, `has(id)`, `get(id)` and `entities()`; it excludes
+local overlays and shares immutable values with future revisions. A revision gap
+faults the host rather than allowing scripts to continue on stale state.
+
+`Scene.revision` reads the committed revision. IDs include generations; stale IDs
+never resolve to recycled entities. `Scene.find(id)` returns null for missing or
+locally destroyed entities. Full native component data is visible to every mod,
+just as native ECS queries were; private lifecycle fields are never published.
+
+## `Pending<T>` and explicit ordered requests
+
+`Scene.createEntity()` and spawn/clone helpers return `PendingEntity`. It is usable
+immediately; `.id` is a provisional `pending:...` identifier until confirmed.
+Calling `.get()` optionally waits for a native `Entity`. References and later
+commands resolve provisional aliases automatically. Recursive clone descendants
+and remapped references become authoritative when creation is confirmed; provisional
+clone reads expose the copied root only. Pending handles are not promises.
+
+Use `entity.requestComponent(kind)`, `requestParent()`, `requestChildren()`,
+`Scene.requestComponent(id, kind)`, `Scene.requestQuery(kinds)`, or
+`Engine.requestMainCamera()` when the result must reflect a particular position in
+the ordered native command buffer. These return `Pending<T>`; `.get()` returns
+the same promise without submitting or repeating the command. Result continuations
+record work for a later batch. Ordered component requests return detached mutable
+native class data; custom requests retain their owning lifecycle instance behavior.
+
+```ts
+const entity = Scene.createEntity().setComponent(new BuiltInComponents.Transform());
+const before = entity.requestComponent("core:transform");
+entity.move([3, 0, 0]);
+const immediate = entity.getComponent("core:transform"); // position [3, 0, 0]
+const earlier = await before.get(); // position [0, 0, 0] at request position
+```
+
+Native publication consumes mutation journals, compares only touched values, and
+sends creates, generation-aware tombstones, changed component values and metadata.
+Custom instance IDs detect remove/re-add even when values are equal. Each delta
+is encoded once and its bytes shared across native pipe writers. Each Bun process
+currently holds its own decoded store; OS shared read-only mappings are not part
+of this implementation. No unmeasured shared-memory performance claim is made.
+
+## `Profiler`
+
+- `Profiler.now(): number` — monotonic milliseconds from captured native `hrtime.bigint`.
+- `Profiler.latest(): DeepReadonly<TickTimings> | null` — previous completed native tick.
+- `Profiler.runtime()` — this host's previous tick number, snapshot application and synchronous script work in milliseconds.
+- `Profiler.memory()` — this host's native `heap_used` and `rss` in bytes.
+
+`TickTimings` contains `tick_number`, `tick_rate`, `total_ms`, `scripts_ms`
+(the barrier waiting for all hosts), `commands_ms`, `physics_ms`, `snapshot_ms`,
+`presentation_ms`, `snapshot_bytes` (one encoded delta, before fan-out), command,
+entity and host counts, `build`, `platform`, and optional `frame`.
+`total_ms` includes scene publication/result overhead and excludes scheduled idle time
+and the telemetry message's own encoding;
+individual phases may not sum exactly to it. Initialization is excluded by benchmark warmup.
+`FrameTimings` carries `frame_number`, `frame_ms` (wall interval between successful presentations), `cpu_ms`,
+`acquire_ms`, `encode_ms`, `submit_ms`, `present_ms`, `draw_calls` (scene only),
+resolution, adapter/backend, vsync and FPS cap. The most recent frame may repeat
+across several simulation ticks; consumers must deduplicate by frame number.
+`gpu_ms` is null: GPU timestamp queries are not implemented, and CPU submission
+measurements must not be described as GPU execution time. Server `frame` is null.
+Trusted clock/memory captures expose no process, file descriptor, or built-in module.
+See [Markbench](../games/test/mods/markbench/README.md) for workload and score definitions.
+
+## `Type`, `Struct`, and custom `Component` classes
+
+The common schema system is shared by components and networking. `Network.Type` and
+`Network.Struct` remain aliases. Numeric descriptors are `Type.I32`, `Type.F64`, and
+`Type.VarInt`; `.with({ min?, max? })` returns an immutable constrained descriptor.
+Other descriptors are `Type.Bool`, `Type.String.with({ maxLength? })`,
+`Type.Array(element, { maxLength? })`, `Type.Optional(inner)`, and `Struct(fields)`.
+`Infer<typeof descriptor>` obtains the TypeScript value type.
+
+Components also support `Type.Nullable(inner)`, `Type.Enum(["a", "b"])`,
+`Type.Tuple(...elements)`, `Type.Entity`, and `Type.Asset`. Entity values are explicit
+references; asset values are VFS strings (an empty string represents no asset).
+Network packets and client-data definitions accept the original codec-supported
+subset; component-only types are rejected during network registration. Existing
+packet bytes, field order, and fingerprints are unchanged.
+
+Optional fields use `undefined` in JavaScript and the private IPC null marker;
+nullable fields use an explicit `null`. Optional and nullable wrappers cannot be
+combined. Bounds, lengths, tuples, enum choices and undeclared struct keys are
+validated in both the SDK and native engine.
+
+```ts
+import { Component, Entity, Type, field } from "@whatever-engine/api";
+
+export class Health extends Component {
+  static readonly type = "game:health";
+  value = field(Type.I32.with({ min: 0, max: 100 }), 100, {
+    label: "Health", tooltip: "Current hit points.",
+  });
+  target: Entity | null = null;
+  private elapsed = 0;
+
+  override start() { /* this.entity is available here */ }
+  override tick(deltaSeconds: number) { this.elapsed += deltaSeconds; }
+  override onEnable() {}
+  override onDisable() {}
+  override destroy() {}
+}
+```
+
+Exported named class declarations are discovered in the owning mod's local JS/TS source files, excluding assets and node_modules.
+A stable `static readonly type = "mod_id:name"` is recommended; otherwise the ID is
+`mod_id:ClassName`. Component IDs belong to their mod and must be unique. The
+engine/editor invoke the bundled host's read-only `--component-metadata` tool to
+extract schemas without evaluating mod code or running project configuration.
+The host loads discovered class modules under its ordinary native sandbox before
+the script entry. Keep component modules free of top-level scene mutations;
+initialize game state in `start()` or an `init` event.
+
+Public writable instance fields are persisted and exposed in the inspector. The
+extractor supports inherited fields, numbers, booleans, strings, string-literal
+choices, arrays, fixed tuples, plain nested objects, optional fields, and nullable
+entity references. `field(type, default, { label?, tooltip? })` overrides an inferred
+schema and supplies inspector hints; it returns the normal typed field value.
+Static, readonly, private/protected and `#private` fields, methods and getters are
+excluded. Defaults must be literals or supported literal constants; arbitrary
+calls and recursive data are diagnosed with a source location. Constructors must
+work without arguments. `id`, `entity`, and lifecycle names are reserved.
+
+Rust validates schemas before scene loading and validates every component write,
+including editor edits and class field updates. Missing fields receive class
+defaults; unknown fields and unregistered component names are rejected. Scene
+loading rolls back invalid instances atomically. Class instances stay in their
+owning mod process; other processes exchange validated data, not methods.
+
+Each entity/component pair has one persistent instance. Committed membership and
+field snapshots arrive before the next tick. An active instance receives
+`onEnable()`, then `start()` once before its first `tick(deltaSeconds)`. Inactive
+entities (including disabled ancestors) pause ticking and receive `onDisable()`;
+reenabling calls `onEnable()` without repeating `start()`. Removal/re-attachment also creates a fresh instance when both happen in one batch. Removal, recursive
+entity destruction and orderly shutdown dispose the instance once with
+`destroy()` (after `onDisable()` when active). Crashes cannot guarantee cleanup.
+
+`start()` and `tick()` may return promises. A busy instance is skipped without
+overlapping calls, and elapsed tick time accumulates. The command batch always
+flushes before awaiting native results. Hook failures log the component and entity
+and stop that instance's ticking. Declared field changes, including nested arrays,
+are validated and collected into one field patch per instance per tick. Private
+state stays local. Component hooks run before global `Engine.on("tick")` handlers.
+Native component instances retain their explicit fetch/mutate/set workflow.
+
+The editor lists registered classes under Add Component, renders schema-based
+fields with defaults/reset controls, ranges, dropdowns and entity/asset selectors,
+and refreshes metadata on regaining focus or Reload component types. Restart Play
+to load source/schema changes; code hot reload is not provided.
 
 ## `Entity`
 
+Entities use opaque generational IDs, `"index:generation"`. Built-in component
+lookups use their known `core:` IDs; custom component lookups use their class.
+
 ### Typed references in component data
 
-An `Entity` or `PendingEntity` can appear in nested component data. `Scene.ref(entityOrId)`
-and `new EntityRef(entityOrId)` explicitly wrap opaque IDs. These implement `EntityReference`;
-`ComponentValue` is the recursive component-data type including references. Native storage
-resolves pending references to generational IDs within the originating batch; reads hydrate
-them to entities. Ordinary strings remain ordinary data. `$entity` is a reserved wire tag.
-Reference values also work in `entity.setParent()` and `Engine.setMainCamera()`.
-
-```ts
-const target = Scene.createEntity();
-const tracker = Scene.createEntity().setComponent("game:tracker", {
-  target, children: [Scene.ref(target)],
-});
-```
-
-Exported `ComponentRegistry` / `ComponentSetRegistry` interfaces support declaration merging
-for custom read/write schemas. Known physics configuration keys participate in the same
-typed ECS setters/getters. Native physics state/status keys are read-only.
-
-A live entity in the scene. All methods that create or enumerate entities
-(`Scene.createEntity`, `Scene.listEntities`, `Scene.query`, `Scene.spawnSprite`)
-return `Entity` objects rather than raw ID strings. Entities are identified
-internally by an opaque string of the form `"index:generation"`.
-
-For built-in component types (`core:transform`, `core:sprite_renderer`) the
-TypeScript compiler automatically narrows the data parameter and return type.
-For custom component types you can supply a generic `T`:
-
-```ts
-const comp = await entity.getComponent<MyComponent>("mymod:mycomp").get();
-```
+`Entity`, `PendingEntity`, `Scene.ref(entityOrId)`, and `new EntityRef(entityOrId)`
+implement `EntityReference`. Native storage resolves pending references within the
+originating batch and remaps references during scene instantiation and cloning.
+Reads hydrate references to entities. Ordinary strings remain data; `$entity` is
+reserved for the private wire representation.
 
 ### `entity.id`
 
-The underlying opaque entity ID string.
+The opaque generation-aware ID, provisional until native creation is confirmed.
 
 ### `entity.destroy()`
 
-Destroy this entity and all its components. Fire-and-forget.
+Destroy this entity and its descendants. Fire-and-forget.
 
-### `entity.setComponent(component_type, data)` / `entity.setComponent(component)` → `this`
+### `entity.setComponent(component)` → `this`
 
-Set a component on this entity. Fire-and-forget. Creates the component if absent,
-overwrites if present. For built-in component types the compiler enforces the correct shape.
-
-Accepts either a `(component_type, data)` pair or a single `Component` instance — the
-component ID is read from the object's `id` field automatically.
+Attach or replace a registered component class instance. Both native instances and
+custom `Component` subclasses are accepted. The raw `(name, data)` overload and
+`Scene.setComponent` have been removed; plain objects cannot spoof registration.
 
 ```ts
-// Plain object form
-entity.setComponent("core:transform", {
-  position: [0, 0, 0],
-  rotation: [0, 0, 0, 1],
-  scale: [1, 1, 1],
-});
-entity.setComponent("core:sprite_renderer", {
-  texture: "my_mod://textures/player.png",
-});
-
-// Component instance form — id is inferred from the object
-const t = new BuiltInComponents.Transform({ position: [1, 2, 3] });
-entity.setComponent(t);
-
-// Common pattern: fetch, mutate, push back
-const t = await entity.getComponent("core:transform").get();
-if (t) {
-  t.addX(1);
-  entity.setComponent(t); // no need to repeat the component type string
-}
+const entity = Scene.createEntity()
+  .setComponent(new BuiltInComponents.Transform({ position: [1, 2, 3] }))
+  .setComponent(new Health());
+const health = entity.getComponent(Health);
+if (health) entity.editComponent(Health, draft => { draft.value = 80; });
+entity.editComponent("core:transform", draft => { draft.addX(1); });
 ```
 
-A sprite becomes visible as soon as the entity has **both** `core:transform` and
-`core:sprite_renderer` set.
+### `entity.removeComponent(componentIdOrClass)` → `this`
 
-### `entity.removeComponent(component_type)` → `this`
+Remove a known native component by ID or a custom component by class.
 
-Remove a component from this entity. Fire-and-forget.
+### `entity.getComponent(componentIdOrClass)` → `ComponentSnapshot<T> | null`
 
-### `entity.getComponent(component_type)` → `Pending<T | null>`
+Read immutable typed fields immediately. `entity.editComponent(kind, callback)`
+provides a mutable detached class draft; `requestComponent(kind).get()` explicitly
+requests data at the command position. Lifecycle class instances remain local to
+the owning mod; snapshot reads never expose their private state or mutable identity.
 
-Get a component's data. Returns `null` if the component is not set. Return type is
-automatically inferred for built-in component types.
+### Entity tags
+
+- `entity.addTag(tag)` / `entity.removeTag(tag)` → `this`
+- `entity.getTags()` → `readonly string[]`
+- `entity.hasTag(tag)` → `boolean`
+- `Scene.findByTag(tag, { includeDisabled? })` → `readonly Entity[]`
+- `Scene.findByTags({ all?, any?, none?, includeDisabled? })` → `readonly Entity[]`
+
+Each entity holds at most 32 unique, case-sensitive strings. A tag must contain
+1–128 UTF-8 bytes, have nonblank text, and contain no control characters. Duplicate
+additions and removing an absent tag are harmless. A 33rd unique tag is rejected
+without changing membership. Filters accept at most 32 unique strings per group.
+All `all` tags must match, at least one `any` tag must match when supplied, and no
+`none` tags may match. An empty filter returns all active entities. Disabled
+entities/descendants are excluded unless `includeDisabled: true`. Results use
+stable entity allocation order. Tag methods also work on pending entities.
+
+Tags persist in `.wscene` entity `tags` arrays and follow deep cloning, editor
+undo/redo and live editing. Destruction clears membership before an ID is reused.
+Use tags for categories instead of empty custom component objects.
 
 ```ts
-const t = await entity.getComponent("core:transform").get();
-// t is BuiltInComponents.Transform | null — a live class instance
-if (t) {
-  Engine.log("info", `pos: ${t.getX()}, ${t.getY()}, ${t.getZ()}`);
-  t.setX(t.getX() + 1);
-  entity.setComponent("core:transform", t);
-}
+const enemy = Scene.createEntity().addTag("enemy").addTag("flying");
+const enemies = Scene.findByTags({ all: ["enemy"], none: ["dead"] });
 ```
 
 ### `entity.move(position)` → `this`
@@ -383,21 +518,21 @@ entity.setParent(parentEntity);    // attach
 entity.setParent("5:0");           // attach by raw ID
 entity.setParent(null);            // detach
 ```
-### `entity.getParent()` → `Pending<Entity | null>`
+### `entity.getParent()` → `Entity | null`
 
 Return the parent `Entity`, or `null` if this entity has no parent.
 
 ```ts
-const parent = await entity.getParent().get();
+const parent = entity.getParent();
 if (parent) Engine.log("info", `parent: ${parent.id}`);
 ```
 
-### `entity.getChildren()` → `Pending<Entity[]>`
+### `entity.getChildren()` → `readonly Entity[]`
 
 Return all direct children of this entity.
 
 ```ts
-const kids = await entity.getChildren().get();
+const kids = entity.getChildren();
 ```
 
 ---
@@ -409,7 +544,7 @@ the form `"index:generation"`. Built-in components use the `core:` namespace.
 
 Most callers should work with `Entity` objects returned by `Scene.createEntity`,
 `Scene.listEntities`, `Scene.spawnSprite`, and `Scene.query` rather than calling
-`Scene.setComponent` / `Scene.getComponent` with raw IDs.
+component helpers with raw IDs.
 
 ### `Scene.loadScene(path)` → `Promise<LoadedScene>`
 
@@ -449,7 +584,7 @@ mod resources, available in both client and server modes.
 `children` encodes parentage; transforms are local to the parent. `name` is an
 optional editor label. `script_id` is an optional, nonempty name unique within
 the file. There are no predefined runtime entity IDs. Components use their
-ordinary JSON data and may belong to any mod. Explicit `{"$entity":"name"}`
+registered data schemas and may belong to any loaded mod. An optional `tags` array stores up to 32 unique tags. Explicit `{"$entity":"name"}`
 references are resolved against this scene's script IDs, including forward
 references. Ordinary strings are preserved. Native derived state such as
 `core:rigid_body_state` cannot be authored.
@@ -510,52 +645,37 @@ const entity = await Scene.createEntity().get();
 Destroy an entity by raw ID and all its components. Fire-and-forget.
 Prefer `entity.destroy()` when you already have an `Entity` object.
 
-### `Scene.listEntities()` → `Pending<Entity[]>`
+### `Scene.listEntities()` → `readonly Entity[]`
 
-Return all living entities.
-
-### `Scene.setComponent(entity_id, component_type, data)`
-
-Set a component on an entity by raw ID. Fire-and-forget. For built-in component
-types the compiler enforces the correct data shape. Prefer `entity.setComponent`
-when you already have an `Entity` object.
-
-```ts
-Scene.setComponent(id, "core:transform", {
-  position: [0, 0, 0],
-  rotation: [0, 0, 0, 1],
-  scale: [1, 1, 1],
-});
-```
+Return all living entities synchronously, including pending local creations.
 
 ### `Scene.removeComponent(entity_id, component_type)`
 
 Remove a component from an entity. Fire-and-forget.
 
-### `Scene.getComponent(entity_id, component_type)` → `Pending<T | null>`
+### `Scene.getComponent(entity_id, component_type)` → `ComponentSnapshot<T> | null`
 
 Get a component's data by raw ID. Return type is automatically inferred for
 built-in component types. Returns `null` if the component is not set.
 
 ```ts
-const t = await Scene.getComponent(id, "core:transform").get();
+const t = await Scene.requestComponent(id, "core:transform").get();
 // t is BuiltInComponents.Transform | null
 ```
 
-### `Scene.query(component_types)` → `Pending<QueryResult<Entity>[]>`
+### `Scene.query(component_types)` → `readonly { entity: Entity; components: Readonly<Record<string, any>> }[]`
 
-Return all entities that have every listed component type, along with the requested
-component data.
+Return active entities that have every listed native component ID or custom component class, along with the requested component data.
 
 ```ts
-const results = await Scene.query(["core:transform", "core:sprite_renderer"]).get();
+const results = Scene.query(["core:transform", "core:sprite_renderer"]);
 for (const { entity, components } of results) {
   const t = components["core:transform"] as BuiltInComponents.Transform;
   entity.move([t.position[0] + 1, t.position[1], t.position[2]]);
 }
 ```
 
-`QueryResult` shape: `{ entity: Entity; components: Record<string, JsonValue> }`.
+Synchronous rows contain immutable component data. `Scene.requestQuery` keeps the ordered pending result form.
 
 ### `Scene.spawnText(text, position, options)` → `PendingEntity`
 
@@ -648,21 +768,21 @@ Scene.setParent(childId, parentId);
 Scene.setParent(childId, null); // detach
 ```
 
-### `Scene.getParent(entity_id)` → `Pending<string | null>`
+### `Scene.getParent(entity_id)` → `string | null`
 
 Return the parent entity ID as a string, or `null` if the entity has no parent.
 
-### `Scene.getChildren(entity_id)` → `Pending<string[]>`
+### `Scene.getChildren(entity_id)` → `readonly string[]`
 
 Return the IDs of all direct children of the given entity.
 
 ### Built-in component shapes and classes
 
-`getComponent` for built-in component types returns a live **class instance** (not a plain object), so methods are available immediately.
+`editComponent` drafts and explicit `requestComponent` results use native data classes with the helpers below. Synchronous `getComponent` returns immutable fields without these methods.
 
 #### `BuiltInComponents.Transform`
 
-Returned by `getComponent("core:transform")`. Raw fields are still present for backwards compatibility; all setters are chainable and return `this`.
+Mutable drafts for `editComponent("core:transform")`. Raw fields are still present for backwards compatibility; all setters are chainable and return `this`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -727,10 +847,10 @@ Left-multiplies an axis rotation onto the current quaternion (world-space compos
 ```ts
 // Spin a sprite 45° per tick around Y, translate it, and push the change back.
 Engine.on("tick", async () => {
-  const t = await entity.getComponent("core:transform").get();
+  const t = await entity.requestComponent("core:transform").get();
   if (!t) return;
   t.rotateY(45).setX(t.getX() + 0.1);
-  entity.setComponent("core:transform", t);
+  entity.setComponent(t);
 });
 ```
 
@@ -738,7 +858,7 @@ The constructor `new BuiltInComponents.Transform({ position?, rotation?, scale? 
 
 #### `BuiltInComponents.SpriteRenderer`
 
-Returned by `getComponent("core:sprite_renderer")`.
+Mutable drafts for `editComponent("core:sprite_renderer")`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -756,7 +876,7 @@ Sprites are rendered on the XZ plane; the Y axis is up. A sprite becomes visible
 
 #### `BuiltInComponents.MeshRenderer`
 
-Returned by `getComponent("core:mesh_renderer")`. Renders arbitrary triangle geometry from a mesh file.
+Mutable drafts for `editComponent("core:mesh_renderer")`. Renders arbitrary triangle geometry from a mesh file.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -777,7 +897,7 @@ A mesh entity becomes visible as soon as it has **both** `core:transform` and `c
 
 #### `BuiltInComponents.TextRenderer`
 
-Returned by `getComponent("core:text_renderer")`. Renders a UTF-8 string at the entity's world-space Transform position, projected to screen coordinates.
+Mutable drafts for `editComponent("core:text_renderer")`. Renders a UTF-8 string at the entity's world-space Transform position, projected to screen coordinates.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -805,16 +925,16 @@ const label = await Scene.spawnText("Hello!", [0, 0, 0], { font_size: 36 }).get(
 
 // Update it each tick
 Engine.on("tick", async ({ tick_number }) => {
-  const t = await label.getComponent("core:text_renderer").get();
+  const t = await label.requestComponent("core:text_renderer").get();
   if (!t) return;
   t.setText(`Tick: ${tick_number}`);
-  label.setComponent("core:text_renderer", t);
+  label.setComponent(t);
 });
 ```
 
 #### `BuiltInComponents.Camera`
 
-Returned by `getComponent("core:camera")`.  Makes the entity usable as a scene
+Mutable drafts for `editComponent("core:camera")`.  Makes the entity usable as a scene
 camera.  Combine with `core:transform` to control position and orientation, then
 activate the camera with `Engine.setMainCamera(entity.id)`.
 
@@ -847,7 +967,7 @@ Engine.on("init", async () => {
 
 // Move camera each tick
 Engine.on("tick", async ({ delta_seconds }) => {
-  const t = await cam.getComponent("core:transform").get();
+  const t = await cam.requestComponent("core:transform").get();
   if (!t) return;
   t.addZ(-5 * delta_seconds); // fly forward along -Z
   cam.setComponent(t);
@@ -856,7 +976,7 @@ Engine.on("tick", async ({ delta_seconds }) => {
 
 #### `BuiltInComponents.AmbientLight`
 
-Returned by `getComponent("core:ambient_light")`. Contributes a uniform fill light to the scene. Multiple ambient lights are **additive**.
+Mutable drafts for `editComponent("core:ambient_light")`. Contributes a uniform fill light to the scene. Multiple ambient lights are **additive**.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -877,7 +997,7 @@ await Scene.addAmbientLight([1, 0.9, 0.7], 0.15).get();
 
 #### `BuiltInComponents.DirectionalLight`
 
-Returned by `getComponent("core:directional_light")`. Simulates an infinitely distant light source (e.g. the sun). Up to **4** directional lights are active simultaneously; extras are silently ignored.
+Mutable drafts for `editComponent("core:directional_light")`. Simulates an infinitely distant light source (e.g. the sun). Up to **4** directional lights are active simultaneously; extras are silently ignored.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -901,7 +1021,7 @@ await Scene.addDirectionalLight([0, -1, -0.3], [1, 0.95, 0.8], 1.2).get();
 
 #### `BuiltInComponents.PointLight`
 
-Returned by `getComponent("core:point_light")`. Emits light in all directions from the entity's `core:transform` position. Attenuation is quadratic — falls off to zero at `range` units. Up to **8** point lights are active simultaneously; extras are silently ignored.
+Mutable drafts for `editComponent("core:point_light")`. Emits light in all directions from the entity's `core:transform` position. Attenuation is quadratic — falls off to zero at `range` units. Up to **8** point lights are active simultaneously; extras are silently ignored.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1376,12 +1496,17 @@ The native engine stores server identities and trust records under the OS local-
 
 ## IPC protocol reference
 
+The complete [native mod-host wire contract](IPC.md) documents compatible API/host
+implementations, startup and tick sequencing, scene synchronization, nested
+physics/network payloads, limits, and errors. The documentation website also
+generates an exhaustive message-field catalogue from the native Rust definitions.
+
 This section documents the raw wire format. Normal mod code should use the API
 namespaces above rather than speaking the protocol directly.
 
-Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 8. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
+Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 10. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
 
-**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 8 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
+**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 10 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
 Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine-to-mod pipe writes run on a dedicated bounded writer thread (256 queued messages, 64 MiB including the in-flight write). A full/broken writer terminates the affected mod rather than blocking the simulation or silently losing RPCs.
 
 ### Engine → Script
@@ -1406,6 +1531,9 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `EntityListResponse` | `request_id`, `entity_ids` |
 | `EntityParentResponse` | `request_id`, `entity_id`, `parent_id` (string or null) |
 | `EntityChildrenResponse` | `request_id`, `entity_id`, `child_ids` |
+| `SceneDelta` | `delta`: revision, base_revision, tick_number, reset, camera, created records, removed IDs, changed metadata/components/instances |
+| `Performance` | `sample`: native `TickTimings` after commit |
+| `EntityTagsResponse` | `request_id`, `tags`, `error` |
 | `ComponentGetResponse` | `request_id`, `entity_id`, `component_type`, `data`, `error` |
 | `ComponentQueryResponse` | `request_id`, `results` |
 | `CommandInvoke` | `request_id`, `command_path`, `args` |
@@ -1443,7 +1571,11 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `EntitySetParent` | `entity_id`, `parent_id` (string or null) |
 | `EntityGetParent` | `request_id`, `entity_id` |
 | `EntityGetChildren` | `request_id`, `entity_id` |
-| `ComponentSet` | `entity_id`, `component_type`, `data` |
+| `ComponentSet` | `entity_id`, `component_type`, `data` (native or registered custom schema only) |
+| `ComponentPatch` | `entity_id`, `component_type`, `data` (changed top-level custom fields) |
+| `EntityTagAdd` / `EntityTagRemove` | `entity_id`, `tag` |
+| `EntityTagsGet` | `request_id`, `entity_id` |
+| `EntityTagQuery` | `request_id`, `query` (`all`, `any`, `none`, `includeDisabled`) |
 | `ComponentRemove` | `entity_id`, `component_type` |
 | `ComponentGet` | `request_id`, `entity_id`, `component_type` |
 | `ComponentQuery` | `request_id`, `component_types` |
@@ -1464,7 +1596,7 @@ A synchronous throw or rejected promise from a tick handler is queued for loggin
 copies authored components and descendants with fresh IDs, remapping internal entity
 references. Native physics state is rebuilt. The original enabled state is preserved
 unless overridden. `Entity.setEnabled(enabled: boolean): this` changes local enabled
-state; `Entity.getEnabled(): Pending<boolean>` reads it. `core:entity` is read-only
+state; `Entity.getEnabled(): boolean` reads it. `core:entity` is read-only
 metadata containing `enabled` and inherited `active` flags. Disabled ancestors make
 their descendants inactive: no rendering, lighting, camera or physics simulation.
 Mod tick callbacks are global; they continue running, so scripts can enable entities.
@@ -1483,4 +1615,4 @@ connected body. Legacy bodyA/bodyB descriptors remain readable for older mods.
 
 Component queries omit inactive entities. Direct component reads and scene-local lookups still access disabled templates.
 
-`Entity.getComponent("core:world_transform"): Pending<BuiltInComponents.Transform | null>` reads the inherited world transform. This derived component is read-only.
+`Entity.getComponent("core:world_transform"): ComponentSnapshot<BuiltInComponents.Transform> | null` reads the inherited world transform. This derived component is read-only.

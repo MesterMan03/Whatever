@@ -2,6 +2,7 @@
   "extends": "./tsconfig.network.json",
   "files": [
     "runtime-types.ts",
+    "../../games/test/mods/markbench/scripts/index.ts",
     "../../games/test/mods/debug/scripts/client.ts",
     "../../games/test/mods/debug/scripts/server.ts",
     "../../games/test/mods/physics_demo/scripts/client.ts"

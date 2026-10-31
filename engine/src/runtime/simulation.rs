@@ -38,6 +38,8 @@ pub struct Simulation {
     console: crate::console::DevConsole,
     fatal_error: Option<String>,
     world: World,
+    scene_publisher: crate::ecs::ScenePublisher,
+    timings: super::TickTimings,
     initial_scene: Option<crate::scene::LoadedScene>,
     physics: crate::physics::PhysicsRegistry,
     audio: AudioManager,
@@ -48,6 +50,7 @@ pub struct Simulation {
     pending_controls: Vec<RuntimeCommand>,
     editor_edits: Vec<super::editor::EditorControl>,
     editor_sequence: u64,
+    editor_published: Instant,
     ready: bool,
     watchdog: Watchdog,
     shared: Arc<Shared>,
@@ -122,6 +125,7 @@ impl Simulation {
         }
 
         let mut world = World::new();
+        crate::script::load_component_types(&mut world, &registry)?;
         let initial_scene = if let Some(path) = registry.startup_scene()? {
             Some(
                 crate::scene::SceneDocument::load(vfs.as_ref(), path, &mut world)
@@ -149,6 +153,8 @@ impl Simulation {
             console: crate::console::DevConsole::new(),
             fatal_error: None,
             world,
+            scene_publisher: Default::default(),
+            timings: Default::default(),
             initial_scene,
             physics,
             audio,
@@ -159,6 +165,7 @@ impl Simulation {
             pending_controls: vec![],
             editor_edits: vec![],
             editor_sequence: 0,
+            editor_published: Instant::now() - Duration::from_secs(1),
             ready: false,
             watchdog: Watchdog::new(Duration::from_millis(500)),
             shared,
@@ -414,8 +421,41 @@ impl Simulation {
     }
     fn tick(&mut self) {
         self.watchdog.start_tick();
+        let start = Instant::now();
         let batches = self.tick_commands();
+        self.timings = super::TickTimings {
+            tick_number: self.tick_number,
+            tick_rate: 1.0 / self.clock.interval.as_secs_f64(),
+            scripts_ms: super::performance::elapsed(start),
+            commands: batches.iter().map(|(_, commands)| commands.len()).sum(),
+            hosts: batches.len(),
+            build: if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            }
+            .into(),
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            ..Default::default()
+        };
         self.finish_tick(batches);
+        self.timings.total_ms = super::performance::elapsed(start);
+        self.timings.entities = self.scene_publisher.entity_count();
+        self.timings.frame = self
+            .shared
+            .frame_timings
+            .lock()
+            .ok()
+            .and_then(|frame| frame.clone());
+        for loaded in self.registry.iter() {
+            self.script_host.send(
+                &loaded.manifest.meta.id,
+                &EngineMessage::Performance {
+                    sample: Box::new(self.timings.clone()),
+                },
+                &mut self.debug,
+            );
+        }
         self.watchdog.end_tick();
     }
 
@@ -569,6 +609,12 @@ impl Simulation {
                 pending.remove(&id);
             }
         }
+        let snapshot = self
+            .scene_publisher
+            .reset(&mut self.world, 0, self.main_camera);
+        if let Err(error) = self.script_host.broadcast_scene(snapshot, &mut self.debug) {
+            tracing::error!(%error, "initial scene snapshot failed");
+        }
         for id in order {
             if self.script_host.is_ready(&id) {
                 self.script_host.send(
@@ -592,6 +638,7 @@ impl Simulation {
             return;
         }
         self.script_host.begin_responses();
+        let command_start = Instant::now();
         let tick_delta = self.clock.interval.as_secs_f64();
         self.physics.begin_tick(self.tick_number);
         for (id, commands) in batches {
@@ -632,17 +679,24 @@ impl Simulation {
             };
             let _ = edit.reply.try_send(reply);
         }
+        self.timings.commands_ms = super::performance::elapsed(command_start);
+        let physics_start = Instant::now();
         // Fixed simulation order: input/events -> mod batches -> commands -> physics
         // -> presentation and results. Rendering never advances this clock.
         match self.physics.step(&mut self.world, tick_delta) {
-            Ok(changed) if self.mode == RuntimeMode::Client && !changed.is_empty() => {
-                self.render_cmds
-                    .extend(crate::script::RenderCommand::upsert_hierarchy(
-                        &self.world,
-                        changed,
-                    ));
+            Ok(changed) => {
+                for id in &changed {
+                    self.world.mark_component(*id, "core:transform");
+                    self.world.mark_hierarchy(*id);
+                }
+                if self.mode == RuntimeMode::Client {
+                    self.render_cmds
+                        .extend(crate::script::RenderCommand::upsert_hierarchy(
+                            &self.world,
+                            changed,
+                        ));
+                }
             }
-            Ok(_) => {}
             Err(error) => tracing::error!(%error,"physics tick failed"),
         }
         for event in self.physics.take_events() {
@@ -654,8 +708,20 @@ impl Simulation {
                 }
             }
         }
+        self.timings.physics_ms = super::performance::elapsed(physics_start);
         self.changed = true;
+        let snapshot_start = Instant::now();
+        let delta =
+            self.scene_publisher
+                .publish(&mut self.world, self.tick_number, self.main_camera);
+        match self.script_host.broadcast_scene(delta, &mut self.debug) {
+            Ok(bytes) => self.timings.snapshot_bytes = bytes,
+            Err(error) => tracing::error!(%error, "scene delta publication failed"),
+        }
+        self.timings.snapshot_ms = super::performance::elapsed(snapshot_start);
+        let presentation_start = Instant::now();
         self.publish();
+        self.timings.presentation_ms = super::performance::elapsed(presentation_start);
         self.script_host
             .flush_responses(self.tick_number, &mut self.debug);
     }
@@ -669,10 +735,12 @@ impl Simulation {
             self.client_commands.clear();
             return;
         }
-        if let Ok(mailbox) = self.shared.editor_snapshot.lock()
+        if self.editor_published.elapsed() >= Duration::from_millis(33)
+            && let Ok(mailbox) = self.shared.editor_snapshot.lock()
             && let Some(mailbox) = mailbox.as_ref().and_then(std::sync::Weak::upgrade)
             && let Ok(mut slot) = mailbox.lock()
         {
+            self.editor_published = Instant::now();
             *slot = Some(super::editor_transport::EditorSnapshot {
                 world: self.world.clone(),
                 camera: self.main_camera,
@@ -750,6 +818,7 @@ mod tests {
             presentation: Default::default(),
             stop: std::sync::atomic::AtomicBool::new(false),
             editor_snapshot: Default::default(),
+            frame_timings: Default::default(),
         });
         let (tx, rx) = mpsc::channel();
         let mut simulation =
@@ -783,6 +852,7 @@ mod tests {
                         id: id.to_string(),
                         name: Some("Live body".into()),
                         enabled: None,
+                        tags: None,
                         components: std::collections::BTreeMap::from([(
                             "core:transform".into(),
                             vec![super::super::editor::ValueEdit {
@@ -847,15 +917,15 @@ mod tests {
         )
         .expect("manifest");
         std::fs::write(directory.join("core/index.ts"),r#"
-import {Engine,Scene} from "@whatever-engine/api";
+import {Engine,Scene,BuiltInComponents} from "@whatever-engine/api";
 let entity;
 Engine.setFpsCap(1);
 Engine.on("init",async()=>{
     entity=await Scene.createEntity().get();
-    entity.setComponent("core:sprite_renderer",{texture:"core://unused.png",shader:"core://unused.wgsl"});
+    entity.setComponent(new BuiltInComponents.SpriteRenderer({texture:"core://unused.png",shader:"core://unused.wgsl"}));
 });
 Engine.on("tick",({tick_number})=>{
-    if(entity)entity.setComponent("core:transform",{position:[tick_number,0,0],rotation:[0,0,0,1],scale:[1,1,1]});
+    if(entity)entity.setComponent(new BuiltInComponents.Transform({position:[tick_number,0,0],rotation:[0,0,0,1],scale:[1,1,1]}));
 });
 "#).expect("script");
         std::fs::create_dir_all(directory.join("core/scenes")).expect("scenes");
@@ -886,6 +956,7 @@ Engine.on("tick",({tick_number})=>{
             presentation: Default::default(),
             stop: std::sync::atomic::AtomicBool::new(false),
             editor_snapshot: Default::default(),
+            frame_timings: Default::default(),
         });
         struct Stop(Arc<Shared>);
         impl Drop for Stop {

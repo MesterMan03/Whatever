@@ -99,6 +99,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
     if matches!(&msg, ScriptMessage::EntitySetParent { .. }) {
         physics.invalidate();
     }
+    let adding_tag = matches!(&msg, ScriptMessage::EntityTagAdd { .. });
     match msg {
         ScriptMessage::SceneLoad { request_id, path } => {
             let result = crate::scene::SceneDocument::load(vfs, &path, world);
@@ -567,7 +568,120 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             );
         }
 
+        ScriptMessage::EntityTagAdd { entity_id, tag }
+        | ScriptMessage::EntityTagRemove { entity_id, tag } => {
+            let result = resolve_entity(&entity_id, batch_entities)
+                .ok_or_else(|| anyhow::anyhow!("invalid entity ID"))
+                .and_then(|id| {
+                    if adding_tag {
+                        world.add_tag(&id, tag)
+                    } else {
+                        world.remove_tag(&id, &tag)
+                    }
+                });
+            if let Err(error) = result {
+                tracing::warn!(mod_id, %error, "tag edit rejected");
+            }
+        }
+        ScriptMessage::EntityTagsGet {
+            request_id,
+            entity_id,
+        } => {
+            let result = resolve_entity(&entity_id, batch_entities)
+                .ok_or_else(|| anyhow::anyhow!("invalid entity ID"))
+                .and_then(|id| world.entity_tags(&id));
+            let (tags, error) = match result {
+                Ok(tags) => (tags, None),
+                Err(error) => (vec![], Some(error.to_string())),
+            };
+            script_host.send(
+                mod_id,
+                &EngineMessage::EntityTagsResponse {
+                    request_id,
+                    tags,
+                    error,
+                },
+                debug,
+            );
+        }
+        ScriptMessage::EntityTagQuery { request_id, query } => {
+            let entity_ids = match world.find_by_tags(&query) {
+                Ok(ids) => ids.into_iter().map(|id| id.to_string()).collect(),
+                Err(error) => {
+                    tracing::warn!(mod_id, %error, "tag query rejected");
+                    vec![]
+                }
+            };
+            script_host.send(
+                mod_id,
+                &EngineMessage::EntityListResponse {
+                    request_id,
+                    entity_ids,
+                },
+                debug,
+            );
+        }
+
         // --- Component management --------------------------------------------
+        ScriptMessage::ComponentPatch {
+            entity_id,
+            component_type,
+            data,
+        } => {
+            let Some(id) = resolve_entity(&entity_id, batch_entities) else {
+                return DispatchResult::default();
+            };
+            if !world.component_types.contains_key(&component_type)
+                && !matches!(
+                    component_type.as_str(),
+                    "core:transform"
+                        | "core:sprite_renderer"
+                        | "core:text_renderer"
+                        | "core:mesh_renderer"
+                        | "core:camera"
+                        | "core:ambient_light"
+                        | "core:directional_light"
+                        | "core:point_light"
+                        | "core:physics_world"
+                        | "core:rigid_body"
+                        | "core:collider"
+                        | "core:joint"
+                )
+            {
+                return DispatchResult::default();
+            }
+            let Some(mut current) = world.get_component(&id, &component_type) else {
+                return DispatchResult::default();
+            };
+            let Some(patch) = data.as_object() else {
+                return DispatchResult::default();
+            };
+            let Some(object) = current.as_object_mut() else {
+                return DispatchResult::default();
+            };
+            object.extend(patch.clone());
+            return dispatch(
+                mod_id,
+                ScriptMessage::ComponentSet {
+                    entity_id,
+                    component_type,
+                    data: current,
+                },
+                EngineContext {
+                    mode,
+                    network,
+                    script_host,
+                    registry,
+                    game_id,
+                    debug,
+                    world,
+                    physics,
+                    vfs,
+                    audio,
+                    batch_entities,
+                },
+            );
+        }
         ScriptMessage::ComponentSet {
             entity_id,
             component_type,

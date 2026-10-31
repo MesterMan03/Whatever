@@ -157,11 +157,13 @@ const entity = await Scene.spawnMesh(
 Or via the low-level component API:
 
 ```typescript
-entity.setComponent("core:mesh_renderer", {
+import { BuiltInComponents } from "@whatever-engine/api";
+
+entity.setComponent(new BuiltInComponents.MeshRenderer({
   mesh:    "my_mod://meshes/cube.obj",
   shader:  "core://shaders/sprite.wgsl",
   texture: "my_mod://textures/crate.png",  // optional
-});
+}));
 ```
 
 ---

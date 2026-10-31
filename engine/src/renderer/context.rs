@@ -2,6 +2,7 @@ use anyhow::{Context, bail};
 use winit::window::Window;
 
 pub struct WgpuContext {
+    pub adapter_name: String,
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -66,6 +67,11 @@ impl WgpuContext {
         surface.configure(&device, &config);
 
         Ok(WgpuContext {
+            adapter_name: format!(
+                "{} ({:?})",
+                adapter.get_info().name,
+                adapter.get_info().backend
+            ),
             surface,
             device,
             queue,
@@ -82,7 +88,18 @@ impl WgpuContext {
         self.surface.configure(&self.device, &self.config);
     }
 
+    pub fn set_vsync(&mut self, enabled: bool) {
+        self.set_present_mode(if enabled {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        });
+    }
+
     pub fn set_present_mode(&mut self, mode: wgpu::PresentMode) {
+        if self.config.present_mode == mode {
+            return;
+        }
         self.config.present_mode = mode;
         self.surface.configure(&self.device, &self.config);
     }

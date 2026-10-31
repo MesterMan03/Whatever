@@ -294,6 +294,7 @@ impl Editor {
                 )]
                 .into(),
                 children: Vec::new(),
+                tags: Vec::new(),
             });
         }
         candidate.validate()?;
@@ -304,7 +305,7 @@ impl Editor {
         self.preview_dirty = true;
         Ok(name)
     }
-    fn resource_field(
+    pub(super) fn resource_field(
         &mut self,
         ui: &mut egui::Ui,
         data: &mut Value,
@@ -378,6 +379,9 @@ impl Editor {
         data: &mut Value,
         names: &[String],
     ) -> bool {
+        if let Some(definition) = self.world.component_types.get(kind).cloned() {
+            return self.custom_component_form(ui, &definition, data, names);
+        }
         let mut changed = false;
         if !data.is_object() {
             return json_tree(ui, data, 0);
@@ -795,6 +799,42 @@ impl Editor {
             }
         });
         ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!("Tags ({}/32)", entity.tags.len()));
+            let mut remove_tag = None;
+            for (index, tag) in entity.tags.iter().enumerate() {
+                if ui.small_button(format!("{tag} ×")).clicked() {
+                    remove_tag = Some(index);
+                }
+            }
+            if let Some(index) = remove_tag {
+                entity.tags.remove(index);
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            let id = ui.make_persistent_id("new_entity_tag");
+            let mut tag = ui
+                .ctx()
+                .data_mut(|state| state.get_temp::<String>(id).unwrap_or_default());
+            let response = ui.add(egui::TextEdit::singleline(&mut tag).hint_text("New tag"));
+            let valid = entity.tags.len() < 32
+                && engine::ecs::validate_tag(&tag).is_ok()
+                && !entity.tags.contains(&tag);
+            if (ui
+                .add_enabled(valid, egui::Button::new("Add tag"))
+                .clicked()
+                || (response.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && valid))
+                && valid
+            {
+                entity.tags.push(std::mem::take(&mut tag));
+                changed = true;
+            }
+            ui.ctx().data_mut(|state| state.insert_temp(id, tag));
+        });
+        ui.add_space(8.0);
         let mut remove = None;
         let mut kinds = entity.components.keys().cloned().collect::<Vec<_>>();
         kinds.sort_by_key(|kind| {
@@ -882,26 +922,32 @@ impl Editor {
                 }
             }
             ui.separator();
-            ui.label("Custom component");
-            let id = ui.make_persistent_id("new_component_type");
-            let mut kind = ui
-                .ctx()
-                .data_mut(|state| state.get_temp::<String>(id).unwrap_or_default());
-            ui.add(egui::TextEdit::singleline(&mut kind).hint_text("my_mod:component"));
-            let valid = kind.split_once(':').is_some_and(|(namespace, name)| {
-                engine::sandbox::valid_storage_id(namespace)
-                    && namespace != "core"
-                    && !name.is_empty()
-            }) && !entity.components.contains_key(&kind);
+            let definitions: Vec<_> = self.world.component_types.values().cloned().collect();
+            for definition in definitions {
+                if !entity.components.contains_key(&definition.id)
+                    && ui
+                        .button(&definition.export)
+                        .on_hover_text(&definition.id)
+                        .clicked()
+                {
+                    entity
+                        .components
+                        .insert(definition.id.clone(), definition.defaults());
+                    changed = true;
+                    ui.close_menu();
+                }
+            }
             if ui
-                .add_enabled(valid, egui::Button::new("Add Custom Component"))
+                .add_enabled(
+                    self.live.is_none(),
+                    egui::Button::new("Reload component types"),
+                )
                 .clicked()
             {
-                entity.components.insert(kind.clone(), json!({}));
-                changed = true;
+                let result = self.refresh_component_types();
+                self.report(result);
                 ui.close_menu();
             }
-            ui.ctx().data_mut(|state| state.insert_temp(id, kind));
         });
         if self.live.is_some()
             && let Some(id) = self.selected_id()

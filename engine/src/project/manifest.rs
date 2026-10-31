@@ -209,8 +209,11 @@ impl Project {
         use crate::vfs::Vfs;
         for mode in [RuntimeMode::Client, RuntimeMode::Server] {
             let (registry, vfs) = self.registry(mode)?;
+            let mut schemas = crate::ecs::World::new();
+            crate::script::load_component_types(&mut schemas, &registry)?;
             if let Some(path) = registry.startup_scene()? {
-                crate::scene::SceneDocument::parse(&vfs.read(&crate::scene::scene_path(path)?)?)?;
+                crate::scene::SceneDocument::parse(&vfs.read(&crate::scene::scene_path(path)?)?)?
+                    .instantiate(&mut schemas.clone())?;
             }
             for item in registry.iter() {
                 if let Some(entry) = item
@@ -231,7 +234,8 @@ impl Project {
                             path,
                         };
                         crate::scene::SceneDocument::parse(&vfs.read(&path)?)
-                            .with_context(|| format!("scene {}", path.as_string()))?;
+                            .with_context(|| format!("scene {}", path.as_string()))?
+                            .instantiate(&mut schemas.clone())?;
                     }
                 }
             }

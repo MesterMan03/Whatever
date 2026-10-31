@@ -25,6 +25,7 @@ impl World {
         if !self.is_alive(id) {
             return false;
         }
+        self.mark_hierarchy(*id);
         if enabled {
             self.disabled.remove(&id.index);
         } else {
@@ -72,6 +73,7 @@ impl World {
                     .cloned(),
             );
             for (original, copy) in originals.iter().zip(&copies) {
+                self.set_tags(copy, self.entity_tags(original)?)?;
                 if let Some(name) = self.names.get(&original.index).cloned() {
                     self.names.insert(copy.index, format!("{name} (Clone)"));
                 }
@@ -127,6 +129,26 @@ mod tests {
     #[test]
     fn cloning_remaps_subtree_references_and_enabled_state_without_copying_native_state() {
         let mut world = World::new();
+        super::super::register_test_component(
+            &mut world,
+            "demo:link",
+            &[
+                (
+                    "child",
+                    crate::schema::Schema::Nullable {
+                        inner: Box::new(crate::schema::Schema::Entity),
+                    },
+                    serde_json::Value::Null,
+                ),
+                (
+                    "world",
+                    crate::schema::Schema::Nullable {
+                        inner: Box::new(crate::schema::Schema::Entity),
+                    },
+                    serde_json::Value::Null,
+                ),
+            ],
+        );
         let external = world.create_entity();
         let parent = world.create_entity();
         let child = world.create_entity();
