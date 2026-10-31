@@ -24,6 +24,13 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
         }
         Ok(value.to_owned())
     };
+    // Darwin realpath visits parent metadata even for an already absolute path.
+    let ancestors = executable
+        .ancestors()
+        .chain(mod_root.ancestors())
+        .map(|path| literal(path).map(|path| format!("(literal \"{path}\")")))
+        .collect::<anyhow::Result<Vec<_>>>()?
+        .join(" ");
     let profile = CString::new(format!(
         r#"(version 1)
 (deny default)
@@ -31,6 +38,12 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
 ; The literal permits only the directory itself, not arbitrary file contents.
 (allow file-read* (literal "/"))
 (allow sysctl-read (sysctl-name "kern.bootargs") (sysctl-name "security.mac.lockdown_mode_state"))
+; JSC detects CPU instructions, memory/page sizes and the OS before evaluating JS.
+; These are read-only queries; no sysctl mutation is allowed.
+(allow sysctl-read (sysctl-name-prefix "hw.") (sysctl-name "kern.osproductversion") (sysctl-name "kern.osvariant_status") (sysctl-name "kern.osrelease") (sysctl-name "kern.osversion") (sysctl-name "kern.ostype"))
+(allow file-read-metadata (literal "/var"))
+(allow file-read-metadata {ancestors})
+(allow file-read* (subpath "/private/var/db/timezone"))
 (allow file-read* (subpath "/usr") (subpath "/System") (subpath "/Library") (subpath "/private/etc") (subpath "/private/tmp") (subpath "/private/var/folders"))
 (allow file-read* (literal "{executable}") (subpath "{mod_root}"))
 ; dyld needs executable mappings as well as reads of the host and system cache.

@@ -52,7 +52,7 @@ Mod IDs must be unique, and asset roots must remain inside their mod directory. 
 The existing OS restrictions remain a second layer.
 
 - Linux applies Landlock for filesystem/network access, seccomp for sensitive syscalls and network sockets, and capability reduction. It grants the bundled host directory read/execute access, the mod directory read access and temporary storage for runtime caches. It no longer searches for a user Bun installation or grants access to the engine source tree or persistent save directories.
-- macOS installs a Seatbelt profile around the exact host executable and mod root. It allows dyld to map that executable and system libraries, opens only the root directory itself for loader bootstrap, and permits the loader's boot-arguments/lockdown-state queries. It denies networking and restricts writes to temporary storage.
+- macOS installs a Seatbelt profile around the exact host executable and mod root. It permits metadata traversal of their ancestors for canonicalization, system timezone data, executable mappings of the host/system libraries, the root-directory handle needed by dyld, and read-only hardware/OS/loader-state queries. It denies sysctl writes and networking, and restricts filesystem writes to temporary storage.
 - Windows uses a Job Object for process limits and cleanup. It does not provide filesystem or network isolation by itself.
 
 Windows host launches set `BUN_JSC_numberOfGCMarkers=1` in the engine-owned environment. The pinned JavaScriptCore build can deadlock its parallel collector after sustained ticking; serial marking avoids that stall while keeping each mod in its own process. Mods cannot select or override host environment options.
