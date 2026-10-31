@@ -36,15 +36,22 @@ pub fn find_host() -> anyhow::Result<PathBuf> {
     let parent = executable
         .parent()
         .context("engine executable has no parent")?;
-    let mut candidates = vec![
-        parent.join(format!("runtime{}", std::env::consts::EXE_SUFFIX)),
-        parent.join("lib").join(&name),
-        parent.join(&name),
-    ];
+    let mut candidates = bundled_host_candidates(parent, &name);
     if cfg!(debug_assertions) {
         candidates.push(crate::development_root().join("runtime/dist").join(&name));
     }
     select_host(candidates, cfg!(debug_assertions), validate_host)
+}
+
+fn bundled_host_candidates(parent: &std::path::Path, name: &str) -> Vec<PathBuf> {
+    vec![
+        parent.join(format!("runtime{}", std::env::consts::EXE_SUFFIX)),
+        parent
+            .join("engine")
+            .join(format!("runtime{}", std::env::consts::EXE_SUFFIX)),
+        parent.join("lib").join(name),
+        parent.join(name),
+    ]
 }
 
 fn select_host(
@@ -237,6 +244,43 @@ mod tests {
         std::fs::remove_file(stale).expect("remove stale fixture");
         std::fs::remove_file(current).expect("remove current fixture");
         std::fs::remove_dir(directory).expect("remove fixture directory");
+    }
+
+    #[test]
+    fn installed_tools_find_the_engine_runtime_and_reject_a_stale_adjacent_host() {
+        let directory = std::env::temp_dir().join(format!(
+            "whatever-installed-host-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let engine = directory.join("engine");
+        std::fs::create_dir_all(&engine).expect("fixture");
+        let runtime_name = format!("runtime{}", std::env::consts::EXE_SUFFIX);
+        let bundled = engine.join(&runtime_name);
+        std::fs::write(&bundled, HOST_PROTOCOL.to_string()).expect("bundled host");
+        let name = format!("whatever-mod-host{}", std::env::consts::EXE_SUFFIX);
+        let candidates = || bundled_host_candidates(&directory, &name);
+        let check = |path: &std::path::Path| -> anyhow::Result<()> {
+            validate_host_info(&info(std::fs::read_to_string(path)?.parse()?), true)
+        };
+        assert_eq!(
+            select_host(candidates(), false, check).expect("installed runtime"),
+            bundled.canonicalize().expect("canonical host")
+        );
+        let adjacent = directory.join(&runtime_name);
+        std::fs::write(&adjacent, (HOST_PROTOCOL - 1).to_string()).expect("stale adjacent host");
+        assert!(select_host(candidates(), false, check).is_err());
+        assert_eq!(
+            select_host(candidates(), true, check).expect("development fallback"),
+            bundled.canonicalize().expect("canonical host")
+        );
+        std::fs::remove_file(adjacent).expect("remove stale host");
+        std::fs::remove_file(bundled).expect("remove bundled host");
+        std::fs::remove_dir(engine).expect("remove engine directory");
+        std::fs::remove_dir(directory).expect("remove fixture");
     }
 
     #[test]
