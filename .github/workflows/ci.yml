@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Install system dependencies
         run: |
@@ -33,6 +35,11 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Prepare component inspection runtime
+        # Project validation inspects component schemas through the pinned host.
+        # The same composite action and native cache are used by runtime/editor CI.
+        uses: ./.github/actions/build-mod-host
 
       - name: Tests
         run: cargo test --workspace
