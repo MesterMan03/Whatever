@@ -41,6 +41,8 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
       env: {
         PATH: "",
         BUN_DEBUG_QUIET_LOGS: "1",
+        // Match the engine-owned launch environment for the pinned Windows JSC.
+        ...(process.platform === "win32" ? { BUN_JSC_numberOfGCMarkers: "1" } : {}),
         SystemRoot: process.env.SystemRoot,
         WINDIR: process.env.WINDIR,
         TEMP: tmpdir(),
@@ -125,6 +127,15 @@ function fixture(body: string) {
     'Engine.on("init", async () => {\n' + body +
     '\nEngine.log("info", "fixture-done");\n});\n';
 }
+
+test("keeps acknowledging ticks through sustained idle IPC and garbage collection", async () => {
+  const result = await runHost(`import { Engine } from "@whatever-engine/api";
+    Engine.on("tick", ({tick_number}) => {
+      if (tick_number === 250) Engine.log("info", "fixture-done");
+    });`);
+  expect(result.exitCode).toBe(0);
+  expect(result.batches.some(batch => batch.tick_number === 250)).toBe(true);
+});
 
 test("delivers UTF-8 batches larger than the OS pipe buffer without truncation", async () => {
   const payload = "λ🙂汉".repeat(24000);

@@ -45,8 +45,10 @@ async function runServer(source:string, options:{shutdownCommand?:string;expecte
       cpSync(directory,diagnostics,{recursive:true});
       writeFileSync(join(diagnostics,"stdout.log"),stdout);
       writeFileSync(join(diagnostics,"stderr.log"),stderr);
-      const log=join(directory,"logs/latest.log");
-      const trace=existsSync(log)?readFileSync(log,"utf8").slice(-16000):"No IPC log produced.";
+      const log=[join(directory,"logs/latest.log"),join(dirname(binary),"logs/latest.log"),
+        join(repository,"games/test/logs/latest.log")].find(existsSync);
+      if(log)cpSync(log,join(diagnostics,"ipc.log"));
+      const trace=log?readFileSync(log,"utf8").slice(-16000):"No IPC log produced.";
       throw new Error("Server exited "+code+" (fixture finished: "+stopped+")\n"+stdout+"\nSTDERR:\n"+stderr+"\nIPC TRACE:\n"+trace);
     }
     return {stdout,stderr,code,signal:active.signalCode,shutdownMs:stopped?performance.now()-stopTime:Infinity};

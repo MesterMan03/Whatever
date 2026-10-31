@@ -85,6 +85,12 @@ jobs:
             dist/*.tar.gz
           if-no-files-found: error
           compression-level: 0
+      - name: Capture macOS host sandbox denials
+        if: failure() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p target/ci-server-failures
+          sudo /usr/bin/log show --last 15m --style compact --predicate 'eventMessage CONTAINS "whatever-mod-host" AND (process == "kernel" OR process == "sandboxd")' > target/ci-server-failures/seatbelt.log 2>&1 || true
       - name: Preserve failed player and IPC diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

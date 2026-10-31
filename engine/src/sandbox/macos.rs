@@ -29,6 +29,8 @@ pub fn apply_pre_spawn(cmd: &mut Command, cfg: &SandboxConfig) -> anyhow::Result
 (deny default)
 (allow file-read* (subpath "/usr") (subpath "/System") (subpath "/Library") (subpath "/private/etc") (subpath "/private/tmp") (subpath "/private/var/folders"))
 (allow file-read* (literal "{executable}") (subpath "{mod_root}"))
+; dyld needs executable mappings as well as reads of the host and system cache.
+(allow file-map-executable (literal "{executable}") (subpath "/usr/lib") (subpath "/System"))
 (allow file-write* (subpath "/private/tmp"))
 (allow process-exec (literal "{executable}"))
 (deny network*)

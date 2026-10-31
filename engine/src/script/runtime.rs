@@ -18,6 +18,10 @@ pub fn host_command(path: &std::path::Path) -> Command {
     let mut command = Command::new(path);
     command.env_clear();
     command.env("BUN_DEBUG_QUIET_LOGS", "1");
+    // The pinned Windows JSC collector can deadlock when parallel markers stop
+    // the mutator. Each mod already has its own process; keep marking serial.
+    #[cfg(target_os = "windows")]
+    command.env("BUN_JSC_numberOfGCMarkers", "1");
     for name in ["SystemRoot", "WINDIR", "TEMP", "TMP"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
