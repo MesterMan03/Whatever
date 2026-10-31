@@ -6,7 +6,11 @@ on:
       - ".gitmodules"
       - "vendor/**"
       - "runtime/**"
-      - "src/**"
+      - "engine/**"
+      - "player/**"
+      - "editor/**"
+      - "launcher/**"
+      - "wmod/**"
       - "mods/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -20,7 +24,11 @@ on:
       - ".gitmodules"
       - "vendor/**"
       - "runtime/**"
-      - "src/**"
+      - "engine/**"
+      - "player/**"
+      - "editor/**"
+      - "launcher/**"
+      - "wmod/**"
       - "mods/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -49,11 +57,12 @@ jobs:
       - name: Build engine and test headless runtime
         shell: bash
         run: |
-          cargo build --locked
+          cargo build --workspace --locked
           cargo test --workspace --locked
           bun run test:network
           bun run test:runtime
           bun run test:server
           bun run test:mods
-          cargo test --locked client_ticks_without_redraws -- --ignored
-          cargo test --locked network_messenger -- --ignored
+          bun run test:project
+          cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
+          cargo test -p whatever-engine --locked network_messenger -- --ignored

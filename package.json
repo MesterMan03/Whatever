@@ -15,6 +15,7 @@
     "test:network": "bun test tools/tests/network.test.ts && bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.network.json",
     "test:runtime": "bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.runtime.json",
     "test:server": "bun test tools/tests/server.test.ts --timeout 30000",
+    "test:project": "bun test tools/tests/project.test.ts --timeout 60000",
     "test:host": "bun test tools/tests/mod-host.test.ts --timeout 30000"
   },
   "dependencies": {

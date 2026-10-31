@@ -1,0 +1,10 @@
+[package]
+name = "Whatever"
+version = "0.6.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+whatever_engine = { package = "whatever-engine", path = "../engine" }
+anyhow = "1"
+winit = "0.30"

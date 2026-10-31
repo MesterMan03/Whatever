@@ -22,7 +22,7 @@ async function runServer(source:string, options:{mode?:string;defaultMode?:strin
     put("mods/server_only/mod.toml",'[mod]\nid="server_only"\nname="Server"\nversion="1.0.0"\nsides=["server"]\n[script]\nentry="server.ts"\n');
     put("mods/server_only/server.ts", options.serverSource ?? 'import { Engine } from "@whatever-engine/api"; Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));');
     const args=[binary,"--mods",join(directory,"mods"),...(options.mode?["--mode",options.mode]:[])];
-    child=Bun.spawn(args,{cwd:directory,env:{...process.env,RUST_LOG:"Whatever=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:"",ALSA_CONFIG_PATH:join(directory,"no-audio.conf")},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:15_000});
+    child=Bun.spawn(args,{cwd:directory,env:{...process.env,RUST_LOG:"whatever_engine=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:"",ALSA_CONFIG_PATH:join(directory,"no-audio.conf")},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:15_000});
     const active=child;
     let stdout="";
     let stopped=false;
@@ -57,6 +57,37 @@ const normal='import { Engine, Scene, Mods } from "@whatever-engine/api";'+
   'ready=true;Engine.setTickRate(-1);Engine.log("info","INIT_COMPLETE");});'+
   'Engine.on("tick",({tick_number,keys_pressed,mouse_delta})=>{if(keys_pressed.length||mouse_delta.some(x=>x!==0))throw new Error("server has input");'+
   'if(ready&&tick_number>=5)Engine.log("info","FIXTURE_DONE");});';
+
+test("scene files instantiate independent hierarchies and reject invalid loads atomically", async () => {
+  const source = `
+import { Engine, Scene } from "@whatever-engine/api";
+Engine.on("init", async () => {
+  try {
+    const first = await Scene.loadScene("core://graph");
+    const second = await Scene.loadScene("core://scenes/graph.wscene");
+    if (first.entityCount !== 2 || second.entities().length !== 2 || first.loadTime < 0) throw Error("scene metadata");
+    if (first.get("root").id === second.get("root").id) throw Error("instances reused IDs");
+    const child = second.get("child");
+    if ((await child.getParent().get())?.id !== second.get("root").id) throw Error("parent");
+    const link = await child.getComponent("fixture:link").get();
+    if (link.target.id !== second.get("root").id || link.text !== "root") throw Error("reference remapping");
+    for (const path of ["core://invalid", "core://missing", "core://../outside"]) {
+      let rejected = false;
+      try { await Scene.loadScene(path); } catch { rejected = true; }
+      if (!rejected) throw Error("invalid load succeeded: " + path);
+    }
+    if ((await Scene.listEntities().get()).length !== 4) throw Error("partial scene leaked entities");
+    Engine.log("info", "FIXTURE_DONE");
+  } catch (error) { Engine.log("error", "SCENE_FAILURE " + error.stack); Engine.log("info", "FIXTURE_DONE"); }
+});`;
+  const result = await runServer(source, { mode: "server", files: {
+    "scenes/graph.wscene": JSON.stringify({version:1,entities:[{script_id:"root",children:[{script_id:"child",components:{"fixture:link":{target:{$entity:"root"},text:"root"}}}]}]}),
+    "scenes/invalid.wscene": JSON.stringify({version:1,entities:[{}, {components:{"fixture:link":{$entity:"missing"}}}]}),
+  }});
+  expect(result.code).toBe(0);
+  expect(result.stdout).toContain("FIXTURE_DONE");
+  expect(result.stdout).not.toContain("SCENE_FAILURE");
+});
 
 test("implicit tick buffers execute pending entity chains and capture intermediate query results", async () => {
   const source = `
@@ -244,8 +275,9 @@ import {createDemoScene,destroyDemoScene,spawnCubes} from "./physics-scene.ts";
 let scene,ready=false,started=0,done=false;
 function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error.stack);else Engine.log("info","PHYSICS_SCENE_OK");Engine.log("info","FIXTURE_DONE");}
 Engine.on("init",async()=>{try{
- scene=createDemoScene(1234);await scene.player.get();
- const cubes=await Scene.query(["physics_demo:cube"]).get();if(cubes.length!==24)throw new Error("initial cubes");
+ scene=await createDemoScene(undefined,"core://playground");
+ const cubes=await Scene.query(["physics_demo:cube","core:transform"]).get();if(cubes.length!==24)throw new Error("initial cubes");
+ if(!cubes.some(row=>Math.abs(row.components["core:transform"].position[0]-20)<0.001))throw new Error("authored cube placement was overwritten");
  const colliders=await Scene.query(["core:collider"]).get();if(colliders.length!==30)throw new Error("compound frame colliders");
  spawnCubes(scene,3);
  const more=await Scene.query(["physics_demo:cube"]).get();if(more.length!==27)throw new Error("additional cubes");
@@ -263,7 +295,9 @@ Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)start
  finish();
 }catch(error){finish(error);}});`;
   const sceneSource=readFileSync(join(repository,"mods/physics_demo/scripts/scene.ts"),"utf8");
-  const result=await runServer(source,{mode:"server",files:{"physics-scene.ts":sceneSource}});
+  const authored=JSON.parse(readFileSync(join(repository,"mods/physics_demo/scenes/playground.wscene"),"utf8"));
+  authored.entities.find((entity:{script_id?:string})=>entity.script_id==="cube_0").components["core:transform"].position[0]=20;
+  const result=await runServer(source,{mode:"server",files:{"physics-scene.ts":sceneSource,"scenes/playground.wscene":JSON.stringify(authored)}});
   expect(result.stdout).toContain("PHYSICS_SCENE_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
 });
 

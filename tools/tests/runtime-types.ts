@@ -1,5 +1,14 @@
 import { BuiltInComponents, Engine, Entity, EntityRef, PendingEntity, Physics, Scene, type Pending } from "@whatever-engine/api";
 
+const loadedScene: Promise<import("@whatever-engine/api").LoadedScene> = Scene.loadScene("fixture://main");
+void loadedScene.then(scene => {
+  const entity: Entity = scene.get("camera");
+  const entities: Entity[] = scene.entities();
+  const count: number = scene.entityCount;
+  const time: number = scene.loadTime;
+  void [entity, entities, count, time];
+});
+
 const parent = Scene.createEntity();
 const child = Scene.createEntity()
   .setComponent(new BuiltInComponents.Transform())

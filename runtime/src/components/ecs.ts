@@ -6,6 +6,7 @@ import {
   _entityCallbacks, _entityListCallbacks,
   _componentGetCallbacks, _componentQueryCallbacks,
   _entityParentCallbacks, _entityChildrenCallbacks,
+  _sceneCallbacks, type LoadedSceneData,
 } from "../shared.ts";
 
 export namespace BuiltInComponents {
@@ -547,7 +548,37 @@ export class PendingEntity extends Entity {
 }
 
 /** Entity and component management. */
+export class LoadedScene {
+  readonly loadTime: number;
+  readonly entityCount: number;
+  private readonly byName: Map<string, Entity>;
+  private readonly all: Entity[];
+  constructor(data: LoadedSceneData) {
+    this.loadTime = data.load_time;
+    this.all = data.entity_ids.map(id => new Entity(id));
+    this.entityCount = this.all.length;
+    this.byName = new Map(Object.entries(data.script_ids).map(([name, id]) => [name, new Entity(id)]));
+  }
+  /** Look up a scene-local script ID. Throws if it was not authored in this scene. */
+  get(scriptId: string): Entity {
+    const entity = this.byName.get(scriptId);
+    if (!entity) throw new Error(`Unknown scene script ID '${scriptId}'`);
+    return entity;
+  }
+  entities(): Entity[] { return [...this.all]; }
+}
+
 export const Scene = {
+  /** Instantiate an ordinary mod scene in the next command batch. */
+  loadScene(path: string): Promise<LoadedScene> {
+    const result = new Promise<LoadedScene>((resolve, reject) => {
+      const request_id = nextReqId();
+      _sceneCallbacks.set(request_id, {resolve: data => resolve(new LoadedScene(data)), reject});
+      _send({type: "SceneLoad", request_id, path});
+    });
+    void result.catch(() => {});
+    return result;
+  },
   /** Embed an entity or opaque entity ID in any component field. */
   ref(target: EntityReference | string): EntityRef { return new EntityRef(target); },
   /** Create a new entity and return it. */

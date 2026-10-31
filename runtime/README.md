@@ -81,6 +81,7 @@ A live entity in the scene. Returned by `Scene.createEntity`, `Scene.listEntitie
 Entity and component management. Methods that accept a raw `entity_id` string are provided for cases where only an ID is available; prefer `Entity` methods when possible.
 
 - `Scene.createEntity()` → `PendingEntity`
+- `Scene.loadScene(path)` → `Promise<LoadedScene>`
 - `Scene.ref(entityOrId)` → `EntityRef`
 - `Scene.destroyEntity(entity_id)` — fire-and-forget
 - `Scene.listEntities()` → `Pending<Entity[]>`
@@ -100,6 +101,13 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.getChildren(entity_id)` → `Pending<string[]>`
 
 Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` for built-in types returns a **live class instance** with methods — not a plain object.
+
+### `LoadedScene`
+
+- `scene.get(scriptId)` → `Entity`
+- `scene.entities()` → `Entity[]`
+- `scene.entityCount` → `number`
+- `scene.loadTime` → `number` (milliseconds)
 
 ### `BuiltInComponents.Transform`
 

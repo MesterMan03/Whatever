@@ -7,6 +7,7 @@ import {
   _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
   _entityParentCallbacks, _entityChildrenCallbacks,
   _mainCameraCallbacks,
+  _sceneCallbacks,
   _EVENT_SUBSCRIBE, _send, _flush,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
@@ -20,6 +21,7 @@ const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
+  | {type:"SceneLoaded";request_id:string;scene:import("./shared.ts").LoadedSceneData|null;error:string|null}
   | {type:"MainCameraResponse";request_id:string;entity_id:string|null}
   | { type:"PhysicsResponse"; request_id:string; result:unknown; error:string|null }
   | { type:"PhysicsEvent"; event:unknown }
@@ -57,6 +59,15 @@ let initialized = false;
 let failed = false;
 
 function _dispatch(msg: _EngineMsg): void {
+  if (msg.type === "SceneLoaded") {
+    const callback = _sceneCallbacks.get(msg.request_id);
+    if (callback) {
+      _sceneCallbacks.delete(msg.request_id);
+      if (msg.error || !msg.scene) callback.reject(new Error(msg.error ?? "Scene load failed"));
+      else callback.resolve(msg.scene);
+    }
+    return;
+  }
   if (msg.type==="MainCameraResponse") {const callback=_mainCameraCallbacks.get(msg.request_id);if(callback){_mainCameraCallbacks.delete(msg.request_id);callback.resolve(msg.entity_id);}return;}
   if (msg.type==="PhysicsResponse") {_handlePhysicsResponse(msg);return;}
   if (msg.type==="PhysicsEvent") {

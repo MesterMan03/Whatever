@@ -35,7 +35,7 @@ The bootstrap captures native stdin/stdout pipe handles for its private IPC tran
 3. The host runs with a cleared environment, retaining only Windows system-directory and temporary-directory variables when present, plus a fixed `BUN_DEBUG_QUIET_LOGS=1` to keep native debug diagnostics off IPC stdout. It receives no inherited PATH, Bun/Node options or application secrets.
 4. Compiled hosts disable automatic dotenv, bunfig, package.json and tsconfig loading. Runtime package installation, macros and native addons are disabled.
 5. The bootstrap registers the embedded API, installs its console, activates the native policy, and loads the mod.
-6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 5 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
+6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 6 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
 
 A missing or incompatible host is an engine startup error. A host built with stock Bun refuses to load any mod.
 

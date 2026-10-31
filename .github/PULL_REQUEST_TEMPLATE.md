@@ -17,7 +17,7 @@
 ## Checklist
 
 - [ ] `cargo fmt` passes
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo test` passes
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
+- [ ] `cargo test --workspace` passes
 - [ ] No `unwrap()` / `expect()` in engine code
 - [ ] No game logic added to engine code

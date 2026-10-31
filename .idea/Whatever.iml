@@ -4,6 +4,10 @@
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/wmod/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/editor/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/engine/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/launcher/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/player/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

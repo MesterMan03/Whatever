@@ -1,0 +1,12 @@
+version = 1
+name = "Whatever"
+mods = [
+    "mods/core",
+    "mods/debug",
+    "mods/network_example",
+    "mods/physics_demo",
+]
+
+[build]
+company = ""
+version = "0.1.0"

@@ -311,3 +311,5 @@ commands execute on a later tick. Collider identities remain generational on rem
 The client-only `physics_demo` mod registers `physicsdemo start [seed]`, `cubes [count]`,
 and `stop`. See [its controls and scene](../mods/physics_demo/README.md). It demonstrates
 dynamic bodies, a compound frame, a joint entity, a per-scene world and camera parenting.
+Its authored `scenes/playground.wscene` holds the initial entities and references;
+the mod loads that scene, applies seeded variation and handles player behavior.

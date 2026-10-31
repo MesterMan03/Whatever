@@ -19,6 +19,8 @@ export const _entityParentCallbacks = new Map<string, { resolve: (v: string | nu
 export const _entityChildrenCallbacks = new Map<string, { resolve: (v: string[]) => void; reject: (e: Error) => void }>();
 
 const _counter = { n: 0 };
+export interface LoadedSceneData { entity_ids: string[]; script_ids: Record<string, string>; load_time: number }
+export const _sceneCallbacks = new Map<string, {resolve:(scene:LoadedSceneData)=>void;reject:(error:Error)=>void}>();
 /** Returns the next unique request ID string. */
 export function nextReqId(): string {
   return String(++_counter.n);

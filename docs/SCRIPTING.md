@@ -393,6 +393,92 @@ Most callers should work with `Entity` objects returned by `Scene.createEntity`,
 `Scene.listEntities`, `Scene.spawnSprite`, and `Scene.query` rather than calling
 `Scene.setComponent` / `Scene.getComponent` with raw IDs.
 
+### `Scene.loadScene(path)` → `Promise<LoadedScene>`
+
+Instantiate a versioned JSON `.wscene` from a loaded mod. `my_mod://level` and
+`my_mod://scenes/level.wscene` both load `my_mod/scenes/level.wscene`. Nested
+paths such as `my_mod://levels/intro` are supported. Scene files are ordinary
+mod resources, available in both client and server modes.
+
+```json
+{
+  "version": 1,
+  "entities": [
+    {
+      "name": "Root",
+      "script_id": "root",
+      "components": {
+        "core:transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0, 1],
+          "scale": [1, 1, 1]
+        }
+      },
+      "children": [
+        {
+          "name": "Child",
+          "script_id": "child",
+          "components": {
+            "my_mod:target": {"entity": {"$entity": "root"}}
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+`children` encodes parentage; transforms are local to the parent. `name` is an
+optional editor label. `script_id` is an optional, nonempty name unique within
+the file. There are no predefined runtime entity IDs. Components use their
+ordinary JSON data and may belong to any mod. Explicit `{"$entity":"name"}`
+references are resolved against this scene's script IDs, including forward
+references. Ordinary strings are preserved. Native derived state such as
+`core:rigid_body_state` cannot be authored.
+
+Authored physics components use the same native validation and defaults as script
+commands. A scene rigid body must explicitly reference a scene entity with
+`core:physics_world`, for example `"world":{"$entity":"world"}`. Standalone
+colliders (`"body":null`) must also name that world. An omitted collider body
+attaches to its own entity; explicit body references support compound colliders.
+Scene loading never creates a hidden default world outside the scene instance.
+
+```ts
+const scene = await Scene.loadScene("my_mod://level");
+const root: Entity = scene.get("root");
+const all: Entity[] = scene.entities();
+Engine.log("info", `${scene.entityCount} entities loaded in ${scene.loadTime} ms`);
+```
+
+`LoadedScene` is exported from `@whatever-engine/api`. `get(scriptId)` throws
+if the name does not exist in this instance. `entities()` returns a new array
+of entity wrappers in parent-first file order; `entityCount` is its original
+size and `loadTime` measures native reading, parsing and instantiation in
+milliseconds. These describe the instance at load time; destroying an entity
+later does not remove it from this metadata.
+
+The load command executes inside the calling mod's next command batch, in
+recorded order. Its Promise resolves with the normal command results, after
+native simulation. Each call creates an independent instance with fresh
+generational IDs. Duplicate names, unresolved references, invalid built-in
+components, unknown document fields/versions, excessive hierarchy depth or
+missing files reject the Promise. Failed instances are fully rolled back;
+existing entities remain alive. The native hierarchy limit is 64 levels and
+the entity limit is 100,000, in addition to the JSON parser's nesting limits.
+
+Loading does not replace the world or select a main camera. Scripts control
+those actions, for example `Engine.setMainCamera(scene.get("camera").id)`.
+Render resources are invalidated for the new hierarchy and authored physics
+components join the normal native simulation phase. See [editor and project
+workflows](EDITOR.md).
+
+The VFS preserves existing asset paths such as `core://shaders/sprite.wgsl`.
+It also mounts a mod's `scenes/` folder at `mod_id://scenes/`. Additional
+contained folders can be declared with `[mounts]` in `mod.toml`, for example
+`data = "data"`; this exposes `mod_id://data/...`. `scenes = "levels"` changes
+the physical scene folder while retaining the virtual `scenes/` prefix.
+Mounts share VFS override resolution and cannot escape the mod root.
+
 ### `Scene.createEntity()` → `PendingEntity`
 
 Create a new entity and return it.
@@ -1258,9 +1344,9 @@ The native engine stores server identities and trust records under the OS local-
 This section documents the raw wire format. Normal mod code should use the API
 namespaces above rather than speaking the protocol directly.
 
-Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 5. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
+Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 6. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
 
-**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 5 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
+**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 6 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
 Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine-to-mod pipe writes run on a dedicated bounded writer thread (256 queued messages, 64 MiB including the in-flight write). A full/broken writer terminates the affected mod rather than blocking the simulation or silently losing RPCs.
 
 ### Engine → Script
@@ -1281,6 +1367,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `ModMessageReceived` | `source_mod_id`, `request_id`, `payload` |
 | `ModMessageReplyDelivered` | `request_id`, `payload` |
 | `EntityCreated` | `request_id`, `entity_id` |
+| `SceneLoaded` | `request_id`, `scene` (`entity_ids`, `script_ids`, `load_time`) or null, `error` |
 | `EntityListResponse` | `request_id`, `entity_ids` |
 | `EntityParentResponse` | `request_id`, `entity_id`, `parent_id` (string or null) |
 | `EntityChildrenResponse` | `request_id`, `entity_id`, `child_ids` |
@@ -1314,6 +1401,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `ModMessageSend` | `target_mod_id`, `request_id`, `payload` |
 | `ModMessageReply` | `request_id`, `payload` |
 | `EntityCreate` | `request_id` |
+| `SceneLoad` | `request_id`, `path` (VFS scene path) |
 | `EntityDestroy` | `entity_id` |
 | `EntityMove` | `entity_id`, `position` (preserves rotation/scale in native code) |
 | `EntityListRequest` | `request_id` |

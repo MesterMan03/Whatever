@@ -21,7 +21,7 @@ function updateCamera(): void {
     }).setEulerRadians(pitch, 0, 0),
   );
 }
-async function start(seed: number): Promise<string> {
+async function start(seed?: number): Promise<string> {
   if (scene || starting) return "Physics playground is already active. Use physicsdemo stop first.";
   const token = ++generation;
   starting = true;
@@ -32,13 +32,18 @@ async function start(seed: number): Promise<string> {
     yaw = 0;
     pitch = -0.3;
     resetHeld = false;
-    scene = createDemoScene(seed);
+    const loaded = await createDemoScene(seed);
+    if (token !== generation) {
+      destroyDemoScene(loaded);
+      return "Physics playground start cancelled.";
+    }
+    scene = loaded;
     updateCamera();
-    // Pending camera references resolve inside this same command batch.
+    // Scene-local IDs resolve to ordinary live entities.
     Engine.setMainCamera(scene.camera);
-    await scene.player.get();
+
     if (token !== generation) return "Physics playground start cancelled.";
-    return `Physics playground ready (seed ${seed}). WASD walk, Shift sprint, mouse orbit, R respawn. Click the window to capture the mouse; Escape releases it. physicsdemo cubes [count] adds cubes; physicsdemo stop restores the previous camera.`;
+    return `Physics playground ready (${seed === undefined ? "authored layout" : `seed ${seed}`}). WASD walk, Shift sprint, mouse orbit, R respawn. Click the window to capture the mouse; Escape releases it. physicsdemo cubes [count] adds cubes; physicsdemo stop restores the previous camera.`;
   } finally {
     if (token === generation) starting = false;
   }
@@ -63,8 +68,7 @@ Console.register({
       name: "start",
       description: "Spawn the floor, bean, orbit camera, cubes and hinged gate",
       args: [{ name: "seed", type: "int" }],
-      handler: ({ seed }) =>
-        start(typeof seed === "number" ? seed : Math.floor(Math.random() * 4294967296)),
+      handler: ({ seed }) => start(typeof seed === "number" ? seed : undefined),
     },
     {
       name: "stop",

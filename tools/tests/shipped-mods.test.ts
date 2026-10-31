@@ -7,7 +7,7 @@ const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 test("shipped server suite registers the shared protocol and runs consolidated diagnostics",async()=>{
   const directory=mkdtempSync(join(tmpdir(),"whatever-shipped-"));
   const child=Bun.spawn([join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":"")),"--mods",join(repository,"mods"),"--mode","server"],{
-    cwd:directory,env:{...process.env,RUST_LOG:"Whatever=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:""},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:20_000,
+    cwd:directory,env:{...process.env,RUST_LOG:"whatever_engine=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:""},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:20_000,
   });
   let stdout="",stage=0;
   const read=(async()=>{for await(const bytes of child.stdout){

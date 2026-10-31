@@ -47,69 +47,88 @@ cargo run -- --debug=ipc,modloader
 cargo run -- --mods /path/to/my/mods
 
 # Run tests
-cargo test
+cargo test --workspace
 ```
 
 ## Project Layout
 
-```
-.gitattributes          LF rules for native fork patches and mod source files
-.editorconfig           Two-space editor defaults for mod sources
-AGENTS.md               Project architecture and contributor instructions
+```text
+Cargo.toml              Workspace; plain cargo run/build selects the player
+AGENTS.md               Architecture and contributor instructions
+.gitattributes          LF rules for native patches and mod sources
+.editorconfig           Editor defaults for mod sources
 biome.json              Shared mod-source formatter configuration
-mods/                   Engine-shipped mods (tracked in git)
-  core/                 Game metadata and shared shaders/fonts; no test scripts
-  debug/                First-party debug suite: dev commands, camera, rendering and sandbox probes
-  network_example/      Shared protocol and a multi-client QUIC messenger demo
-  physics_demo/         Opt-in Rapier playground: bean player, third-person camera, cubes and gate
+engine/                 Shared whatever-engine Rust library (own Cargo.toml)
+  src/
+    lib.rs              Shared engine services and tooling
+    engine.rs           Client window, graphics, input and world snapshots
+    runtime/            Simulation worker, tick clock, modes and headless runner
+    scene/              Versioned scene documents and atomic instantiation
+    project/            Mod collections, scaffolding and managed game builds
+      build.rs          Installed support discovery and automatic source builds
+      branding.rs       Game icons and Windows launcher resources
+      paths.rs          Portable paths and native presentation
+    renderer/           wgpu, cameras, meshes, sprites, text and shared world rendering
+      render.rs         Renderer, pipelines and render passes
+      world.rs          Shared ECS-to-render updates for player and editor
+    ecs/                Generational entities, components, hierarchy and references
+    physics/            Native Rapier configuration, state and lifecycle
+    network/            QUIC, schemas/codecs, TLS and per-client data
+    script/             Bundled native host discovery, NDJSON IPC and dispatch
+    sandbox/            Native-host OS restrictions and broker containment
+      policy.rs         Platform sandbox dispatch and shared configuration
+    mods/               Manifests, discovery, deterministic ordering and registry
+    vfs/                Layered asset and folder mounts
+      types.rs          VFS trait, paths, errors and handle type
+    console/            Developer console, parser, completion and command registry
+    audio/              Audio playback and handle management
+    debug.rs            Debug switches and category logging
+    logging.rs          Log files, rotation and tracing setup
+    input.rs            Keyboard/mouse accumulator
+    watchdog.rs         Slow-tick diagnostics
+player/                 Whatever executable; depends on shared engine crate
+  src/main.rs           CLI, game loading, client/server entry point
+editor/                 Separate native editor application (own Cargo.toml)
+  src/app.rs            Window, renderer, input and background build jobs
+  src/actions.rs        Project/scene commands and native file dialogs
+  src/menus.rs          Native menus and keyboard shortcuts
+  src/ui.rs             Workspace panels, browser, viewport and project settings
+  src/inspector.rs      Typed core components and custom component editing
+  src/hierarchy.rs      Tree, drag reordering and reparenting
+  src/document.rs       Scene editing, undo/redo and safe saves
+launcher/               Small branded game launcher; no engine dependencies
+wmod/                   CLI companion using the same shared project tooling
+mods/                   Engine-shipped ordinary mods
+  core/                 Metadata, shaders and fonts; no test scripts
+  debug/                Diagnostics and an editable scenes/editor.wscene example
+  network_example/      Protocol and multi-client QUIC messenger demo
+  physics_demo/         Opt-in Rapier playground
+    scenes/             Authored playground, physics setup and initial cubes
+games/                  Ordinary game mod collections
 mods_user/              User-installed mods (gitignored)
+runtime/                @whatever-engine/api TypeScript package
+  host/                 Trusted bootstrap bundled with the API into the native host
+  src/                  Public namespaces, IPC, pending results and typed references
+  dist/                 Built API bundle, declarations and native mod host (gitignored)
 vendor/
-  bun/                  Pinned Whatever-mod-runtime fork of Bun
-  patches/              Reproducible native runtime fork patch
-tools/                  Fork preparation, host builds, asset generation and integration tests
-  generate-physics-demo.ts  Reproduce the playground's OBJ meshes and lit shaders
-runtime/                @whatever-engine/api — TypeScript scripting API package
-  host/                 Trusted bootstrap compiled with the API into whatever-mod-host
-  src/                  Source (components/ public namespaces, network/ schema and registration helpers)
-    pending.ts          Pending operation result handles
-    references.ts       Typed references embedded in ECS component data
-    physics-options.ts  Typed native Rapier configuration and physics result schemas
-    components/physics.ts  Components-first physics API and native operation handles
-  dist/
-    index.js            Compiled API bundle (built from src/ via bun build:runtime)
-    index.d.ts          Type declarations for the API
-src/
-  main.rs               CLI args, Engine::new(), engine.run()
-  engine.rs             Client window, rendering, input and presentation snapshots
-  runtime/              Mode selection, shared simulation worker, tick clock and server runner
-  debug.rs              DebugConfig (CLI parsing) + DebugLogger (debug-category writes)
-  logging.rs            Log file init, rotation, tracing subscriber setup
-  input.rs              Keyboard/mouse accumulator
-  console/              Developer console (egui UI, command registry, tab completion)
-    commands/           Built-in engine commands (version, logging, mods, vfs)
-    completer.rs        Tab-completion logic
-    parser.rs           Command tokenizer and argument parser
-    registry.rs         CommandRegistry + script-to-node conversion
-    types.rs            Shared types (CommandNode, ArgSpec, …)
-    widget.rs           DevConsole render + execute
-  script/               Bundled runtime discovery + subprocess host + NDJSON IPC
-    render_updates.rs   Render invalidation for moved/reparented/destroyed ECS hierarchies
-  network/              Native schemas/codecs, QUIC service, TLS trust and per-client data
-  sandbox/              Native-host OS restrictions and broker path containment
-  audio/                Audio playback and handle management
-  watchdog.rs           Slow-tick diagnostics
-  renderer/             wgpu context, camera, sprites
-  vfs/                  Layered virtual filesystem
-  mods/                 Mod manifest, discovery, toposort, registry
-  ecs/                  Entity-component system
-    references.rs       Resolve nested, generational ECS references
-  physics/              Native Rapier worlds, bodies, colliders, joints and state synchronization
+  bun/                  Pinned Whatever Bun fork
+  patches/              Reproducible native fork patch
+tools/                  Fork/host builds, generated assets and integration tests
 docs/
-  SCRIPTING.md          Full scripting API reference
-  PHYSICS.md            Components-first physics, native options and lifecycle semantics
-  SHADER.md             Custom shader contract, mesh formats, and patterns
-  SANDBOX.md            Security sandbox design and implementation details
+  EDITOR.md             Projects, native editor, CLI and branded deployment layout
+  SCRIPTING.md          Public API, scene format and IPC reference
+  PHYSICS.md            Native physics configuration and lifecycle
+  SHADER.md             Shader contract, mesh formats and patterns
+  SANDBOX.md            Native mod-host restrictions
 ```
+
+## Editor and game builds
+
+Run `cargo build --workspace`, then `cargo run -p whatever-editor -- .` to open the current mod collection. A project is a `whatever.wproject` manifest selecting ordinary mod directories. Scenes are versioned JSON `.wscene` files in each mod's `scenes/` folder; scripts instantiate them with `await Scene.loadScene("my_mod://main")`.
+
+`wmod` is the CLI companion: it creates projects and mods, validates collections and packages games through the same shared code as the editor. Deployed games contain a branded launcher, a separate engine executable, a separate `runtime.exe` mod host and ordinary mod sources. See [the editor and deployment guide](docs/EDITOR.md) for commands and the folder contract.
+
+Choose **Build Game** and an output folder in the editor, or run `wmod package <project> --output <folder>`. The tools supply the player, pinned mod runtime and branded launcher automatically. Project settings control the game name, icon, company and version. Installed editor releases include their support binaries; a source checkout builds them when needed.
 
 ## Mod formatting
 
@@ -149,7 +168,7 @@ Mods are loaded in topological dependency order. `core` always loads first.
 
 Set `default_mode = "client"` or `"server"` in the `[game]` section of core's `meta.toml`. The CLI `--mode client|server` overrides it; old metadata defaults to client mode.
 
-The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Its fixed phase order is input/external events → mod ticks and buffer submission → command execution in dependency/load order → native simulation (reserved for future physics) → snapshots and results. Each mod submits one batch, including mods without public tick listeners. Commands preserve call order within their mod; independent mods use alphabetical ID tie-breaking. Async handlers may span ticks without blocking submission or overlapping their own invocations. See [tick semantics](docs/SCRIPTING.md#tick-order-and-command-batches).
+The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Its fixed phase order is input/external events → mod ticks and buffer submission → command execution in dependency/load order → native physics simulation → snapshots and results. Each mod submits one batch, including mods without public tick listeners. Commands preserve call order within their mod; independent mods use alphabetical ID tie-breaking. Async handlers may span ticks without blocking submission or overlapping their own invocations. See [tick semantics](docs/SCRIPTING.md#tick-order-and-command-batches).
 
 Rendering runs on the window thread and consumes the latest world snapshot. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
 
@@ -168,7 +187,7 @@ server = "scripts/server.ts" # optional override
 
 Only one entry executes per mod. A mod with no matching entry still contributes its assets and metadata. `Engine.mode` is available before top-level mod evaluation. Window, audio and presentation settings reject server use; ECS, files and inter-mod messages remain available. The shipped core script and visual demo mods run on the client.
 
-Run `bun run test:server` after building the engine and host to check headless startup and shutdown. The additional `cargo test client_ticks_without_redraws -- --ignored` integration case requires the bundled host and verifies client ticks with a 1 FPS cap and no renderer consuming snapshots.
+Run `bun run test:server` after building the engine and host to check headless startup and shutdown. The additional `cargo test --workspace client_ticks_without_redraws -- --ignored` integration case requires the bundled host and verifies client ticks with a 1 FPS cap and no renderer consuming snapshots.
 
 ### Physics
 
@@ -223,9 +242,9 @@ The shipped `core` contains metadata, shared shaders and the default font. Diagn
 
 TLS keys and saved trust live in the engine-owned local-data directory `WhateverNetwork/<game_id>`, outside mod file access. Servers generate a persistent development identity automatically, or operators can supply `--tls-cert <chain.pem> --tls-key <key.pem>`. Clients use the OS trust roots, optionally extended with `--tls-ca <authority.pem>`. `--network-data <directory>` selects an isolated identity/trust directory, useful for tests and separate server instances. Players provide only a server address.
 
-The integration demo can run without windows or audio devices after building the bundled host: `cargo test --locked network_messenger -- --ignored`. Native QUIC/TLS tests also run under WSL with a separate Linux Cargo target directory.
+The integration demo can run without windows or audio devices after building the bundled host: `cargo test --workspace --locked network_messenger -- --ignored`. Native QUIC/TLS tests also run under WSL with a separate Linux Cargo target directory.
 
-`bun run test:network` runs schema/proxy tests and compiler checks against the generated public declarations. Native codec and registration tests run with `cargo test`. `bun run test:server` also exercises native network IPC and stdin mod commands through the bundled host.
+`bun run test:network` runs schema/proxy tests and compiler checks against the generated public declarations. Native codec and registration tests run with `cargo test --workspace`. `bun run test:server` also exercises native network IPC and stdin mod commands through the bundled host.
 
 ## Logging
 
@@ -246,7 +265,7 @@ By default only events from this crate are captured. Set `RUST_LOG` to override:
 
 ```sh
 RUST_LOG=debug cargo run                        # all levels from this crate
-RUST_LOG=wgpu=warn,Whatever=debug cargo run     # also include wgpu warnings
+RUST_LOG=wgpu=warn,whatever_engine=debug cargo run     # also include wgpu warnings
 ```
 
 ## Debug flags

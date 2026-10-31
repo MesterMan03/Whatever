@@ -33,16 +33,13 @@ jobs:
       - uses: ./.github/actions/build-mod-host
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --workspace
 
       - name: Bundle artifacts
         run: |
-          mkdir -p stage/Whatever-linux-x86_64
-          cp target/release/Whatever stage/Whatever-linux-x86_64/
-          cp runtime/dist/whatever-mod-host stage/Whatever-linux-x86_64/
-          cp LICENSE stage/Whatever-linux-x86_64/
-          cp vendor/bun/LICENSE.md stage/Whatever-linux-x86_64/BUN-LICENSE.md
-          cp -r mods stage/Whatever-linux-x86_64/
+          mkdir -p stage
+          target/release/wmod runtime-kit --player target/release/Whatever --host runtime/dist/whatever-mod-host --launcher target/release/whatever-launcher --source . --output stage/Whatever-linux-x86_64
+          cp target/release/whatever-editor target/release/wmod stage/Whatever-linux-x86_64/
           tar -czf Whatever-linux-x86_64.tar.gz -C stage Whatever-linux-x86_64
 
       - uses: actions/upload-artifact@v4
@@ -66,17 +63,14 @@ jobs:
       - uses: ./.github/actions/build-mod-host
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --workspace
 
       - name: Bundle artifacts
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path stage\Whatever-windows-x86_64 -Force
-          Copy-Item target\release\Whatever.exe stage\Whatever-windows-x86_64\
-          Copy-Item runtime\dist\whatever-mod-host.exe stage\Whatever-windows-x86_64\
-          Copy-Item LICENSE stage\Whatever-windows-x86_64\
-          Copy-Item vendor\bun\LICENSE.md stage\Whatever-windows-x86_64\BUN-LICENSE.md
-          Copy-Item -Recurse mods stage\Whatever-windows-x86_64\
+          target\release\wmod.exe runtime-kit --player target\release\Whatever.exe --host runtime\dist\whatever-mod-host.exe --launcher target\release\whatever-launcher.exe --source . --output stage\Whatever-windows-x86_64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item target\release\whatever-editor.exe,target\release\wmod.exe stage\Whatever-windows-x86_64\
           Compress-Archive -Path stage\Whatever-windows-x86_64 -DestinationPath Whatever-windows-x86_64.zip
 
       - uses: actions/upload-artifact@v4
