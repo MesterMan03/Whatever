@@ -26,8 +26,11 @@ if ($env:BUN_TOOLCHAIN_LLVM) {
     foreach ($tool in @('clang-cl.exe', 'lld-link.exe', 'llvm-lib.exe', 'llvm-nm.exe')) {
         $executable = Join-Path $env:BUN_TOOLCHAIN_LLVM "bin/$tool"
         if (!(Test-Path -LiteralPath $executable)) { throw "LLVM toolchain is missing $executable" }
-        & $executable --version
-        if ($LASTEXITCODE -ne 0) { throw "Could not verify $executable" }
+        # llvm-lib uses the MSVC librarian command line and has no --version.
+        if ($tool -ne 'llvm-lib.exe') {
+            & $executable --version
+            if ($LASTEXITCODE -ne 0) { throw "Could not verify $executable" }
+        }
     }
 }
 # Optional workspace-local ATL files can supplement a toolchain without ATL.
