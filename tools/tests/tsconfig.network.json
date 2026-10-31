@@ -16,7 +16,7 @@
   },
   "files": [
     "network-types.ts",
-    "../../mods/network_example/scripts/client.ts",
-    "../../mods/network_example/scripts/server.ts"
+    "../../games/test/mods/network_example/scripts/client.ts",
+    "../../games/test/mods/network_example/scripts/server.ts"
   ]
 }

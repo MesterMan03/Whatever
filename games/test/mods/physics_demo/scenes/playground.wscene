@@ -1,0 +1,706 @@
+{
+  "version": 1,
+  "entities": [
+    {
+      "name": "Physics world",
+      "script_id": "world",
+      "components": {
+        "core:physics_world": {
+          "rapier": {
+            "integration": {
+              "max_ccd_substeps": 4,
+              "num_solver_iterations": 8
+            }
+          },
+          "substeps": 2
+        }
+      }
+    },
+    {
+      "name": "Floor",
+      "script_id": "floor",
+      "components": {
+        "core:collider": {
+          "body": {
+            "$entity": "floor"
+          },
+          "friction": 0.75,
+          "shape": {
+            "size": [
+              60,
+              1,
+              60
+            ],
+            "type": "box"
+          }
+        },
+        "core:mesh_renderer": {
+          "mesh": "physics_demo://meshes/cube.obj",
+          "shader": "physics_demo://shaders/floor.wgsl"
+        },
+        "core:rigid_body": {
+          "type": "fixed",
+          "world": {
+            "$entity": "world"
+          }
+        },
+        "core:transform": {
+          "position": [
+            0,
+            -0.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            60,
+            1,
+            60
+          ]
+        }
+      }
+    },
+    {
+      "name": "Ambient light",
+      "script_id": "ambient",
+      "components": {
+        "core:ambient_light": {
+          "color": [
+            0.8,
+            0.88,
+            1
+          ],
+          "intensity": 0.35
+        }
+      }
+    },
+    {
+      "name": "Sun",
+      "script_id": "sun",
+      "components": {
+        "core:directional_light": {
+          "color": [
+            1,
+            0.96,
+            0.88
+          ],
+          "direction": [
+            0.4,
+            1,
+            0.6
+          ],
+          "intensity": 1.4
+        }
+      }
+    },
+    {
+      "name": "Bean player",
+      "script_id": "player",
+      "components": {
+        "core:collider": {
+          "body": {
+            "$entity": "player"
+          },
+          "friction": 0,
+          "mass": 75,
+          "restitution": 0,
+          "shape": {
+            "height": 2,
+            "radius": 0.42,
+            "type": "capsule"
+          }
+        },
+        "core:rigid_body": {
+          "canSleep": false,
+          "ccd": true,
+          "lockedAxes": [
+            "rotationX",
+            "rotationY",
+            "rotationZ"
+          ],
+          "type": "dynamic",
+          "world": {
+            "$entity": "world"
+          }
+        },
+        "core:transform": {
+          "position": [
+            0,
+            1.1,
+            6
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "physics_demo:player": {}
+      },
+      "children": [
+        {
+          "name": "Bean model",
+          "script_id": "model",
+          "components": {
+            "core:mesh_renderer": {
+              "mesh": "physics_demo://meshes/bean.obj",
+              "shader": "physics_demo://shaders/bean.wgsl"
+            },
+            "core:transform": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          "children": [
+            {
+              "name": "Left eye",
+              "script_id": "left_eye",
+              "components": {
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/sphere.obj",
+                  "shader": "physics_demo://shaders/eye.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    -0.14,
+                    0.4,
+                    -0.41
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    0.09,
+                    0.12,
+                    0.05
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Left pupil",
+              "script_id": "left_pupil",
+              "components": {
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/sphere.obj",
+                  "shader": "physics_demo://shaders/pupil.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    -0.14,
+                    0.4,
+                    -0.46
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    0.04,
+                    0.065,
+                    0.02
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Right eye",
+              "script_id": "right_eye",
+              "components": {
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/sphere.obj",
+                  "shader": "physics_demo://shaders/eye.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    0.14,
+                    0.4,
+                    -0.41
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    0.09,
+                    0.12,
+                    0.05
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Right pupil",
+              "script_id": "right_pupil",
+              "components": {
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/sphere.obj",
+                  "shader": "physics_demo://shaders/pupil.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    0.14,
+                    0.4,
+                    -0.46
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    0.04,
+                    0.065,
+                    0.02
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Camera orbit",
+          "script_id": "orbit",
+          "components": {
+            "core:transform": {
+              "position": [
+                0,
+                0.45,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          "children": [
+            {
+              "name": "Orbit camera",
+              "script_id": "camera",
+              "components": {
+                "core:camera": {
+                  "fovy_degrees": 65,
+                  "zfar": 200,
+                  "znear": 0.05
+                },
+                "core:transform": {
+                  "position": [
+                    0,
+                    2,
+                    6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Gate",
+      "script_id": "gate_group",
+      "components": {
+        "core:transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "children": [
+        {
+          "name": "Gate frame",
+          "script_id": "frame",
+          "components": {
+            "core:rigid_body": {
+              "ccd": false,
+              "type": "fixed",
+              "world": {
+                "$entity": "world"
+              }
+            },
+            "core:transform": {
+              "position": [
+                -7,
+                0,
+                -3
+              ],
+              "rotation": [
+                0,
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          "children": [
+            {
+              "name": "Frame part 1",
+              "script_id": "frame_part_0",
+              "components": {
+                "core:collider": {
+                  "body": {
+                    "$entity": "frame"
+                  },
+                  "position": [
+                    0,
+                    1.5,
+                    0
+                  ],
+                  "shape": {
+                    "size": [
+                      0.2,
+                      3,
+                      0.25
+                    ],
+                    "type": "box"
+                  }
+                },
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/cube.obj",
+                  "shader": "physics_demo://shaders/pupil.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    0,
+                    1.5,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    0.2,
+                    3,
+                    0.25
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Frame part 2",
+              "script_id": "frame_part_1",
+              "components": {
+                "core:collider": {
+                  "body": {
+                    "$entity": "frame"
+                  },
+                  "position": [
+                    2.8,
+                    1.5,
+                    0
+                  ],
+                  "shape": {
+                    "size": [
+                      0.2,
+                      3,
+                      0.25
+                    ],
+                    "type": "box"
+                  }
+                },
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/cube.obj",
+                  "shader": "physics_demo://shaders/pupil.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    2.8,
+                    1.5,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    0.2,
+                    3,
+                    0.25
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Frame part 3",
+              "script_id": "frame_part_2",
+              "components": {
+                "core:collider": {
+                  "body": {
+                    "$entity": "frame"
+                  },
+                  "position": [
+                    1.4,
+                    3,
+                    0
+                  ],
+                  "shape": {
+                    "size": [
+                      3,
+                      0.2,
+                      0.25
+                    ],
+                    "type": "box"
+                  }
+                },
+                "core:mesh_renderer": {
+                  "mesh": "physics_demo://meshes/cube.obj",
+                  "shader": "physics_demo://shaders/pupil.wgsl"
+                },
+                "core:transform": {
+                  "position": [
+                    1.4,
+                    3,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    3,
+                    0.2,
+                    0.25
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Hinged gate",
+          "script_id": "gate",
+          "components": {
+            "core:collider": {
+              "body": {
+                "$entity": "gate"
+              },
+              "mass": 12,
+              "shape": {
+                "size": [
+                  2.5,
+                  2.5,
+                  0.15
+                ],
+                "type": "box"
+              }
+            },
+            "core:joint": {
+              "anchorA": [
+                -1.25,
+                0,
+                0
+              ],
+              "anchorB": [
+                0.15,
+                1.4,
+                0
+              ],
+              "axisA": [
+                0,
+                1,
+                0
+              ],
+              "axisB": [
+                0,
+                1,
+                0
+              ],
+              "connectedBody": {
+                "$entity": "frame"
+              },
+              "limits": {
+                "max": 1.4,
+                "min": -1.4
+              },
+              "type": "revolute"
+            },
+            "core:mesh_renderer": {
+              "mesh": "physics_demo://meshes/cube.obj",
+              "shader": "physics_demo://shaders/cube.wgsl"
+            },
+            "core:rigid_body": {
+              "angularDamping": 0.3,
+              "ccd": true,
+              "type": "dynamic",
+              "world": {
+                "$entity": "world"
+              }
+            },
+            "core:transform": {
+              "position": [
+                -5.599999904632568,
+                1.399999976158142,
+                -3.0
+              ],
+              "rotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "scale": [
+                2.5,
+                2.700000047683716,
+                0.15000000596046448
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cube Spawn Point",
+      "script_id": "cube_spawn",
+      "components": {
+        "core:transform": {
+          "position": [
+            0,
+            6,
+            -2
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "enabled": false,
+      "name": "Base Cube",
+      "script_id": "base_cube",
+      "components": {
+        "core:collider": {
+          "body": {
+            "$entity": "base_cube"
+          },
+          "friction": 0.65,
+          "mass": 6.342899952444714,
+          "restitution": 0.15,
+          "shape": {
+            "borderRadius": 0.025,
+            "size": [
+              1,
+              1,
+              1
+            ],
+            "type": "box"
+          }
+        },
+        "core:mesh_renderer": {
+          "mesh": "physics_demo://meshes/cube.obj",
+          "shader": "physics_demo://shaders/cube.wgsl"
+        },
+        "core:rigid_body": {
+          "ccd": true,
+          "type": "dynamic",
+          "world": {
+            "$entity": "world"
+          }
+        },
+        "core:transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "physics_demo:cube_template": {}
+      }
+    }
+  ]
+}

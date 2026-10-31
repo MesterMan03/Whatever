@@ -31,13 +31,19 @@ interface _MessageNamespace {
    * The receiving mod's handler must return a non-null value within `timeout` ms.
    * Rejects with a timeout error if no reply arrives in time.
    */
-  send<T extends JsonValue, U extends JsonValue>(id: string, message: T, timeout: number): Promise<U>;
+  send<T extends JsonValue, U extends JsonValue>(
+    id: string,
+    message: T,
+    timeout: number,
+  ): Promise<U>;
   /**
    * Register a handler for incoming mod messages.
    * Return a `JsonValue` to reply (only meaningful when the sender used `send`); return `null` to ignore.
    * The `request_id` in the payload is an opaque engine token — do not inspect or store it.
    */
-  registerMessageHandler(handler: (payload: EventPayloads["mod_message"]) => JsonValue | null): void;
+  registerMessageHandler(
+    handler: (payload: EventPayloads["mod_message"]) => JsonValue | null,
+  ): void;
 }
 
 /** Inter-mod communication. */
@@ -45,7 +51,11 @@ export const Message: _MessageNamespace = {
   sendAndForget<T extends JsonValue>(id: string, message: T): void {
     _send({ type: "ModMessageSend", target_mod_id: id, request_id: null, payload: message });
   },
-  send<T extends JsonValue, U extends JsonValue>(id: string, message: T, timeout: number): Promise<U> {
+  send<T extends JsonValue, U extends JsonValue>(
+    id: string,
+    message: T,
+    timeout: number,
+  ): Promise<U> {
     return new Promise<U>((resolve, reject) => {
       const request_id = nextReqId();
       const timer = setTimeout(() => {
@@ -53,13 +63,18 @@ export const Message: _MessageNamespace = {
         reject(new Error(`Message to '${id}' timed out after ${timeout}ms`));
       }, timeout);
       _msgCallbacks.set(request_id, {
-        resolve: (v) => { clearTimeout(timer); resolve(v as U); },
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v as U);
+        },
         reject,
       });
       _send({ type: "ModMessageSend", target_mod_id: id, request_id, payload: message });
     });
   },
-  registerMessageHandler(handler: (payload: EventPayloads["mod_message"]) => JsonValue | null): void {
+  registerMessageHandler(
+    handler: (payload: EventPayloads["mod_message"]) => JsonValue | null,
+  ): void {
     Engine.on("mod_message", (payload) => {
       const result = handler(payload);
       if (payload.request_id !== undefined && result !== null) {

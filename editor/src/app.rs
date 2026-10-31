@@ -23,14 +23,32 @@ use winit::{
 
 #[path = "actions.rs"]
 mod actions;
+#[path = "browser.rs"]
+mod browser;
+#[path = "component_handles.rs"]
+mod component_handles;
+#[path = "entity_picker.rs"]
+mod entity_picker;
 #[path = "hierarchy.rs"]
 mod hierarchy;
 #[path = "inspector.rs"]
 mod inspector;
+#[path = "live.rs"]
+mod live;
 #[path = "menus.rs"]
 mod menus;
+#[path = "mod_editor.rs"]
+mod mod_editor;
+#[path = "player.rs"]
+mod player;
+#[path = "preferences.rs"]
+mod preferences;
+#[path = "presets.rs"]
+mod presets;
 #[path = "ui.rs"]
 mod ui;
+#[path = "viewport.rs"]
+mod viewport;
 use menus::{Action, Menus};
 
 pub fn run() -> anyhow::Result<()> {
@@ -38,11 +56,11 @@ pub fn run() -> anyhow::Result<()> {
     let path = args
         .first()
         .filter(|arg| !arg.starts_with('-'))
-        .map(PathBuf::from)
-        .unwrap_or(engine::runtime::installation_root()?);
-    let project = Project::open(&path);
+        .map(PathBuf::from);
+    let project = path.as_ref().map(|path| Project::open(path));
     if args.iter().any(|arg| arg == "--check" || arg == "--export") {
-        let project = project?;
+        let project =
+            project.unwrap_or_else(|| Project::open(&engine::runtime::installation_root()?))?;
         project.validate()?;
         if let Some(index) = args.iter().position(|arg| arg == "--export") {
             let destination = Path::new(
@@ -61,12 +79,15 @@ pub fn run() -> anyhow::Result<()> {
     {
         use winit::platform::windows::EventLoopBuilderExtWindows;
         let bar = menus.bar.clone();
+        let shortcuts = Arc::clone(&menus.shortcuts);
         builder.with_msg_hook(move |message| {
             use windows::Win32::UI::WindowsAndMessaging::{HACCEL, MSG, TranslateAcceleratorW};
             // Muda's native accelerator table must participate in winit's Win32 message loop.
             unsafe {
                 let message = message as *const MSG;
-                TranslateAcceleratorW((*message).hwnd, HACCEL(bar.haccel() as _), message) != 0
+                shortcuts.load(std::sync::atomic::Ordering::Relaxed)
+                    && TranslateAcceleratorW((*message).hwnd, HACCEL(bar.haccel() as _), message)
+                        != 0
             }
         });
     }
@@ -76,7 +97,7 @@ pub fn run() -> anyhow::Result<()> {
         builder.with_default_menu(false);
     }
     let event_loop = builder.build()?;
-    let mut editor = Editor::new(project, menus);
+    let mut editor = Editor::new(project, Some(menus));
     event_loop.run_app(&mut editor)?;
     if let Some(error) = &editor.fatal {
         anyhow::bail!("{error}");
@@ -88,6 +109,7 @@ struct Resource {
     uri: String,
     path: PathBuf,
     scene: bool,
+    source: bool,
     mod_id: String,
 }
 enum JobEvent {
@@ -96,6 +118,16 @@ enum JobEvent {
     Player(Result<PathBuf, String>),
 }
 struct Editor {
+    live: Option<live::LiveSession>,
+    view: live::View,
+    preferences: preferences::Preferences,
+    show_preferences: bool,
+    mod_draft: Option<mod_editor::ModDraft>,
+    entity_clipboard: Option<String>,
+    rename_requested: bool,
+    hierarchy_focused: bool,
+    component_handle: Option<component_handles::ComponentHandle>,
+    snap: viewport::Snap,
     project: Option<Project>,
     document: Option<Document>,
     vfs: LayeredVfs,
@@ -110,12 +142,14 @@ struct Editor {
     window: Option<Arc<Window>>,
     ctx: egui::Context,
     state: Option<egui_winit::State>,
-    menus: Menus,
+    menus: Option<Menus>,
     status: String,
     logs: Vec<String>,
     job: Option<mpsc::Receiver<JobEvent>>,
     job_label: String,
     player: Option<Child>,
+    player_host: Option<player::EmbeddedWindow>,
+    player_detached: bool,
     build_destination: Option<PathBuf>,
     show_settings: bool,
     show_new_project: bool,
@@ -125,10 +159,15 @@ struct Editor {
     draft_directory: Option<PathBuf>,
     asset_search: String,
     browser_tab: usize,
+    browser_path: String,
     orbit: [f32; 2],
     distance: f32,
     target: Vec3,
     viewport: egui::Rect,
+    tool: viewport::Tool,
+    gizmo_drag: Option<viewport::Drag>,
+    viewport_press: Option<egui::Pos2>,
+    mesh_cache: std::collections::HashMap<String, engine::renderer::CpuMesh>,
     preview_dirty: bool,
     dragging_entity: Option<Vec<usize>>,
     hierarchy_press: Option<egui::Pos2>,
@@ -137,8 +176,18 @@ struct Editor {
 }
 
 impl Editor {
-    fn new(project: anyhow::Result<Project>, menus: Menus) -> Self {
+    fn new(project: Option<anyhow::Result<Project>>, menus: Option<Menus>) -> Self {
         let mut editor = Self {
+            live: None,
+            view: live::View::Scene,
+            preferences: preferences::Preferences::load(),
+            show_preferences: false,
+            mod_draft: None,
+            entity_clipboard: None,
+            rename_requested: false,
+            hierarchy_focused: false,
+            component_handle: None,
+            snap: viewport::Snap::default(),
             project: None,
             document: None,
             vfs: LayeredVfs::new(),
@@ -159,6 +208,8 @@ impl Editor {
             job: None,
             job_label: String::new(),
             player: None,
+            player_host: None,
+            player_detached: false,
             build_destination: None,
             show_settings: false,
             show_new_project: false,
@@ -168,10 +219,15 @@ impl Editor {
             draft_directory: None,
             asset_search: String::new(),
             browser_tab: 0,
+            browser_path: String::new(),
             orbit: [0.5, 0.35],
             distance: 12.0,
             target: Vec3::ZERO,
             viewport: egui::Rect::NOTHING,
+            tool: viewport::Tool::default(),
+            gizmo_drag: None,
+            viewport_press: None,
+            mesh_cache: Default::default(),
             preview_dirty: true,
             dragging_entity: None,
             hierarchy_press: None,
@@ -179,11 +235,12 @@ impl Editor {
             fatal: None,
         };
         match project {
-            Ok(project) => {
+            Some(Ok(project)) => {
                 let result = editor.set_project(project);
                 editor.report(result);
             }
-            Err(error) => editor.status = format!("{error:#}"),
+            Some(Err(error)) => editor.status = format!("{error:#}"),
+            None => editor.status = "Choose a project to get started".into(),
         }
         editor
     }
@@ -191,7 +248,7 @@ impl Editor {
         if let Err(error) = result {
             self.status = format!("{error:#}");
             self.logs.push(self.status.clone());
-            self.browser_tab = 2;
+            self.browser_tab = 3;
         }
     }
     fn poll_jobs(&mut self) {
@@ -236,10 +293,31 @@ impl Editor {
         if let Some(child) = &mut self.player
             && let Some(status) = child.try_wait()?
         {
-            self.player = None;
+            self.stop();
             self.status = format!("Play finished: {status}");
         }
-        for action in self.menus.poll() {
+        #[cfg(any(windows, target_os = "macos"))]
+        if let Some(menus) = &self.menus {
+            menus.shortcuts.store(
+                !self.input_blocked() && !self.ctx.wants_keyboard_input(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        self.poll_live();
+        let live_before = self
+            .live
+            .as_ref()
+            .and_then(|_| self.document.as_ref().map(|d| d.scene.clone()));
+        for action in self
+            .menus
+            .as_ref()
+            .map(|menus| menus.poll())
+            .unwrap_or_default()
+        {
+            if self.has_dialog() {
+                continue;
+            }
+
             let result = self.action(action);
             self.report(result);
         }
@@ -250,6 +328,11 @@ impl Editor {
             .take_egui_input(self.window.as_ref().context("window")?);
         let ctx = self.ctx.clone();
         let output = ctx.run(input, |ctx| self.ui(ctx));
+        if let Some(before) = live_before {
+            let result = self.live_changes(&before);
+            self.report(result);
+        }
+
         self.state
             .as_mut()
             .context("input state")?
@@ -257,7 +340,7 @@ impl Editor {
                 self.window.as_ref().context("window")?,
                 output.platform_output,
             );
-        if self.preview_dirty {
+        if self.preview_dirty && self.live.is_none() {
             let mut world = World::new();
             if let Some(doc) = &self.document
                 && let Err(error) = doc.scene.instantiate(&mut world)
@@ -277,19 +360,75 @@ impl Editor {
             self.world = world;
             self.preview_dirty = false;
         }
-        let position = self.camera_position();
-        let aspect = self.viewport.width() / self.viewport.height().max(1.0);
-        let vp = Mat4::perspective_rh(45_f32.to_radians(), aspect, 0.01, 100000.0)
-            * Mat4::look_at_rh(position, self.target, Vec3::Y);
+        if let (Some(child), Some(window)) = (&self.player, &self.window) {
+            if !self.player_detached && self.player_host.is_none() {
+                match player::EmbeddedWindow::attach(child.id(), window) {
+                    Ok(host) => {
+                        if host.is_some() {
+                            self.status = "Playing in editor viewport".into();
+                        }
+                        self.player_host = host;
+                    }
+                    Err(error) => {
+                        self.status = format!(
+                            "Embedded Play unavailable: {error}. Player remains in its own window."
+                        );
+                        self.player_detached = true;
+                    }
+                }
+            }
+            let host_visible = self.view == live::View::Play
+                && !self.has_dialog()
+                && !self.ctx.memory(|m| m.any_popup_open());
+            if let Some(host) = &mut self.player_host {
+                host.layout(self.viewport, output.pixels_per_point);
+                host.visible(host_visible);
+            }
+        }
+        let game_camera = if self.view == live::View::Play {
+            self.live.as_ref().and_then(|s| s.camera).and_then(|id| {
+                if !self.world.is_active(&id) {
+                    return None;
+                }
+                Some((
+                    self.world.world_transform(&id)?,
+                    self.world.camera_components.get(&id.index)?.clone(),
+                ))
+            })
+        } else {
+            None
+        };
+        let position = game_camera
+            .as_ref()
+            .map(|(pose, _)| Vec3::from(pose.position))
+            .unwrap_or_else(|| self.camera_position());
         let renderer = self.renderer.as_mut().context("renderer")?;
         renderer.update_lighting(&engine::renderer::collect_lights(&self.world));
         let ppp = output.pixels_per_point;
-        let viewport = [
-            (self.viewport.min.x * ppp).max(0.0) as u32,
-            (self.viewport.min.y * ppp).max(0.0) as u32,
-            (self.viewport.width() * ppp).max(1.0) as u32,
-            (self.viewport.height() * ppp).max(1.0) as u32,
-        ];
+        let viewport = viewport::physical_viewport(
+            self.viewport,
+            ppp,
+            [renderer.ctx.config.width, renderer.ctx.config.height],
+        );
+        let vp = viewport.and_then(|[_, _, width, height]| {
+            if self.view == live::View::Play {
+                return game_camera.as_ref().map(|(pose, camera)| {
+                    engine::renderer::view_proj_from_entity(
+                        pose,
+                        camera,
+                        width as f32 / height as f32,
+                    )
+                });
+            }
+            Some(
+                Mat4::perspective_rh(
+                    45_f32.to_radians(),
+                    width as f32 / height as f32,
+                    0.01,
+                    100000.0,
+                ) * Mat4::look_at_rh(position, self.target, Vec3::Y),
+            )
+        });
         let egui = EguiOutput {
             paint_jobs: ctx.tessellate(output.shapes, ppp),
             textures_delta: output.textures_delta,
@@ -298,13 +437,7 @@ impl Editor {
                 pixels_per_point: ppp,
             },
         };
-        renderer.render_viewport(
-            Some(vp),
-            Some(position),
-            Some(&egui),
-            &self.vfs,
-            Some(viewport),
-        )
+        renderer.render_viewport(vp, vp.map(|_| position), Some(&egui), &self.vfs, viewport)
     }
     fn camera_position(&self) -> Vec3 {
         self.target
@@ -334,7 +467,9 @@ impl ApplicationHandler for Editor {
                         .with_min_inner_size(winit::dpi::LogicalSize::new(1080.0, 700.0)),
                 )?,
             );
-            self.menus.attach(&window)?;
+            if let Some(menus) = &self.menus {
+                menus.attach(&window)?;
+            }
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()?;
@@ -362,6 +497,17 @@ impl ApplicationHandler for Editor {
         }
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        #[cfg(windows)]
+        if matches!(
+            event,
+            WindowEvent::MouseInput {
+                state: winit::event::ElementState::Pressed,
+                ..
+            }
+        ) && let Some(window) = &self.window
+        {
+            player::EmbeddedWindow::focus_editor(window);
+        }
         if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
             let _ = state.on_window_event(window, &event);
         }
@@ -403,5 +549,18 @@ impl ApplicationHandler for Editor {
 impl Drop for Editor {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+impl Editor {
+    pub(super) fn has_dialog(&self) -> bool {
+        self.show_settings
+            || self.show_new_project
+            || self.show_new_mod
+            || self.show_preferences
+            || self.mod_draft.is_some()
+    }
+    pub(super) fn input_blocked(&self) -> bool {
+        self.has_dialog() || self.ctx.memory(|m| m.any_popup_open())
     }
 }

@@ -16,6 +16,8 @@ use std::{
 pub struct Project {
     pub version: u32,
     pub name: String,
+    #[serde(default)]
+    pub id: String,
     /// Paths to individual ordinary mod directories, relative to the project file.
     pub mods: Vec<String>,
     #[serde(default)]
@@ -27,6 +29,7 @@ pub struct Project {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BuildSettings {
+    pub exclude_mods: Vec<String>,
     pub icon: Option<String>,
     pub company: String,
     pub version: String,
@@ -34,6 +37,7 @@ pub struct BuildSettings {
 impl Default for BuildSettings {
     fn default() -> Self {
         Self {
+            exclude_mods: Vec::new(),
             icon: None,
             company: String::new(),
             version: "0.1.0".into(),
@@ -55,6 +59,9 @@ impl Project {
             let mut project: Self =
                 toml::from_str(&std::fs::read_to_string(&path)?).context("parse .wproject")?;
             project.path = path;
+            if project.id.is_empty() {
+                project.id = project.game_id();
+            }
             ensure!(
                 project.version == 1,
                 "unsupported project version {}",
@@ -88,6 +95,7 @@ impl Project {
         );
         Ok(Self {
             version: 1,
+            id: String::new(),
             name: root
                 .file_name()
                 .unwrap_or_default()
@@ -120,6 +128,44 @@ impl Project {
             .collect()
     }
 
+    pub fn game_id(&self) -> String {
+        if !self.id.is_empty() {
+            return self.id.clone();
+        }
+        let id: String = self
+            .name
+            .to_ascii_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let id = id.trim_matches('_');
+        if id.is_empty() {
+            "game".into()
+        } else {
+            id.into()
+        }
+    }
+    pub fn for_build(&self) -> anyhow::Result<Self> {
+        let manifests = self.manifests()?;
+        for excluded in &self.build.exclude_mods {
+            ensure!(excluded != "core", "the core mod cannot be excluded");
+            ensure!(
+                manifests.iter().any(|(_, m)| m.meta.id == *excluded),
+                "excluded mod '{excluded}' is not in this project"
+            );
+        }
+        let mut result = self.clone();
+        result.mods = self
+            .mods
+            .iter()
+            .zip(manifests.iter())
+            .filter(|(_, (_, m))| !self.build.exclude_mods.contains(&m.meta.id))
+            .map(|(path, _)| path.clone())
+            .collect();
+        result.build.exclude_mods.clear();
+        result.validate()?;
+        Ok(result)
+    }
     pub fn manifests(&self) -> anyhow::Result<Vec<(PathBuf, ModManifest)>> {
         self.roots()?
             .into_iter()
@@ -156,9 +202,16 @@ impl Project {
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            crate::sandbox::valid_storage_id(&self.game_id()),
+            "invalid game ID"
+        );
         use crate::vfs::Vfs;
         for mode in [RuntimeMode::Client, RuntimeMode::Server] {
             let (registry, vfs) = self.registry(mode)?;
+            if let Some(path) = registry.startup_scene()? {
+                crate::scene::SceneDocument::parse(&vfs.read(&crate::scene::scene_path(path)?)?)?;
+            }
             for item in registry.iter() {
                 if let Some(entry) = item
                     .manifest

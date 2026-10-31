@@ -18,7 +18,19 @@ fn launch() -> std::io::Result<std::process::ExitStatus> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // The engine creates its own window.
     }
-    command.status()
+    let mut child = command.spawn()?;
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn AllowSetForegroundWindow(process_id: u32) -> i32;
+        }
+        // Delegate only to our player; Windows still respects subsequent user focus changes.
+        unsafe {
+            let _ = AllowSetForegroundWindow(child.id());
+        }
+    }
+    child.wait()
 }
 
 fn main() {

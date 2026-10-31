@@ -1,5 +1,6 @@
 version = 1
-name = "Whatever"
+name = "Big Bullshit"
+id = "bigbullshit"
 mods = [
     "mods/core",
     "mods/debug",
@@ -8,5 +9,9 @@ mods = [
 ]
 
 [build]
-company = ""
+exclude_mods = [
+    "debug",
+    "network_example",
+]
+company = "Gedanken Gespielt"
 version = "0.1.0"

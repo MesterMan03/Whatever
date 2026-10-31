@@ -1,3 +1,7 @@
+fn default_recursive() -> bool {
+    true
+}
+
 use crate::mods::ModManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -95,6 +99,7 @@ pub enum EngineMessage {
         error: Option<String>,
     },
     Init {
+        initial_scene: Option<crate::scene::LoadedScene>,
         mod_id: String,
         engine_version: String,
         mode: crate::runtime::RuntimeMode,
@@ -112,6 +117,7 @@ pub enum EngineMessage {
         delta_seconds: f64,
         keys_pressed: Vec<String>,
         mouse_delta: [f32; 2],
+        mouse_captured: bool,
     },
     AssetResponse {
         request_id: String,
@@ -141,6 +147,10 @@ pub enum EngineMessage {
     ModMessageReplyDelivered {
         request_id: String,
         payload: serde_json::Value,
+    },
+    EntityCreateFailed {
+        request_id: String,
+        error: String,
     },
     EntityCreated {
         request_id: String,
@@ -311,6 +321,17 @@ pub enum ScriptMessage {
     ArgSuggestResponse {
         request_id: String,
         suggestions: Vec<String>,
+    },
+    EntityClone {
+        request_id: String,
+        entity_id: String,
+        #[serde(default = "default_recursive")]
+        recursive: bool,
+        enabled: Option<bool>,
+    },
+    EntitySetEnabled {
+        entity_id: String,
+        enabled: bool,
     },
     EntityCreate {
         request_id: String,

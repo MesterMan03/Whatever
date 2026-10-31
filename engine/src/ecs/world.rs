@@ -8,8 +8,13 @@ use super::entity::{EntityAllocator, EntityId};
 use glam::{Quat, Vec3};
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct World {
+    #[serde(default)]
+    pub names: HashMap<u32, String>,
+    #[serde(default)]
+    pub root_order: Vec<EntityId>,
+    pub disabled: std::collections::HashSet<u32>,
     pub rigid_body_states: HashMap<u32, super::RigidBodyState>,
     pub allocator: EntityAllocator,
     pub transforms: HashMap<u32, Transform>,
@@ -31,6 +36,9 @@ pub struct World {
 impl World {
     pub fn new() -> Self {
         World {
+            names: HashMap::new(),
+            root_order: Vec::new(),
+            disabled: Default::default(),
             rigid_body_states: HashMap::new(),
             allocator: EntityAllocator::new(),
             transforms: HashMap::new(),
@@ -48,7 +56,9 @@ impl World {
     }
 
     pub fn create_entity(&mut self) -> EntityId {
-        self.allocator.alloc()
+        let id = self.allocator.alloc();
+        self.root_order.push(id);
+        id
     }
 
     /// Set (or clear) the parent of `child_id`.
@@ -70,7 +80,8 @@ impl World {
         }
 
         let Some(parent_id) = parent_id else {
-            // Detach only — done.
+            self.root_order.retain(|id| *id != child_id);
+            self.root_order.push(child_id);
             return true;
         };
 
@@ -100,6 +111,7 @@ impl World {
             cursor = ancestor.index;
         }
 
+        self.root_order.retain(|id| *id != child_id);
         self.parents.insert(child_id.index, parent_id);
         self.children
             .entry(parent_id.index)
@@ -232,8 +244,11 @@ impl World {
         for idx in to_destroy {
             let eid = self.allocator.live_id(idx);
             if let Some(eid) = eid {
+                self.disabled.remove(&idx);
+                self.root_order.retain(|id| *id != eid);
                 self.allocator.free(eid);
             }
+            self.names.remove(&idx);
             self.transforms.remove(&idx);
             self.rigid_body_states.remove(&idx);
             self.sprite_renderers.remove(&idx);
@@ -265,6 +280,7 @@ impl World {
         }
         let idx = id.index;
         match type_id {
+            "core:entity" | "core:world_transform" => return false,
             super::COMPONENT_RIGID_BODY_STATE => return false,
             COMPONENT_TRANSFORM => match serde_json::from_value::<Transform>(data) {
                 Ok(t) => {
@@ -355,7 +371,7 @@ impl World {
         }
         let idx = id.index;
         match type_id {
-            super::COMPONENT_RIGID_BODY_STATE => false,
+            "core:entity" | "core:world_transform" | super::COMPONENT_RIGID_BODY_STATE => false,
             COMPONENT_TRANSFORM => self.transforms.remove(&idx).is_some(),
             COMPONENT_SPRITE_RENDERER => self.sprite_renderers.remove(&idx).is_some(),
             COMPONENT_TEXT_RENDERER => self.text_renderers.remove(&idx).is_some(),
@@ -379,6 +395,12 @@ impl World {
         }
         let idx = id.index;
         match type_id {
+            "core:world_transform" => self
+                .world_transform(id)
+                .and_then(|value| serde_json::to_value(value).ok()),
+            "core:entity" => {
+                Some(serde_json::json!({"enabled":self.enabled(id),"active":self.is_active(id)}))
+            }
             super::COMPONENT_RIGID_BODY_STATE => self
                 .rigid_body_states
                 .get(&idx)
@@ -427,6 +449,7 @@ impl World {
         }
         self.allocator
             .alive_entity_ids()
+            .filter(|id| self.is_active(id))
             .filter_map(|id| {
                 let mut components = HashMap::new();
                 for &type_id in type_ids {

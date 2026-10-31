@@ -35,7 +35,7 @@ The bootstrap captures native stdin/stdout pipe handles for its private IPC tran
 3. The host runs with a cleared environment, retaining only Windows system-directory and temporary-directory variables when present, plus a fixed `BUN_DEBUG_QUIET_LOGS=1` to keep native debug diagnostics off IPC stdout. It receives no inherited PATH, Bun/Node options or application secrets.
 4. Compiled hosts disable automatic dotenv, bunfig, package.json and tsconfig loading. Runtime package installation, macros and native addons are disabled.
 5. The bootstrap registers the embedded API, installs its console, activates the native policy, and loads the mod.
-6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 6 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
+6. After evaluation, it sends `RuntimeReady`. The engine waits for the active hosts' handshakes and sends `Init` in dependency/load order; client mode also waits for its window. Host protocol 8 provides `client` or `server` before top-level mod evaluation, includes it in `Init`, and accepts application commands only inside per-tick `CommandBatch` envelopes.
 
 A missing or incompatible host is an engine startup error. A host built with stock Bun refuses to load any mod.
 
@@ -69,9 +69,18 @@ bun run test:host
 cargo test --workspace --locked
 ```
 
-For a debug fork use `bun run build:bun --debug`. The host builder also accepts `--bun <path-to-built-fork>` and verifies its native hook before compiling. It does not accept stock Bun.
+For a debug fork use `bun run build:bun --debug`. Then use `bun run build:host --debug-runtime` explicitly for a development host. The default host builder requires the release fork and never silently falls back to debug. Deployments reject debug hosts. The host builder also accepts `--bun <path-to-built-fork>` and verifies its native hook before compiling. It does not accept stock Bun.
 
 The native resolver regression cases are in `vendor/bun/test/js/bun/resolve/resolve.test.ts` under `Whatever native module policy`. Run them with `bun bd test test/js/bun/resolve/resolve.test.ts -t Whatever` inside that checkout. Background transpilation, bytecode caches and transpilation caches are disabled for locked mod sources so cached transforms cannot skip the policy. The end-to-end host suite runs the compiled host outside the engine tree with an empty PATH.
 
 Linux checks can be run under WSL. Keep Linux Cargo outputs in a separate target directory so Windows and Linux never share compiled artifacts. Run sandboxed Linux game/mod files from WSL's Linux filesystem: the tested WSL kernel denied even allowlisted files on the Windows-mounted `/mnt/c` filesystem under Landlock. The kernel probe uses Linux-filesystem fixtures and verifies an allowed read plus denied engine-file and network access.
 The Network API submits schemas and transport requests to an engine-owned QUIC service. Native registration checks runtime side/mod namespace; every later request checks registration/peer ownership. Binary decoders enforce bounds, packet direction and frame limits before callbacks. The service and per-peer queues are bounded and callback acknowledgements prevent unbounded delivery into a slow mod. Server TLS keys and strict/TOFU trust records live outside mod-accessible directories; only operator CLI settings select certificate, key or additional-CA files. TOFU still verifies TLS handshake signatures and commits a key only after TLS and schema negotiation succeed. Known key changes and PKI downgrades fail. Mods retain no raw sockets, networking globals, package imports or trust-reset capability. Client-data templates remain server-local.
+
+
+The native editor may launch a player with `WHATEVER_EDITOR_ENDPOINT` and a
+cryptographically random `WHATEVER_EDITOR_TOKEN`. This is a separate, loopback-only
+control channel, authenticated before any snapshot or edit. Framed messages are
+size limited and the GUI uses a latest-state snapshot mailbox. Entity mutations
+are validated atomically on the simulation worker before physics. Mod hosts
+retain their cleared environment and receive neither variable; this adds no
+script import, network, global or native-module permissions.

@@ -13,11 +13,11 @@ pub fn create_runtime_kit(
     ensure!(!output.exists(), "runtime kit destination already exists");
     ensure!(player.is_file(), "missing player executable");
     ensure!(launcher.is_file(), "missing launcher executable");
-    crate::script::validate_host(host)?;
+    crate::script::validate_release_host(host)?;
     for path in [
         source.join("LICENSE"),
         source.join("vendor/bun/LICENSE.md"),
-        source.join("mods/core/mod.toml"),
+        source.join("engine/resources/core/mod.toml"),
         source.join("runtime/dist/index.d.ts"),
     ] {
         ensure!(
@@ -32,8 +32,8 @@ pub fn create_runtime_kit(
     let source = source.canonicalize()?;
     let absolute = std::path::absolute(output)?;
     ensure!(
-        !source.join("mods/core").starts_with(&absolute)
-            && !absolute.starts_with(source.join("mods/core")),
+        !source.join("engine/resources/core").starts_with(&absolute)
+            && !absolute.starts_with(source.join("engine/resources/core")),
         "runtime kit cannot overlap core sources"
     );
     std::fs::create_dir_all(output.join("engine/lib"))?;
@@ -67,7 +67,10 @@ pub fn create_runtime_kit(
             )?;
         }
     }
-    copy_tree(&source.join("mods/core"), &output.join("mods/core"))?;
+    copy_tree(
+        &source.join("engine/resources/core"),
+        &output.join("mods/core"),
+    )?;
     copy_tree(&source.join("LICENSE"), &output.join("LICENSE"))?;
     copy_tree(
         &source.join("vendor/bun/LICENSE.md"),

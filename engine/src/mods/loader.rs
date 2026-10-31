@@ -64,6 +64,7 @@ pub fn discover_and_load(
     manifests.retain(|(manifest, _)| {
         let enabled = manifest.meta.sides.contains(&mode);
         if !enabled {
+            registry.excluded.insert(manifest.meta.id.clone());
             tracing::info!(mod_id=%manifest.meta.id,%mode,"skipping mod for another runtime side");
         }
         enabled
@@ -381,7 +382,8 @@ mod tests {
     fn shipped_core_is_asset_only() {
         let root = crate::development_root();
         let core: ModManifest = toml::from_str(
-            &std::fs::read_to_string(root.join("mods/core/mod.toml")).expect("core manifest"),
+            &std::fs::read_to_string(root.join("engine/resources/core/mod.toml"))
+                .expect("core manifest"),
         )
         .expect("parse core");
         assert!(core.script.is_none());

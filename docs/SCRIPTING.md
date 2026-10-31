@@ -59,7 +59,7 @@ The engine sends `Init` after this handshake and runtime readiness (including wi
 |---|---|---|
 | `init` | `{ mod_id, engine_version, mode }` | Fired once after engine initialization; server has no window |
 | `exit` | `{ exit_code }` | Fired on shutdown; process exits after all handlers return |
-| `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta }` | Runs on ticks when this handler is free; no overlapping invocations |
+| `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta, mouse_captured }` | Runs on ticks when this handler is free; no overlapping invocations |
 | `mod_message` | `{ source_mod_id, message, request_id? }` | Message from another mod (see `Message`) |
 | `physics` | `{ event: Physics.Event }` | Native collision/contact-force event after physics |
 
@@ -77,6 +77,18 @@ Engine.log("error", "something broke");
 |---|---|---|
 | `level` | `string` | `"info"` \| `"warn"` \| `"error"` |
 | `message` | `string` | Arbitrary log text |
+
+Host protocol 8 requires `mouse_captured` on ticks, so older hosts are rejected and rebuilt.
+Mouse motion is relative and only delivered while the player owns mouse capture.
+`mouse_captured` is false and `mouse_delta` is `[0, 0]` while uncaptured, while the
+console is open, or while the editor owns input. Release also clears accumulated
+motion for busy async tick handlers; it cannot be replayed after console/editor
+interaction. Held keys retain their normal focus/console behavior.
+
+Rendering interpolates adjacent tick poses for the camera, objects and lights.
+This adds roughly one tick of visual delay; it never changes ECS queries, physics
+or tick timing. FPS caps are maximum presentation rates, not guaranteed throughput;
+vsync, display refresh, GPU load and OS scheduling can keep measured FPS below them.
 
 ### `Engine.setTickRate(ticks_per_second)`
 
@@ -1260,7 +1272,7 @@ const bytes = await client.encodePacket("login.hello", {name: "Alex"});
 const decoded = await client.decodePacket(bytes); // discriminated union: packet, direction, state, data
 ```
 
-Definitions are immutable snapshots. Structs and packets use ordered, named fields; arrays accept any descriptor, including structs and optional values. States/packet names are ASCII identifiers, without dots; unsafe property names are rejected. A specification ID must use the registering mod's namespace. Define shared schemas in a local module imported by both side entries, as in `mods/network_example/scripts/network.ts`.
+Definitions are immutable snapshots. Structs and packets use ordered, named fields; arrays accept any descriptor, including structs and optional values. States/packet names are ASCII identifiers, without dots; unsafe property names are rejected. A specification ID must use the registering mod's namespace. Define shared schemas in a local module imported by both side entries, as in `games/test/mods/network_example/scripts/network.ts`.
 
 | Descriptor | JavaScript value | Wire representation |
 |---|---|---|
@@ -1344,9 +1356,9 @@ The native engine stores server identities and trust records under the OS local-
 This section documents the raw wire format. Normal mod code should use the API
 namespaces above rather than speaking the protocol directly.
 
-Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 6. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
+Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 8. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
 
-**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 6 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
+**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 8 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
 Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine-to-mod pipe writes run on a dedicated bounded writer thread (256 queued messages, 64 MiB including the in-flight write). A full/broken writer terminates the affected mod rather than blocking the simulation or silently losing RPCs.
 
 ### Engine → Script
@@ -1422,3 +1434,30 @@ The `[mod].sides` list defaults to both `client` and `server`. Inactive mods are
 
 
 A synchronous throw or rejected promise from a tick handler is queued for logging and terminates that mod process after its next buffer submission. The runtime removes exited processes from the submission barrier so other mods can continue. Shutdown interrupts a waiting tick and cleans up remaining subprocesses.
+
+## Entity lifecycle and startup scenes
+
+`Entity.clone(options?: { enabled?: boolean; recursive?: boolean }): PendingEntity`
+copies authored components and descendants with fresh IDs, remapping internal entity
+references. Native physics state is rebuilt. The original enabled state is preserved
+unless overridden. `Entity.setEnabled(enabled: boolean): this` changes local enabled
+state; `Entity.getEnabled(): Pending<boolean>` reads it. `core:entity` is read-only
+metadata containing `enabled` and inherited `active` flags. Disabled ancestors make
+their descendants inactive: no rendering, lighting, camera or physics simulation.
+Mod tick callbacks are global; they continue running, so scripts can enable entities.
+
+`Scene.initialScene(): LoadedScene | null` returns the scene preloaded before Init
+by the core mod's top-level `initial_scene = "my_game://main"` setting in mod.toml.
+`LoadedScene.path` identifies its source. Mods can attach behavior to those IDs
+instead of instantiating the scene again. Startup chooses its first enabled camera;
+scripts can select another camera normally. Init now includes optional initial_scene
+metadata; the matching host protocol is 7.
+
+New joints belong on their first rigid body. Construct `Physics.Joint.fixed({
+connectedBody: otherBody })` (or revolute/prismatic/spherical/generic) and attach it
+to the owning body. Local A anchors describe the owner; B anchors describe the
+connected body. Legacy bodyA/bodyB descriptors remain readable for older mods.
+
+Component queries omit inactive entities. Direct component reads and scene-local lookups still access disabled templates.
+
+`Entity.getComponent("core:world_transform"): Pending<BuiltInComponents.Transform | null>` reads the inherited world transform. This derived component is read-only.

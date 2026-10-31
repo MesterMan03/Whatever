@@ -3,6 +3,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct ModManifest {
+    #[serde(default)]
+    pub initial_scene: Option<String>,
     #[serde(rename = "mod")]
     pub meta: ModMeta,
     #[serde(default)]

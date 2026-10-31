@@ -3,6 +3,7 @@ use super::{
     bridge::{Presentation, RuntimeCommand, Shared},
     scheduler::TickClock,
 };
+use crate::script::RenderCommand;
 use crate::{
     audio::AudioManager,
     debug::DebugLogger,
@@ -17,6 +18,7 @@ use crate::{
     vfs::VfsHandle,
     watchdog::Watchdog,
 };
+use anyhow::Context;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, atomic::Ordering, mpsc},
@@ -35,6 +37,7 @@ pub struct Simulation {
     network: crate::network::NetworkRegistry,
     server_console: Option<crate::console::DevConsole>,
     world: World,
+    initial_scene: Option<crate::scene::LoadedScene>,
     physics: crate::physics::PhysicsRegistry,
     audio: AudioManager,
     clock: TickClock,
@@ -42,6 +45,8 @@ pub struct Simulation {
     startup_packets: Vec<(String, ScriptPacket)>,
     scripts_initialized: bool,
     pending_controls: Vec<RuntimeCommand>,
+    editor_edits: Vec<super::editor::EditorControl>,
+    editor_sequence: u64,
     ready: bool,
     watchdog: Watchdog,
     shared: Arc<Shared>,
@@ -51,6 +56,7 @@ pub struct Simulation {
     client_commands: Vec<ScriptMessage>,
     main_camera: Option<EntityId>,
     changed: bool,
+    motion: crate::presentation::MotionHistory,
 }
 impl Simulation {
     pub fn new(
@@ -114,6 +120,23 @@ impl Simulation {
             }
         }
 
+        let mut world = World::new();
+        let initial_scene = if let Some(path) = registry.startup_scene()? {
+            Some(
+                crate::scene::SceneDocument::load(vfs.as_ref(), path, &mut world)
+                    .context("preload core initial_scene")?,
+            )
+        } else {
+            None
+        };
+        let render_cmds =
+            RenderCommand::upsert_hierarchy(&world, world.allocator.alive_entity_ids());
+        let main_camera = world
+            .allocator
+            .alive_entity_ids()
+            .find(|id| world.is_active(id) && world.camera_components.contains_key(&id.index));
+        let mut physics = crate::physics::PhysicsRegistry::default();
+        physics.invalidate();
         Ok(Self {
             mode,
             meta,
@@ -123,23 +146,27 @@ impl Simulation {
             script_host,
             network: crate::network::NetworkRegistry::new(network),
             server_console: (mode == RuntimeMode::Server).then(crate::console::DevConsole::new),
-            world: World::new(),
-            physics: crate::physics::PhysicsRegistry::default(),
+            world,
+            initial_scene,
+            physics,
             audio,
             clock,
             tick_number: 0,
             startup_packets: vec![],
             scripts_initialized: false,
             pending_controls: vec![],
+            editor_edits: vec![],
+            editor_sequence: 0,
             ready: false,
             watchdog: Watchdog::new(Duration::from_millis(500)),
             shared,
             commands,
-            render_cmds: vec![],
+            render_cmds,
             events: vec![],
             client_commands: vec![],
-            main_camera: None,
+            main_camera,
             changed: true,
+            motion: Default::default(),
         })
     }
     fn network_events(&mut self) {
@@ -376,6 +403,7 @@ impl Simulation {
                 RuntimeCommand::Ipc { mod_id, message } => {
                     self.script_host.send(&mod_id, &message, &mut self.debug);
                 }
+                RuntimeCommand::Editor(edit) => self.editor_edits.push(edit),
                 RuntimeCommand::Ready => {}
             }
         }
@@ -387,16 +415,18 @@ impl Simulation {
                 &mut self.debug,
             );
         }
-        let (keys_pressed, mouse_delta) = if let Ok(mut input) = self.shared.input.lock() {
-            (input.keys.clone(), std::mem::take(&mut input.mouse))
-        } else {
-            (vec![], (0.0, 0.0))
-        };
+        let (keys_pressed, mouse_delta, mouse_captured) =
+            if let Ok(mut input) = self.shared.input.lock() {
+                input.take_tick()
+            } else {
+                (vec![], (0.0, 0.0), false)
+            };
         let tick = EngineMessage::Tick {
             tick_number: self.tick_number,
             delta_seconds: self.clock.interval.as_secs_f64(),
             keys_pressed,
             mouse_delta: [mouse_delta.0, mouse_delta.1],
+            mouse_captured,
         };
         // Registry iteration is dependency/load order, independent of pipe scheduling.
         let order: Vec<String> = self
@@ -494,6 +524,7 @@ impl Simulation {
                 self.script_host.send(
                     &id,
                     &EngineMessage::Init {
+                        initial_scene: self.initial_scene.clone(),
                         mod_id: id.clone(),
                         engine_version: env!("CARGO_PKG_VERSION").to_owned(),
                         mode: self.mode,
@@ -518,6 +549,35 @@ impl Simulation {
             for message in commands {
                 self.message(id.clone(), message, &mut batch_entities);
             }
+        }
+        for edit in std::mem::take(&mut self.editor_edits) {
+            let removals = RenderCommand::remove_hierarchy(
+                &self.world,
+                self.world.allocator.alive_entity_ids(),
+            );
+            self.editor_sequence = edit.sequence;
+            let result = super::editor::apply_editor_batch(&mut self.world, &edit.batch);
+            if result.is_ok() {
+                self.physics.invalidate();
+                self.render_cmds.extend(removals);
+                self.render_cmds.extend(RenderCommand::upsert_hierarchy(
+                    &self.world,
+                    self.world.allocator.alive_entity_ids(),
+                ));
+            }
+            let reply = match result {
+                Ok(created) => super::editor::EditorReply {
+                    sequence: edit.sequence,
+                    created,
+                    error: None,
+                },
+                Err(error) => super::editor::EditorReply {
+                    sequence: edit.sequence,
+                    created: Default::default(),
+                    error: Some(format!("{error:#}")),
+                },
+            };
+            let _ = edit.reply.try_send(reply);
         }
         // Fixed simulation order: input/events -> mod batches -> commands -> physics
         // -> presentation and results. Rendering never advances this clock.
@@ -556,10 +616,24 @@ impl Simulation {
             self.client_commands.clear();
             return;
         }
+        if let Ok(mailbox) = self.shared.editor_snapshot.lock()
+            && let Some(mailbox) = mailbox.as_ref().and_then(std::sync::Weak::upgrade)
+            && let Ok(mut slot) = mailbox.lock()
+        {
+            *slot = Some(super::editor_transport::EditorSnapshot {
+                world: self.world.clone(),
+                camera: self.main_camera,
+                sequence: self.editor_sequence,
+            });
+        }
+        self.motion
+            .capture(&self.world, self.main_camera, Instant::now());
         let update = Presentation {
+            motion: self.motion.clone(),
             world: self.world.clone(),
             main_camera: self.main_camera,
             tick_rate: 1.0 / self.clock.interval.as_secs_f64(),
+            editor_sequence: self.editor_sequence,
             render_cmds: self
                 .render_cmds
                 .drain(..)
@@ -581,6 +655,121 @@ impl Simulation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the bundled host; run in editor/runtime CI"]
+    fn editor_controls_apply_before_physics_and_publish_live_values() {
+        use crate::{debug::DebugConfig, runtime::LaunchOptions};
+        use serde_json::json;
+        let directory = std::env::temp_dir().join(format!(
+            "whatever-editor-tick-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(directory.join("core")).expect("fixture");
+        std::fs::write(
+            directory.join("core/mod.toml"),
+            "[mod]\nid='core'\nname='Core'\nversion='1.0.0'\n[assets]\nroot='.'\n",
+        )
+        .expect("manifest");
+        std::fs::write(
+            directory.join("core/meta.toml"),
+            "[game]\nid='editor_tick_fixture'\nname='Editor Fixture'\ntick_rate=60\n",
+        )
+        .expect("meta");
+        let log = std::fs::File::create(directory.join("fixture.log")).expect("log");
+        let game = LoadedGame::load(
+            &LaunchOptions {
+                mode: Some(RuntimeMode::Client),
+                mods: Some(directory.clone()),
+                ..Default::default()
+            },
+            &DebugConfig::from_args(&[]),
+            &directory,
+            Arc::new(std::sync::Mutex::new(std::io::BufWriter::new(log))),
+        )
+        .expect("game");
+        let shared = Arc::new(Shared {
+            input: Default::default(),
+            presentation: Default::default(),
+            stop: std::sync::atomic::AtomicBool::new(false),
+            editor_snapshot: Default::default(),
+        });
+        let (tx, rx) = mpsc::channel();
+        let mut simulation =
+            Simulation::with_audio(game, Arc::clone(&shared), rx, AudioManager::headless())
+                .expect("simulation");
+        let id = simulation.world.create_entity();
+        simulation.world.set_component(
+            &id,
+            "core:transform",
+            json!({"position":[0,10,0],"rotation":[0,0,0,1],"scale":[1,1,1]}),
+        );
+        for (kind, value) in [
+            ("core:rigid_body", json!({"type":"dynamic"})),
+            (
+                "core:collider",
+                json!({"shape":{"type":"box","size":[1,1,1]}}),
+            ),
+        ] {
+            let value = simulation
+                .physics
+                .normalize_component(&mut simulation.world, id, kind, value)
+                .expect("component");
+            assert!(simulation.world.set_component(&id, kind, value));
+        }
+        let (reply, answer) = mpsc::sync_channel(1);
+        tx.send(RuntimeCommand::Editor(
+            super::super::editor::EditorControl {
+                sequence: 7,
+                batch: super::super::editor::EditorBatch {
+                    edits: vec![super::super::editor::EntityEdit {
+                        id: id.to_string(),
+                        name: Some("Live body".into()),
+                        enabled: None,
+                        components: std::collections::BTreeMap::from([(
+                            "core:transform".into(),
+                            vec![super::super::editor::ValueEdit {
+                                path: vec!["position".into(), "1".into()],
+                                value: Some(json!(7)),
+                            }],
+                        )]),
+                    }],
+                    ..Default::default()
+                },
+                reply,
+            },
+        ))
+        .expect("request");
+        tx.send(RuntimeCommand::Ready).expect("ready");
+        simulation.controls();
+        simulation.tick();
+        assert!(
+            answer
+                .recv_timeout(Duration::from_secs(1))
+                .expect("reply")
+                .error
+                .is_none()
+        );
+        let update = shared
+            .presentation
+            .lock()
+            .expect("snapshot")
+            .take()
+            .expect("published");
+        assert_eq!(update.world.names[&id.index], "Live body");
+        let y = update.world.transforms[&id.index].position[1];
+        assert!(
+            y < 7.0 && y > 6.9,
+            "physics should step the edited pose before publication: {y}"
+        );
+        assert!(update.world.rigid_body_states.contains_key(&id.index));
+        drop(simulation);
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
     #[test]
     #[ignore = "requires a built bundled mod host; run in the mod-runtime CI job"]
     fn client_ticks_without_redraws_or_audio_hardware() {
@@ -632,6 +821,7 @@ Engine.on("tick",({tick_number})=>{
             input: Default::default(),
             presentation: Default::default(),
             stop: std::sync::atomic::AtomicBool::new(false),
+            editor_snapshot: Default::default(),
         });
         struct Stop(Arc<Shared>);
         impl Drop for Stop {

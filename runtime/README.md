@@ -34,6 +34,9 @@ Other package imports, including `node:` and `bun:` modules, are denied initiall
 - `Engine.getMainCamera()` → `Pending<Entity | null>`
 - `Engine.clearCamera()` — remove the active camera (screen goes black with a warning)
 
+Tick payloads include `mouse_captured`; `mouse_delta` is `[0, 0]` while uncaptured.
+Pending mouse motion is discarded on release, including for busy async handlers.
+
 ### `Window`
 
 - `Window.setTitle(title)` — change the window title
@@ -272,4 +275,19 @@ The host captures private native pipe handles before lockdown; mods do not recei
 Init payloads include `mode`. Simulation ticks run independently of rendering. Window/audio operations and presentation settings reject server use. Mod manifests expose supported `sides` and optional shared/client/server script entries; only mods active on the current side appear in `Mods.list()` and `Mods.get()`.
 
 
-Tick handler failures are logged and stop the faulty mod; exited processes are removed from the command-submission barrier. Host protocol 5 uses `CommandBatch` and `CommandResults` envelopes.
+Tick handler failures are logged and stop the faulty mod; exited processes are removed from the command-submission barrier. Host protocol 7 uses `CommandBatch` and `CommandResults` envelopes.
+
+## Entity lifecycle and startup scenes
+
+- `Entity.clone(options?: CloneOptions): PendingEntity`
+- `Entity.setEnabled(enabled: boolean): this`
+- `Entity.getEnabled(): Pending<boolean>`
+- `Scene.initialScene(): LoadedScene | null`
+- `LoadedScene.path: string`
+- `Physics.Joint.fixed({ connectedBody, ...options }): Physics.Joint`
+- `Physics.Joint.revolute({ connectedBody, ...options }): Physics.Joint`
+- `Physics.Joint.prismatic({ connectedBody, ...options }): Physics.Joint`
+- `Physics.Joint.spherical({ connectedBody, ...options }): Physics.Joint`
+- `Physics.Joint.generic({ connectedBody, ...options }): Physics.Joint`
+
+- `Entity.getComponent("core:world_transform"): Pending<BuiltInComponents.Transform | null>` — read-only inherited transform

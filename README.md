@@ -63,6 +63,8 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
     lib.rs              Shared engine services and tooling
     engine.rs           Client window, graphics, input and world snapshots
     runtime/            Simulation worker, tick clock, modes and headless runner
+      editor.rs         Atomic runtime edits and hierarchy projection
+      editor_transport.rs  Private authenticated editor/player connection
     scene/              Versioned scene documents and atomic instantiation
     project/            Mod collections, scaffolding and managed game builds
       build.rs          Installed support discovery and automatic source builds
@@ -72,6 +74,10 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
       render.rs         Renderer, pipelines and render passes
       world.rs          Shared ECS-to-render updates for player and editor
     ecs/                Generational entities, components, hierarchy and references
+      lifecycle.rs      Inherited enabled state and deep entity cloning
+    presentation/       Frame deadlines, measured FPS and render-only pose interpolation
+      frame_clock.rs    Phase-preserving FPS cap and time-weighted frame counter
+      motion.rs         Adjacent tick poses, hierarchy interpolation and camera cuts
     physics/            Native Rapier configuration, state and lifecycle
     network/            QUIC, schemas/codecs, TLS and per-client data
     script/             Bundled native host discovery, NDJSON IPC and dispatch
@@ -85,27 +91,36 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
     debug.rs            Debug switches and category logging
     logging.rs          Log files, rotation and tracing setup
     input.rs            Keyboard/mouse accumulator
+    cursor.rs           Embedded player cursor confinement and visibility
     watchdog.rs         Slow-tick diagnostics
+  resources/core/       Stock core template packaged with the editor
 player/                 Whatever executable; depends on shared engine crate
   src/main.rs           CLI, game loading, client/server entry point
 editor/                 Separate native editor application (own Cargo.toml)
   src/app.rs            Window, renderer, input and background build jobs
   src/actions.rs        Project/scene commands and native file dialogs
   src/menus.rs          Native menus and keyboard shortcuts
+  src/preferences.rs    Text editor preferences, recent projects and welcome screen
+  src/mod_editor.rs     Mod metadata and script creation
+  src/component_handles.rs  Collider and joint handles in the scene viewer
   src/ui.rs             Workspace panels, browser, viewport and project settings
   src/inspector.rs      Typed core components and custom component editing
+  src/entity_picker.rs  Entity references and hierarchy drops
+  src/presets.rs        Common entity presets
+  src/browser.rs        Folder navigation and typed asset tiles
+  src/viewport.rs       Surface picking and transform handles
+  src/player.rs         Embedded player window hosting
+  src/live.rs           Runtime hierarchy, live edits and temporary undo history
   src/hierarchy.rs      Tree, drag reordering and reparenting
   src/document.rs       Scene editing, undo/redo and safe saves
 launcher/               Small branded game launcher; no engine dependencies
 wmod/                   CLI companion using the same shared project tooling
-mods/                   Engine-shipped ordinary mods
-  core/                 Metadata, shaders and fonts; no test scripts
-  debug/                Diagnostics and an editable scenes/editor.wscene example
-  network_example/      Protocol and multi-client QUIC messenger demo
-  physics_demo/         Opt-in Rapier playground
-    scenes/             Authored playground, physics setup and initial cubes
 games/                  Ordinary game mod collections
-mods_user/              User-installed mods (gitignored)
+  test/                 Development/test game; default player project in source builds
+    whatever.wproject   Test project identity, mod selection and build settings
+    mods/               Its own core, debug, network_example and physics_demo mods
+    mods_user/          User-local development mods (gitignored)
+  graviton/             Separate game collection
 runtime/                @whatever-engine/api TypeScript package
   host/                 Trusted bootstrap bundled with the API into the native host
   src/                  Public namespaces, IPC, pending results and typed references
@@ -114,6 +129,10 @@ vendor/
   bun/                  Pinned Whatever Bun fork
   patches/              Reproducible native fork patch
 tools/                  Fork/host builds, generated assets and integration tests
+  package-editor.ts     Portable editor assembly, dependency bundling and relocation smoke
+.github/workflows/
+  editor.yml            Build, test and portable archives on Windows/Linux/macOS
+  release.yml           Publish the same tested archives on version tags
 docs/
   EDITOR.md             Projects, native editor, CLI and branded deployment layout
   SCRIPTING.md          Public API, scene format and IPC reference
@@ -124,7 +143,7 @@ docs/
 
 ## Editor and game builds
 
-Run `cargo build --workspace`, then `cargo run -p whatever-editor -- .` to open the current mod collection. A project is a `whatever.wproject` manifest selecting ordinary mod directories. Scenes are versioned JSON `.wscene` files in each mod's `scenes/` folder; scripts instantiate them with `await Scene.loadScene("my_mod://main")`.
+Run `cargo build --workspace`, then `cargo run -p whatever-editor -- games/test` to open the current mod collection. A project is a `whatever.wproject` manifest selecting ordinary mod directories. Scenes are versioned JSON `.wscene` files in each mod's `scenes/` folder; scripts instantiate them with `await Scene.loadScene("my_mod://main")`.
 
 `wmod` is the CLI companion: it creates projects and mods, validates collections and packages games through the same shared code as the editor. Deployed games contain a branded launcher, a separate engine executable, a separate `runtime.exe` mod host and ordinary mod sources. See [the editor and deployment guide](docs/EDITOR.md) for commands and the folder contract.
 
@@ -144,7 +163,7 @@ Biome is a pinned development dependency. Run `bun install --frozen-lockfile` af
 
 ## Mod System
 
-Mods live in `mods/` (engine-shipped) or `mods_user/` (user-installed, gitignored). Each mod is a directory containing `mod.toml`.
+Each game owns its `mods/` and optional `mods_user/` (gitignored). The source checkout uses `games/test`. Each mod is a directory containing `mod.toml`.
 
 ### mod.toml
 
@@ -156,7 +175,7 @@ version     = "0.1.0"
 description = "A game built on the Whatever engine"
 
 [script]
-entry = "scripts/index.ts"     # optional — omit if the mod has no scripts
+entry = "scripts/index.ts"     # optional â€” omit if the mod has no scripts
 
 [assets]
 root = "assets"                 # default
@@ -168,9 +187,9 @@ Mods are loaded in topological dependency order. `core` always loads first.
 
 Set `default_mode = "client"` or `"server"` in the `[game]` section of core's `meta.toml`. The CLI `--mode client|server` overrides it; old metadata defaults to client mode.
 
-The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Its fixed phase order is input/external events → mod ticks and buffer submission → command execution in dependency/load order → native physics simulation → snapshots and results. Each mod submits one batch, including mods without public tick listeners. Commands preserve call order within their mod; independent mods use alphabetical ID tie-breaking. Async handlers may span ticks without blocking submission or overlapping their own invocations. See [tick semantics](docs/SCRIPTING.md#tick-order-and-command-batches).
+The simulation owns ECS state and mod IPC on a worker thread with its own tick deadlines. Its fixed phase order is input/external events â†’ mod ticks and buffer submission â†’ command execution in dependency/load order â†’ native physics simulation â†’ snapshots and results. Each mod submits one batch, including mods without public tick listeners. Commands preserve call order within their mod; independent mods use alphabetical ID tie-breaking. Async handlers may span ticks without blocking submission or overlapping their own invocations. See [tick semantics](docs/SCRIPTING.md#tick-order-and-command-batches).
 
-Rendering runs on the window thread and consumes the latest world snapshot. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
+Rendering runs on the window thread and consumes the latest world snapshot and adjacent pose samples. Camera, geometry and moving lights interpolate local transforms between ticks for smooth presentation (roughly one tick of visual delay), without changing simulation/query/editor state. Reparenting, entity replacement and camera cuts snap to the new state. FPS caps use fixed deadlines, skip missed slots and do not accumulate wake-up delay. A slow tick does not block rendering; FPS caps, vsync and missing redraws do not schedule ticks. Missed deadlines after a slow tick are skipped to avoid a catch-up spiral. Published snapshots currently copy the world; pending GPU updates coalesce by entity and renderer type while frames are paused.
 
 Server mode creates no window, graphics context, egui context or audio output device. It uses the same simulation worker with empty input. Enter built-in or mod console commands on stdin (`help`, `help dev`, `netdemo codec`). Stop it with Ctrl+C, SIGTERM on Unix, or `quit` / `stop`. The executable still links desktop libraries; a smaller server-only build is separate future work.
 
@@ -212,10 +231,10 @@ my_game://textures/player.png
 
 ### Adding a mod
 
-1. Create `mods_user/<mod_id>/mod.toml`
-2. Add assets to `mods_user/<mod_id>/assets/`
+1. Create `games/test/mods_user/<mod_id>/mod.toml`
+2. Add assets to `games/test/mods_user/<mod_id>/assets/`
 3. Optionally add `scripts/index.ts` and set `[script]` in `mod.toml`
-4. `cargo run` — the mod is discovered and loaded automatically
+4. `cargo run` â€” the mod is discovered and loaded automatically
 
 ## Scripting
 
@@ -236,9 +255,9 @@ bun run build:runtime
 
 ## Debug suite and network API example
 
-The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`mods/debug`](mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. The Mandelbrot benchmark now measures the mod's Bun thread through `dev benchmark`.
+The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`games/test/mods/debug`](games/test/mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. The Mandelbrot benchmark now measures the mod's Bun thread through `dev benchmark`.
 
-[`mods/network_example`](mods/network_example/README.md) is a QUIC messenger with separate client/server entries and a shared typed specification. Start a headless server and run `netdemo host 4444`; in each client (F2), run `netdemo connect localhost:4444`. Clients receive increasing player IDs and can use `netdemo tell 2 "hello"`, `netdemo say "hello everyone"`, `netdemo players` and `netdemo ping` (QUIC datagram). The demo defaults to TOFU; add `strict` after the address to require a trusted certificate. See [Network API](docs/SCRIPTING.md#network) for transport, trust and client-data details.
+[`games/test/mods/network_example`](games/test/mods/network_example/README.md) is a QUIC messenger with separate client/server entries and a shared typed specification. Start a headless server and run `netdemo host 4444`; in each client (F2), run `netdemo connect localhost:4444`. Clients receive increasing player IDs and can use `netdemo tell 2 "hello"`, `netdemo say "hello everyone"`, `netdemo players` and `netdemo ping` (QUIC datagram). The demo defaults to TOFU; add `strict` after the address to require a trusted certificate. See [Network API](docs/SCRIPTING.md#network) for transport, trust and client-data details.
 
 TLS keys and saved trust live in the engine-owned local-data directory `WhateverNetwork/<game_id>`, outside mod file access. Servers generate a persistent development identity automatically, or operators can supply `--tls-cert <chain.pem> --tls-key <key.pem>`. Clients use the OS trust roots, optionally extended with `--tls-ca <authority.pem>`. `--network-data <directory>` selects an isolated identity/trust directory, useful for tests and separate server instances. Players provide only a server address.
 
@@ -253,8 +272,8 @@ Every run writes to `logs/latest.log`. On startup the previous file is gzip-arch
 Log line format:
 
 ```
-[HH:MM:SS.mmm] [LEVEL]    message     — engine events  (INFO / WARN / ERROR)
-[HH:MM:SS.mmm] [category] message     — debug category (ipc / modloader / window / vfs)
+[HH:MM:SS.mmm] [LEVEL]    message     â€” engine events  (INFO / WARN / ERROR)
+[HH:MM:SS.mmm] [category] message     â€” debug category (ipc / modloader / window / vfs)
 ```
 
 Stdout mirrors the log with ANSI colours (WARN yellow, ERROR red). The in-game developer console (F2) also shows INFO and above in real time.
@@ -280,3 +299,11 @@ Lines are written to `logs/latest.log` alongside normal output and appear in the
 | `modloader` | Mod discovery, dependency resolution, load order |
 | `window` | Window lifecycle events |
 | `vfs` | VFS reads, overrides, and cache misses |
+
+
+Portable editor CI runs on Windows 2025, Ubuntu 24.04 and macOS 15 (Apple Silicon). Each job
+builds and tests the workspace and pinned mod runtime, then assembles a release
+archive and runs a relocated project/build/launcher smoke test. Version tags publish the
+same archives. Run `bun run package:editor` after `cargo build --release --workspace`
+to reproduce packaging locally. See [EDITOR.md](docs/EDITOR.md) for distribution
+contents, platform requirements and live Scene/Play editing.

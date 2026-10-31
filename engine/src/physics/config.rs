@@ -663,6 +663,7 @@ pub struct JointConfig {
     #[serde(rename = "type")]
     pub kind: String,
     pub body_a: Value,
+    #[serde(rename = "connectedBody", alias = "bodyB")]
     pub body_b: Value,
     pub solver: String,
     pub anchor_a: [f32; 3],

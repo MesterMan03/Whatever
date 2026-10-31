@@ -19,7 +19,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(standaloneDirectory, { recursive: true, force: true }));
 
-async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean, tickInput: {keys_pressed:string[];mouse_delta:[number,number]} = {keys_pressed:[],mouse_delta:[0,0]}) {
+async function runHost(source: string, extra: Record<string, string> = {}, links: Record<string, string> = {}, entryName = "index.ts", mode: "client" | "server" = "client", onMessage?: (message: Record<string, any>, reply: (message: object) => void) => boolean, tickInput: {keys_pressed:string[];mouse_delta:[number,number];mouse_captured?:boolean} = {keys_pressed:[],mouse_delta:[0,0]}) {
   const directory = mkdtempSync(join(tmpdir(), "whatever-host-"));
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   try {
@@ -52,7 +52,7 @@ async function runHost(source: string, extra: Record<string, string> = {}, links
     const messages: Array<Record<string, any>> = [];
     const batches: Array<Record<string, any>> = [];
     let tickNumber = 0;
-    const tick = () => child.stdin.write(JSON.stringify({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, ...tickInput }) + "\n");
+    const tick = () => child.stdin.write(JSON.stringify({ type: "Tick", tick_number: ++tickNumber, delta_seconds: 0.01, mouse_captured: true, ...tickInput }) + "\n");
     const output = (async () => {
       let remaining = "";
       for await (const chunk of child.stdout) {
@@ -94,9 +94,25 @@ function fixture(body: string) {
     '\nEngine.log("info", "fixture-done");\n});\n';
 }
 
+test("uncaptured ticks clear async subscribers' pending mouse motion", async()=>{
+  let input={keys_pressed:[] as string[],mouse_delta:[7,3] as [number,number],mouse_captured:true};
+  const result=await runHost(`import { Engine, File } from "@whatever-engine/api";
+    let calls=0;
+    Engine.on("tick",async tick=>{
+      calls++;
+      if(calls===1){Engine.log("info","RELEASE_MOUSE");await File.read("data://hold.txt");}
+      else {Engine.log("info",JSON.stringify({capture:tick.mouse_captured,mouse:tick.mouse_delta}));Engine.log("info","fixture-done");}
+    });`,{}, {},"index.ts","client",(message,reply)=>{
+      if(message.type==="Log"&&message.message==="RELEASE_MOUSE"){setTimeout(()=>{input.mouse_captured=false;input.mouse_delta=[99,88];},30);}
+      if(message.type==="FileRead"){setTimeout(()=>reply({type:"FileResponse",request_id:message.request_id,data_base64:"",error:null}),70);return true;}
+      return false;
+    },input);
+  expect(result.messages.some((m:any)=>m.type==="Log"&&m.message==='{"capture":false,"mouse":[0,0]}')).toBe(true);
+});
+
 describe("bundled mod host", () => {
   test("debug free camera is invisible and consumes input only while its camera is active", async () => {
-    const cameraSource=readFileSync(join(repository,"mods/debug/scripts/camera.ts"),"utf8");
+    const cameraSource=readFileSync(join(repository,"games/test/mods/debug/scripts/camera.ts"),"utf8");
     for (const active of [false,true]) {
       let entityIndex=0;
       const result=await runHost(

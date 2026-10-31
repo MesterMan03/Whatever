@@ -77,7 +77,7 @@ pub(super) fn default_component(kind: &str) -> Value {
         "core:physics_world" => json!({"gravity":[0,-9.81,0],"substeps":1,"timeScale":1}),
         "core:rigid_body" => json!({"type":"dynamic","world":null,"gravityScale":1,"ccd":false}),
         "core:collider" => json!({"shape":{"type":"box","size":[1,1,1]},"friction":0.5}),
-        "core:joint" => json!({"type":"fixed","bodyA":null,"bodyB":null}),
+        "core:joint" => json!({"type":"fixed","connectedBody":null}),
         _ => json!({}),
     }
 }
@@ -251,7 +251,7 @@ fn reference(
 }
 
 impl Editor {
-    fn scene_physics_world(&mut self) -> anyhow::Result<String> {
+    pub(super) fn scene_physics_world(&mut self, checkpoint: bool) -> anyhow::Result<String> {
         let doc = self.document.as_mut().context("open a scene")?;
         let mut paths = Vec::new();
         hierarchy::entity_paths(&doc.scene.entities, &mut Vec::new(), &mut paths);
@@ -285,6 +285,7 @@ impl Editor {
                 .script_id = Some(name.clone());
         } else {
             candidate.entities.push(SceneEntity {
+                enabled: true,
                 name: "Physics world".into(),
                 script_id: Some(name.clone()),
                 components: [(
@@ -296,7 +297,9 @@ impl Editor {
             });
         }
         candidate.validate()?;
-        doc.checkpoint();
+        if checkpoint {
+            doc.checkpoint();
+        }
         doc.scene = candidate;
         self.preview_dirty = true;
         Ok(name)
@@ -554,6 +557,11 @@ impl Editor {
                 }
             }
             "core:collider" => {
+                if ui.button("Edit collider in Scene").clicked() {
+                    self.component_handle = Some(component_handles::ComponentHandle::Collider);
+                    self.tool = viewport::Tool::Move;
+                }
+
                 let mut attachment = match data.get("body") {
                     None => "This entity",
                     Some(Value::Null) => "Standalone",
@@ -652,6 +660,33 @@ impl Editor {
                 changed |= boolean(ui, data, "enabled", "Enabled", true);
             }
             "core:joint" => {
+                ui.horizontal(|ui| {
+                    for (label, handle) in [
+                        (
+                            "Edit owner anchor",
+                            component_handles::ComponentHandle::JointA,
+                        ),
+                        (
+                            "Edit connected anchor",
+                            component_handles::ComponentHandle::JointB,
+                        ),
+                    ] {
+                        let available = handle != component_handles::ComponentHandle::JointB
+                            || data
+                                .get("connectedBody")
+                                .or_else(|| data.get("bodyB"))
+                                .and_then(|v| v.get("$entity"))
+                                .is_some();
+                        if ui
+                            .add_enabled(available, egui::Button::new(label).small())
+                            .clicked()
+                        {
+                            self.component_handle = Some(handle);
+                            self.tool = viewport::Tool::Move;
+                        }
+                    }
+                });
+
                 changed |= enumeration(
                     ui,
                     data,
@@ -660,8 +695,8 @@ impl Editor {
                     "fixed",
                     &["fixed", "revolute", "prismatic", "spherical", "generic"],
                 );
-                changed |= reference(ui, data, "bodyA", "Body A", names);
-                changed |= reference(ui, data, "bodyB", "Body B", names);
+                ui.weak("This entity is the first rigid body.");
+                changed |= self.connected_body_picker(ui, data);
                 changed |= vector(ui, data, "anchorA", "Anchor A", [0.0; 3]);
                 changed |= vector(ui, data, "anchorB", "Anchor B", [0.0; 3]);
                 if matches!(data["type"].as_str(), Some("revolute" | "prismatic")) {
@@ -695,6 +730,9 @@ impl Editor {
         changed
     }
     pub(super) fn inspector_ui(&mut self, ui: &mut egui::Ui) {
+        if self.has_dialog() || self.live_waiting() {
+            ui.disable();
+        }
         let Some(mut entity) = self.inspector_entity.take() else {
             ui.add_space(30.0);
             ui.vertical_centered(|ui| {
@@ -715,21 +753,40 @@ impl Editor {
             collect(&doc.scene.entities, &mut names);
         }
         let mut changed = false;
+        changed |= ui
+            .checkbox(&mut entity.enabled, "Enabled")
+            .on_hover_text("Disabled entities and descendants do not render or simulate")
+            .changed();
         ui.add_space(8.0);
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut entity.name)
+                .id_salt("entity_name")
+                .font(egui::TextStyle::Heading)
+                .desired_width(f32::INFINITY),
+        );
+        changed |= response.changed();
+        if self.rename_requested {
+            response.request_focus();
+            response.scroll_to_me(Some(egui::Align::Center));
+            let mut state = egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(entity.name.chars().count()),
+                )));
+            state.store(ui.ctx(), response.id);
+            self.rename_requested = false;
+        }
         ui.horizontal(|ui| {
-            changed |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut entity.name)
-                        .font(egui::TextStyle::Heading)
-                        .desired_width(f32::INFINITY),
-                )
-                .changed();
-        });
-        ui.horizontal(|ui| {
-            ui.weak("Script ID");
+            ui.weak(if self.live.is_some() {
+                "Runtime ID"
+            } else {
+                "Script ID"
+            });
             let mut id = entity.script_id.clone().unwrap_or_default();
             if ui
-                .text_edit_singleline(&mut id)
+                .add_enabled(self.live.is_none(), egui::TextEdit::singleline(&mut id))
                 .on_hover_text("Unique name used by scripts and scene entity references")
                 .changed()
             {
@@ -790,7 +847,7 @@ impl Editor {
                 if !entity.components.contains_key(*kind) && ui.button(*title).clicked() {
                     let mut component = default_component(kind);
                     if *kind == "core:rigid_body" {
-                        match self.scene_physics_world() {
+                        match self.scene_physics_world(true) {
                             Ok(world) => {
                                 component["world"] = json!({"$entity":world});
                                 if entity.script_id.is_none() {
@@ -808,6 +865,16 @@ impl Editor {
                                 continue;
                             }
                         }
+                    }
+                    if *kind == "core:rigid_body"
+                        && let Some(collider) = entity
+                            .components
+                            .get_mut("core:collider")
+                            .and_then(serde_json::Value::as_object_mut)
+                        && collider.get("body").is_some_and(serde_json::Value::is_null)
+                    {
+                        collider.remove("body");
+                        collider.remove("world");
                     }
                     entity.components.insert((*kind).into(), component);
                     changed = true;
@@ -836,6 +903,17 @@ impl Editor {
             }
             ui.ctx().data_mut(|state| state.insert_temp(id, kind));
         });
+        if self.live.is_some()
+            && let Some(id) = self.selected_id()
+        {
+            for kind in ["core:rigid_body_state", "core:physics_status"] {
+                if let Some(data) = self.world.get_component(&id, kind) {
+                    egui::CollapsingHeader::new(format!("Runtime state · {kind}")).show(ui, |ui| {
+                        ui.monospace(serde_json::to_string_pretty(&data).unwrap_or_default());
+                    });
+                }
+            }
+        }
         self.inspector_entity = Some(entity);
         self.inspector_dirty |= changed;
         if changed {

@@ -3,10 +3,13 @@ use serde::{Deserialize, Serialize};
 pub const COMPONENT_RIGID_BODY_STATE: &str = "core:rigid_body_state";
 
 /// Compact native snapshot. Serialize only when a mod explicitly reads this component.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RigidBodyState {
-    #[serde(serialize_with = "super::references::serialize_reference")]
+    #[serde(
+        serialize_with = "super::references::serialize_reference",
+        deserialize_with = "super::references::deserialize_reference"
+    )]
     pub world: super::EntityId,
     pub position: [f32; 3],
     pub rotation: [f32; 4],
@@ -23,7 +26,7 @@ pub const COMPONENT_SPRITE_RENDERER: &str = "core:sprite_renderer";
 pub const COMPONENT_TEXT_RENDERER: &str = "core:text_renderer";
 pub const COMPONENT_CAMERA: &str = "core:camera";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Transform {
     pub position: [f32; 3],
     /// Quaternion in xyzw order.

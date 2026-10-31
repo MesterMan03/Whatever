@@ -14,6 +14,9 @@ impl Editor {
         dialog
     }
     pub(super) fn unsaved(&self) -> bool {
+        if self.live.is_some() {
+            return false;
+        }
         self.inspector_dirty || self.document.as_ref().is_some_and(|doc| doc.dirty)
     }
     pub(super) fn confirm_leave(&mut self) -> anyhow::Result<bool> {
@@ -42,7 +45,95 @@ impl Editor {
                 "A build operation is running. You can continue after it finishes.".into();
             return Ok(());
         }
+        if self.live_waiting()
+            && matches!(
+                action,
+                Action::Undo
+                    | Action::Redo
+                    | Action::Delete
+                    | Action::Cut
+                    | Action::Paste
+                    | Action::Duplicate
+                    | Action::Rename
+                    | Action::AddEntity
+                    | Action::Cube
+                    | Action::Sphere
+                    | Action::Bean
+                    | Action::Camera
+                    | Action::AmbientLight
+                    | Action::DirectionalLight
+                    | Action::PointLight
+            )
+        {
+            self.status = "Waiting for the player to create the entity…".into();
+            return Ok(());
+        }
+        if self.live.is_some() {
+            match action {
+                Action::Save | Action::SaveAs | Action::NewScene | Action::OpenScene => {
+                    self.status = "Play edits are temporary. Stop Play to edit scene files.".into();
+                    return Ok(());
+                }
+                Action::Undo => return self.live_undo(false),
+                Action::Redo => return self.live_undo(true),
+                _ => {}
+            }
+        }
         match action {
+            Action::Home => {
+                if self.confirm_leave()? {
+                    self.stop();
+                    self.project = None;
+                    self.document = None;
+                    self.inspector_entity = None;
+                    self.world = World::new();
+                    self.preview_dirty = true;
+                    if let Some(window) = &self.window {
+                        window.set_title("Whatever Editor");
+                    }
+                }
+            }
+            Action::Preferences => self.show_preferences = true,
+            Action::ModSettings => self.edit_mod()?,
+            Action::NewScript => self.new_script()?,
+            Action::Copy | Action::Cut => {
+                self.commit_inspector()?;
+                let text = self
+                    .document
+                    .as_ref()
+                    .context("open a scene")?
+                    .copy_selected()?;
+                self.ctx.copy_text(text.clone());
+                self.entity_clipboard = Some(text);
+                if action == Action::Cut {
+                    self.action(Action::Delete)?;
+                }
+            }
+            Action::Paste | Action::Duplicate => {
+                self.commit_inspector()?;
+                let text = if action == Action::Duplicate {
+                    self.document
+                        .as_ref()
+                        .context("open a scene")?
+                        .copy_selected()?
+                } else {
+                    self.entity_clipboard
+                        .clone()
+                        .context("copy an entity first")?
+                };
+                self.document
+                    .as_mut()
+                    .context("open a scene")?
+                    .paste(&text)?;
+                self.component_handle = None;
+                self.sync_selection();
+                self.preview_dirty = true;
+            }
+            Action::Rename => {
+                ensure!(self.inspector_entity.is_some(), "select an entity");
+                self.rename_requested = true;
+            }
+
             Action::OpenProject => {
                 if let Some(path) = self
                     .file_dialog("Open Whatever project")
@@ -156,11 +247,19 @@ impl Editor {
                 self.sync_selection();
                 self.preview_dirty = true;
             }
-            Action::AddEntity | Action::AddChild => {
+            Action::AddEntity
+            | Action::Cube
+            | Action::Sphere
+            | Action::Bean
+            | Action::Camera
+            | Action::AmbientLight
+            | Action::DirectionalLight
+            | Action::PointLight => {
                 self.commit_inspector()?;
                 if let Some(doc) = &mut self.document {
-                    doc.add(action == Action::AddChild);
+                    doc.add(false);
                 }
+                self.apply_preset(action)?;
                 self.sync_selection();
                 self.preview_dirty = true;
             }
@@ -179,6 +278,10 @@ impl Editor {
         Ok(())
     }
     pub(super) fn set_project(&mut self, project: Project) -> anyhow::Result<()> {
+        self.preferences.remember(&project.path);
+        self.component_handle = None;
+        self.mesh_cache.clear();
+        self.browser_path.clear();
         let (_, vfs) = project.registry(engine::runtime::RuntimeMode::Client)?;
         self.mod_roots = project
             .manifests()?
@@ -253,6 +356,7 @@ impl Editor {
                         uri: format!("{}://scenes/{path}", manifest.meta.id),
                         path: scenes.join(&path),
                         scene: true,
+                        source: false,
                         mod_id: manifest.meta.id.clone(),
                     });
                 }
@@ -270,9 +374,13 @@ impl Editor {
                     uri: format!("{}://{path}", manifest.meta.id),
                     path: asset_root.join(&path),
                     scene: false,
+                    source: false,
                     mod_id: manifest.meta.id.clone(),
                 });
             }
+        }
+        for (id, root) in self.mod_roots.clone() {
+            self.collect_sources(&root, &id)?;
         }
         self.resources.sort_by(|a, b| a.uri.cmp(&b.uri));
         Ok(())
@@ -325,6 +433,7 @@ impl Editor {
         anyhow::bail!("choose a scene inside a mod's scenes folder in this project")
     }
     pub(super) fn request_scene(&mut self, path: &Path) -> anyhow::Result<()> {
+        ensure!(self.live.is_none(), "Stop Play before opening a scene file");
         self.scene_owner(path)?;
         if self.confirm_leave()? {
             self.open_scene(path)?;
@@ -357,6 +466,7 @@ impl Editor {
     }
     pub(super) fn select(&mut self, path: Vec<usize>) -> anyhow::Result<()> {
         self.commit_inspector()?;
+        self.component_handle = None;
         if let Some(doc) = &mut self.document {
             doc.selected = path;
         }
@@ -409,7 +519,9 @@ impl Editor {
             walk(&mut candidate.entities, &old, &new);
             self.inspector_entity = entity_at(&candidate.entities, &doc.selected).cloned();
         }
-        if let Err(error) = candidate.validate() {
+        if !doc.transient
+            && let Err(error) = candidate.validate()
+        {
             self.inspector_error = Some(format!("{error:#}"));
             return Err(error);
         }
@@ -421,6 +533,10 @@ impl Editor {
         Ok(())
     }
     pub(super) fn save_scene(&mut self) -> anyhow::Result<()> {
+        ensure!(
+            self.live.is_none(),
+            "Play edits are temporary; stop Play before saving a scene"
+        );
         self.commit_inspector()?;
         self.document.as_mut().context("open a scene")?.save()?;
         self.status = "Scene saved".into();
@@ -433,6 +549,21 @@ impl Editor {
         Ok(())
     }
     pub(super) fn frame_selected(&mut self) {
+        if self.component_handle.is_some()
+            && let Some(pose) = self.edit_pose()
+        {
+            self.target = Vec3::from(pose.position);
+            self.distance = (Vec3::from(pose.scale).length() * 2.5).clamp(2.0, 100.0);
+            return;
+        }
+        if self.live.is_some()
+            && let Some(id) = self.selected_id()
+            && let Some(pose) = self.world.world_transform(&id)
+        {
+            self.target = Vec3::from(pose.position);
+            self.distance = Vec3::from(pose.scale).length().max(1.0) * 3.0;
+            return;
+        }
         if let Some(doc) = &self.document {
             let mut paths = Vec::new();
             hierarchy::entity_paths(&doc.scene.entities, &mut Vec::new(), &mut paths);
@@ -459,11 +590,12 @@ impl Editor {
         let Some(destination) = self.build_destination.clone() else {
             return Ok(());
         };
+        self.stop();
         let (sender, receiver) = mpsc::channel();
         self.job = Some(receiver);
         self.job_label = "Preparing game build…".into();
         self.logs.clear();
-        self.browser_tab = 2;
+        self.browser_tab = 3;
         std::thread::spawn(move || {
             let result = engine::project::build_game(&project, &destination, |line| {
                 let _ = sender.send(JobEvent::Line(line));
@@ -478,6 +610,28 @@ impl Editor {
             return Ok(());
         }
         self.save_if_dirty()?;
+        self.player_detached = self.ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    egui::Event::PointerButton {
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers,
+                        ..
+                    } => Some(modifiers.shift),
+                    egui::Event::Key {
+                        key: egui::Key::Space | egui::Key::Enter,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some(modifiers.shift),
+                    _ => None,
+                })
+                .unwrap_or(input.modifiers.shift)
+        }) || !cfg!(windows);
         let project = self.project.as_ref().context("open a project")?;
         project.validate()?;
         project.save()?;
@@ -497,19 +651,52 @@ impl Editor {
         let project = self.project.as_ref().context("open a project")?;
         let mut command = Command::new(path);
         command.arg("--project").arg(&project.path);
+        if !self.player_detached {
+            command.env("WHATEVER_EDITOR_EMBEDDED", "1");
+            #[cfg(windows)]
+            player::EmbeddedWindow::configure(
+                &mut command,
+                self.window.as_ref().context("editor window")?,
+                self.viewport,
+                self.ctx.pixels_per_point(),
+            )?;
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
+        let link = engine::runtime::EditorServer::listen()?;
+        command
+            .env("WHATEVER_EDITOR_ENDPOINT", &link.endpoint)
+            .env("WHATEVER_EDITOR_TOKEN", &link.token);
         self.player = Some(command.spawn().context("start player")?);
+        let saved = self.document.take();
+        self.live = Some(live::LiveSession::new(link, saved));
+        self.document = Some(Document::live(SceneDocument::default()));
+        self.view = live::View::Play;
+        self.sync_selection();
         self.status = "Playing — close the game window or press Stop".into();
         Ok(())
     }
     pub(super) fn stop(&mut self) {
+        self.player_host = None;
+        if let Some(session) = self.live.take() {
+            self.document = session.saved;
+            self.view = live::View::Scene;
+            self.preview_dirty = true;
+            self.component_handle = None;
+            self.gizmo_drag = None;
+            self.sync_selection();
+        }
         if let Some(mut child) = self.player.take() {
             let _ = child.kill();
             let _ = child.wait();
+            self.status = "Play stopped".into();
+            #[cfg(windows)]
+            if let Some(window) = &self.window {
+                player::EmbeddedWindow::focus_editor(window);
+            }
         }
     }
     pub(super) fn import_asset(&mut self, path: &Path) -> anyhow::Result<String> {

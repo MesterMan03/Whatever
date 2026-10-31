@@ -13,9 +13,11 @@ pub struct SceneDocument {
     pub entities: Vec<SceneEntity>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SceneEntity {
+    #[serde(default = "default_enabled", skip_serializing_if = "is_enabled")]
+    pub enabled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -26,8 +28,27 @@ pub struct SceneEntity {
     pub children: Vec<SceneEntity>,
 }
 
+fn default_enabled() -> bool {
+    true
+}
+fn is_enabled(value: &bool) -> bool {
+    *value
+}
+impl Default for SceneEntity {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            name: String::new(),
+            script_id: None,
+            components: Default::default(),
+            children: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LoadedScene {
+    pub path: String,
     pub entity_ids: Vec<String>,
     pub script_ids: BTreeMap<String, String>,
     pub load_time: f64,
@@ -73,6 +94,7 @@ impl SceneDocument {
         let bytes = vfs.read(&scene_path(path)?)?;
         let document: Self = serde_json::from_slice(&bytes).context("parse .wscene JSON")?;
         let mut loaded = document.instantiate(world)?;
+        loaded.path = path.to_owned();
         loaded.load_time = start.elapsed().as_secs_f64() * 1000.0;
         Ok(loaded)
     }
@@ -115,6 +137,15 @@ impl SceneDocument {
         let mut physics = crate::physics::PhysicsRegistry::default();
         let result = (|| -> anyhow::Result<()> {
             for (index, (entity, parent)) in entries.iter().enumerate() {
+                world.names.insert(
+                    ids[index].index,
+                    if entity.name.is_empty() {
+                        entity.script_id.clone().unwrap_or_default()
+                    } else {
+                        entity.name.clone()
+                    },
+                );
+                world.set_enabled(&ids[index], entity.enabled);
                 if let Some(parent) = parent {
                     ensure!(
                         world.set_parent(ids[index], Some(ids[*parent])),
@@ -162,6 +193,7 @@ impl SceneDocument {
             return Err(error);
         }
         Ok(LoadedScene {
+            path: String::new(),
             entity_ids: ids.iter().map(ToString::to_string).collect(),
             script_ids: names
                 .into_iter()

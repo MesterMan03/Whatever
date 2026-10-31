@@ -1,4 +1,4 @@
-import {_send} from "../shared.ts";
+import { _send } from "../shared.ts";
 
 /** Public arg type for Console.register().
  * mod_id and entity_id are completed and validated by the engine; handlers receive strings. */
@@ -22,7 +22,9 @@ export type CommandSpec = {
   description?: string;
   subcommands?: CommandSpec[];
   args?: ArgSpec[];
-  handler?: (args: Record<string, string | number | boolean>) => string | string[] | Promise<string | string[]>;
+  handler?: (
+    args: Record<string, string | number | boolean>,
+  ) => string | string[] | Promise<string | string[]>;
 };
 
 type _ArgSpec = {
@@ -76,7 +78,11 @@ function _specToInternal(spec: CommandSpec, pathPrefix: string): _CommandNodeSpe
 }
 
 /** Called by ipc.ts when a CommandInvoke message arrives. */
-export async function _handleCommandInvoke(msg: { request_id: string; command_path: string[]; args: any[] }): Promise<void> {
+export async function _handleCommandInvoke(msg: {
+  request_id: string;
+  command_path: string[];
+  args: any[];
+}): Promise<void> {
   const handlerKey = msg.command_path.join(".");
   const handler = _cmdHandlers.get(handlerKey);
   const argSpecs = _cmdArgSpecs.get(handlerKey) ?? [];
@@ -88,7 +94,12 @@ export async function _handleCommandInvoke(msg: { request_id: string; command_pa
   });
 
   if (!handler) {
-    _send({ type: "CommandResponse", request_id: msg.request_id, output: [], error: `no handler registered for '${handlerKey}'` });
+    _send({
+      type: "CommandResponse",
+      request_id: msg.request_id,
+      output: [],
+      error: `no handler registered for '${handlerKey}'`,
+    });
     return;
   }
 

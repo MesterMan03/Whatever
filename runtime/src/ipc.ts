@@ -1,18 +1,36 @@
-import { handleResponse as handleNetworkResponse, handleEvent as handleNetworkEvent, type NetworkEvent } from "./network/registration.ts";
+import {
+  handleResponse as handleNetworkResponse,
+  handleEvent as handleNetworkEvent,
+  type NetworkEvent,
+} from "./network/registration.ts";
 import { _handlePhysicsResponse } from "./components/physics.ts";
 import { hydrateReferences } from "./components/ecs.ts";
 import type { JsonValue, ModManifest, EventName, EventPayloads } from "./types.ts";
 import {
-  _handlers, _fileCallbacks, _modListCallbacks, _modGetCallbacks, _msgCallbacks,
-  _entityCallbacks, _entityListCallbacks, _componentGetCallbacks, _componentQueryCallbacks,
-  _entityParentCallbacks, _entityChildrenCallbacks,
+  _startupScene,
+  _handlers,
+  _fileCallbacks,
+  _modListCallbacks,
+  _modGetCallbacks,
+  _msgCallbacks,
+  _entityCallbacks,
+  _entityListCallbacks,
+  _componentGetCallbacks,
+  _componentQueryCallbacks,
+  _entityParentCallbacks,
+  _entityChildrenCallbacks,
   _mainCameraCallbacks,
   _sceneCallbacks,
-  _EVENT_SUBSCRIBE, _send, _flush,
+  _EVENT_SUBSCRIBE,
+  _send,
+  _flush,
 } from "./shared.ts";
 import { _handleCommandInvoke, _handleArgSuggestRequest } from "./components/console.ts";
 import {
-  _audioLoadCallbacks, _audioStateCallbacks, _audioHandles, AudioHandle,
+  _audioLoadCallbacks,
+  _audioStateCallbacks,
+  _audioHandles,
+  AudioHandle,
   type AudioMetadata,
 } from "./components/audio.ts";
 
@@ -21,39 +39,119 @@ const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
 type _EngineMsg =
-  | {type:"SceneLoaded";request_id:string;scene:import("./shared.ts").LoadedSceneData|null;error:string|null}
-  | {type:"MainCameraResponse";request_id:string;entity_id:string|null}
-  | { type:"PhysicsResponse"; request_id:string; result:unknown; error:string|null }
-  | { type:"PhysicsEvent"; event:unknown }
+  | {
+      type: "SceneLoaded";
+      request_id: string;
+      scene: import("./shared.ts").LoadedSceneData | null;
+      error: string | null;
+    }
+  | { type: "MainCameraResponse"; request_id: string; entity_id: string | null }
+  | { type: "PhysicsResponse"; request_id: string; result: unknown; error: string | null }
+  | { type: "PhysicsEvent"; event: unknown }
   | { type: "CommandResults"; tick_number: number; messages: _EngineMsg[] }
-  | ({type: "NetworkEvent"} & NetworkEvent)
-  | {type: "NetworkResponse"; request_id: string; result: unknown; error: string | null}
+  | ({ type: "NetworkEvent" } & NetworkEvent)
+  | { type: "NetworkResponse"; request_id: string; result: unknown; error: string | null }
   | { type: "CommandInvoke"; request_id: string; command_path: string[]; args: JsonValue[] }
-  | { type: "ArgSuggestRequest"; request_id: string; command_path: string[]; arg_index: number; current: string }
-  | { type: "Init"; mod_id: string; engine_version: string; mode: import("./types.ts").RuntimeMode }
+  | {
+      type: "ArgSuggestRequest";
+      request_id: string;
+      command_path: string[];
+      arg_index: number;
+      current: string;
+    }
+  | {
+      type: "Init";
+      initial_scene?: import("./shared.ts").LoadedSceneData | null;
+      mod_id: string;
+      engine_version: string;
+      mode: import("./types.ts").RuntimeMode;
+    }
   | { type: "Frame"; delta_seconds: number; frame_number: number }
   | { type: "Input"; keys_pressed: string[]; mouse_delta: [number, number] }
-  | { type: "Tick"; tick_number: number; delta_seconds: number; keys_pressed: string[]; mouse_delta: [number, number] }
-  | { type: "AssetResponse"; request_id: string; path: string; data_base64: string | null; error: string | null }
+  | {
+      type: "Tick";
+      tick_number: number;
+      delta_seconds: number;
+      keys_pressed: string[];
+      mouse_delta: [number, number];
+      mouse_captured: boolean;
+    }
+  | {
+      type: "AssetResponse";
+      request_id: string;
+      path: string;
+      data_base64: string | null;
+      error: string | null;
+    }
   | { type: "FileResponse"; request_id: string; data_base64: string | null; error: string | null }
   | { type: "ModListResponse"; request_id: string; mods: ModManifest[] }
-  | { type: "ModGetResponse"; request_id: string; manifest: ModManifest | null; error: string | null }
-  | { type: "ModMessageReceived"; source_mod_id: string; request_id: string | null; payload: JsonValue }
+  | {
+      type: "ModGetResponse";
+      request_id: string;
+      manifest: ModManifest | null;
+      error: string | null;
+    }
+  | {
+      type: "ModMessageReceived";
+      source_mod_id: string;
+      request_id: string | null;
+      payload: JsonValue;
+    }
   | { type: "ModMessageReplyDelivered"; request_id: string; payload: JsonValue }
+  | { type: "EntityCreateFailed"; request_id: string; error: string }
   | { type: "EntityCreated"; request_id: string; entity_id: string }
   | { type: "EntityListResponse"; request_id: string; entity_ids: string[] }
-  | { type: "ComponentGetResponse"; request_id: string; entity_id: string; component_type: string; data: JsonValue | null; error: string | null }
-  | { type: "ComponentQueryResponse"; request_id: string; results: Array<{ entity_id: string; components: Record<string, JsonValue> }> }
-  | { type: "EntityParentResponse"; request_id: string; entity_id: string; parent_id: string | null }
+  | {
+      type: "ComponentGetResponse";
+      request_id: string;
+      entity_id: string;
+      component_type: string;
+      data: JsonValue | null;
+      error: string | null;
+    }
+  | {
+      type: "ComponentQueryResponse";
+      request_id: string;
+      results: Array<{ entity_id: string; components: Record<string, JsonValue> }>;
+    }
+  | {
+      type: "EntityParentResponse";
+      request_id: string;
+      entity_id: string;
+      parent_id: string | null;
+    }
   | { type: "EntityChildrenResponse"; request_id: string; entity_id: string; child_ids: string[] }
-  | { type: "AudioLoaded"; request_id: string; audio_id: string; duration_ms: number | null; sample_rate: number; channels: number; error: string | null }
-  | { type: "AudioState"; request_id: string; audio_id: string; position_ms: number; volume: number; speed: number; is_playing: boolean; is_looping: boolean; error: string | null }
+  | {
+      type: "AudioLoaded";
+      request_id: string;
+      audio_id: string;
+      duration_ms: number | null;
+      sample_rate: number;
+      channels: number;
+      error: string | null;
+    }
+  | {
+      type: "AudioState";
+      request_id: string;
+      audio_id: string;
+      position_ms: number;
+      volume: number;
+      speed: number;
+      is_playing: boolean;
+      is_looping: boolean;
+      error: string | null;
+    }
   | { type: "AudioClose"; audio_id: string }
   | { type: "Shutdown"; exit_code: number };
 
-const tickStates = new Map<(payload: any) => void | Promise<void>, {
-  busy: boolean; delta: number; mouse: [number, number];
-}>();
+const tickStates = new Map<
+  (payload: any) => void | Promise<void>,
+  {
+    busy: boolean;
+    delta: number;
+    mouse: [number, number];
+  }
+>();
 let lastTick = 0;
 let initialized = false;
 let failed = false;
@@ -68,18 +166,35 @@ function _dispatch(msg: _EngineMsg): void {
     }
     return;
   }
-  if (msg.type==="MainCameraResponse") {const callback=_mainCameraCallbacks.get(msg.request_id);if(callback){_mainCameraCallbacks.delete(msg.request_id);callback.resolve(msg.entity_id);}return;}
-  if (msg.type==="PhysicsResponse") {_handlePhysicsResponse(msg);return;}
-  if (msg.type==="PhysicsEvent") {
-    for (const handler of _handlers.get("physics") ?? []) handler({event:hydrateReferences(msg.event)});
+  if (msg.type === "MainCameraResponse") {
+    const callback = _mainCameraCallbacks.get(msg.request_id);
+    if (callback) {
+      _mainCameraCallbacks.delete(msg.request_id);
+      callback.resolve(msg.entity_id);
+    }
+    return;
+  }
+  if (msg.type === "PhysicsResponse") {
+    _handlePhysicsResponse(msg);
+    return;
+  }
+  if (msg.type === "PhysicsEvent") {
+    for (const handler of _handlers.get("physics") ?? [])
+      handler({ event: hydrateReferences(msg.event) });
     return;
   }
   if (msg.type === "CommandResults") {
     for (const result of msg.messages) _dispatch(result);
     return;
   }
-  if (msg.type === "NetworkResponse") { handleNetworkResponse(msg); return; }
-  if (msg.type === "NetworkEvent") { handleNetworkEvent(msg); return; }
+  if (msg.type === "NetworkResponse") {
+    handleNetworkResponse(msg);
+    return;
+  }
+  if (msg.type === "NetworkEvent") {
+    handleNetworkEvent(msg);
+    return;
+  }
   if (msg.type === "CommandInvoke") {
     _handleCommandInvoke(msg);
     return;
@@ -93,16 +208,24 @@ function _dispatch(msg: _EngineMsg): void {
   if (msg.type === "Tick") {
     lastTick = msg.tick_number;
     const fail = (error: unknown): void => {
-      _send({type: "Log", level: "error", message: "Tick handler failed: " + String(error)});
+      _send({ type: "Log", level: "error", message: "Tick handler failed: " + String(error) });
       failed = true;
     };
     if (initialized && !failed) {
       for (const handler of _handlers.get("tick") ?? []) {
-        const state = tickStates.get(handler) ?? { busy: false, delta: 0, mouse: [0, 0] as [number, number] };
+        const state = tickStates.get(handler) ?? {
+          busy: false,
+          delta: 0,
+          mouse: [0, 0] as [number, number],
+        };
         tickStates.set(handler, state);
         state.delta += msg.delta_seconds;
-        state.mouse[0] += msg.mouse_delta[0];
-        state.mouse[1] += msg.mouse_delta[1];
+        if (msg.mouse_captured) {
+          state.mouse[0] += msg.mouse_delta[0];
+          state.mouse[1] += msg.mouse_delta[1];
+        } else {
+          state.mouse = [0, 0];
+        }
         if (state.busy) continue;
         const payload = { ...msg, delta_seconds: state.delta, mouse_delta: [...state.mouse] };
         state.delta = 0;
@@ -112,11 +235,19 @@ function _dispatch(msg: _EngineMsg): void {
           if (result && typeof result.then === "function") {
             state.busy = true;
             void Promise.resolve(result).then(
-              () => { state.busy = false; },
-              error => { state.busy = false; fail(error); },
+              () => {
+                state.busy = false;
+              },
+              (error) => {
+                state.busy = false;
+                fail(error);
+              },
             );
           }
-        } catch (error) { fail(error); break; }
+        } catch (error) {
+          fail(error);
+          break;
+        }
       }
     }
     // Submission acknowledges this tick, independent of user promises. Continuations
@@ -175,6 +306,12 @@ function _dispatch(msg: _EngineMsg): void {
     return;
   }
 
+  if (msg.type === "EntityCreateFailed") {
+    const cb = _entityCallbacks.get(msg.request_id);
+    _entityCallbacks.delete(msg.request_id);
+    cb?.reject(new Error(msg.error));
+    return;
+  }
   if (msg.type === "EntityCreated") {
     const cb = _entityCallbacks.get(msg.request_id);
     if (cb) {
@@ -272,7 +409,10 @@ function _dispatch(msg: _EngineMsg): void {
     return;
   }
 
-  if (msg.type === "Init") initialized = true;
+  if (msg.type === "Init") {
+    _startupScene.data = msg.initial_scene ?? null;
+    initialized = true;
+  }
   // Init / Shutdown / any future broadcast-style messages.
   for (const [event, msgType] of Object.entries(_EVENT_SUBSCRIBE) as [EventName, string][]) {
     if (msg.type !== msgType) continue;
@@ -292,14 +432,19 @@ void (async () => {
   let remaining = "";
   for (;;) {
     const { value, done } = await _stdin.read();
-    if (done) { _exit(0); }
+    if (done) {
+      _exit(0);
+    }
     remaining += _decoder.decode(value, { stream: true });
     let newline: number;
     while ((newline = remaining.indexOf("\n")) >= 0) {
       const line = remaining.slice(0, newline);
       remaining = remaining.slice(newline + 1);
-      try { _dispatch(JSON.parse(line) as _EngineMsg); }
-      catch { /* Ignore malformed messages. */ }
+      try {
+        _dispatch(JSON.parse(line) as _EngineMsg);
+      } catch {
+        /* Ignore malformed messages. */
+      }
     }
   }
 })();

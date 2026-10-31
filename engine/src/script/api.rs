@@ -375,6 +375,54 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
         }
 
         // --- Entity management -----------------------------------------------
+        ScriptMessage::EntitySetEnabled { entity_id, enabled } => {
+            if let Some(id) = resolve_entity(&entity_id, batch_entities) {
+                world.set_enabled(&id, enabled);
+                physics.invalidate();
+                return DispatchResult {
+                    render_cmds: RenderCommand::upsert_hierarchy(world, [id]),
+                    ..Default::default()
+                };
+            }
+        }
+        ScriptMessage::EntityClone {
+            request_id,
+            entity_id,
+            recursive,
+            enabled,
+        } => {
+            let result = resolve_entity(&entity_id, batch_entities)
+                .ok_or_else(|| anyhow::anyhow!("invalid clone source"))
+                .and_then(|id| world.clone_entity(id, recursive, enabled));
+            match result {
+                Ok(id) => {
+                    batch_entities.insert(format!("pending:{request_id}"), id);
+                    physics.invalidate();
+                    script_host.send(
+                        mod_id,
+                        &EngineMessage::EntityCreated {
+                            request_id,
+                            entity_id: id.to_string(),
+                        },
+                        debug,
+                    );
+                    return DispatchResult {
+                        render_cmds: RenderCommand::upsert_hierarchy(world, [id]),
+                        ..Default::default()
+                    };
+                }
+                Err(error) => {
+                    script_host.send(
+                        mod_id,
+                        &EngineMessage::EntityCreateFailed {
+                            request_id,
+                            error: error.to_string(),
+                        },
+                        debug,
+                    );
+                }
+            }
+        }
         ScriptMessage::EntityCreate { request_id } => {
             let id = world.create_entity();
             batch_entities.insert(format!("pending:{request_id}"), id);

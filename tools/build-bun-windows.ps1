@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$BunExecutable,
     [Parameter(Mandatory=$true)][string]$Checkout,
     [Parameter(Mandatory=$true)][string]$Tools,
+    [int]$Jobs = 4,
     [switch]$DebugBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -20,5 +21,5 @@ if (Test-Path -LiteralPath $atl) {
     if ($library) { $env:LIB = $library.Directory.FullName + ';' + $env:LIB }
 }
 Set-Location -LiteralPath $Checkout
-if ($DebugBuild) { & $BunExecutable bd -j4 } else { & $BunExecutable run build:release -j4 }
+if ($DebugBuild) { & $BunExecutable bd "-j$Jobs" } else { & $BunExecutable run build:release "-j$Jobs" }
 exit $LASTEXITCODE

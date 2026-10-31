@@ -681,3 +681,29 @@ fn destroying_a_scene_parent_of_a_world_deactivates_external_dependents() {
         false
     );
 }
+
+#[test]
+fn disabled_hierarchies_stop_physics_and_reenable_from_the_preserved_pose() {
+    let mut world = World::new();
+    let mut physics = PhysicsRegistry::default();
+    let parent = world.create_entity();
+    let cube = body(&mut physics, &mut world, [0.0, 5.0, 0.0], "dynamic");
+    world.set_parent(cube, Some(parent));
+    steps(&mut physics, &mut world, 1);
+    let pose = world.get_component(&cube, "core:transform").expect("pose");
+    world.set_enabled(&parent, false);
+    physics.invalidate();
+    steps(&mut physics, &mut world, 20);
+    assert_eq!(
+        world.get_component(&cube, "core:transform"),
+        Some(pose.clone())
+    );
+    assert!(world.get_component(&cube, STATE).is_none());
+    world.set_enabled(&parent, true);
+    physics.invalidate();
+    steps(&mut physics, &mut world, 20);
+    assert!(
+        state(&world, cube)["position"][1].as_f64().expect("y")
+            < pose["position"][1].as_f64().expect("saved y")
+    );
+}

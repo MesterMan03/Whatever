@@ -1,95 +1,28 @@
 name: Release
-
 on:
   push:
-    tags:
-      - "v*.*.*"
-
+    tags: ["v*.*.*"]
 permissions:
-  contents: write
-
+  contents: read
 jobs:
-  build-linux:
-    name: Build (Linux)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config libxkbcommon-dev libwayland-dev \
-            libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev \
-            libasound2-dev
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: ./.github/actions/build-mod-host
-
-      - name: Build release binary
-        run: cargo build --release --workspace
-
-      - name: Bundle artifacts
-        run: |
-          mkdir -p stage
-          target/release/wmod runtime-kit --player target/release/Whatever --host runtime/dist/whatever-mod-host --launcher target/release/whatever-launcher --source . --output stage/Whatever-linux-x86_64
-          cp target/release/whatever-editor target/release/wmod stage/Whatever-linux-x86_64/
-          tar -czf Whatever-linux-x86_64.tar.gz -C stage Whatever-linux-x86_64
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Whatever-linux-x86_64
-          path: Whatever-linux-x86_64.tar.gz
-
-  build-windows:
-    name: Build (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: ./.github/actions/build-mod-host
-
-      - name: Build release binary
-        run: cargo build --release --workspace
-
-      - name: Bundle artifacts
-        shell: pwsh
-        run: |
-          target\release\wmod.exe runtime-kit --player target\release\Whatever.exe --host runtime\dist\whatever-mod-host.exe --launcher target\release\whatever-launcher.exe --source . --output stage\Whatever-windows-x86_64
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item target\release\whatever-editor.exe,target\release\wmod.exe stage\Whatever-windows-x86_64\
-          Compress-Archive -Path stage\Whatever-windows-x86_64 -DestinationPath Whatever-windows-x86_64.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Whatever-windows-x86_64
-          path: Whatever-windows-x86_64.zip
-
+  editor:
+    uses: ./.github/workflows/editor.yml
   release:
-    name: Create GitHub Release
-    needs: [build-linux, build-windows]
-    runs-on: ubuntu-latest
+    name: Publish portable editor archives
+    needs: editor
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: WhateverEditor-*
           merge-multiple: true
-
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            Whatever-linux-x86_64.tar.gz
-            Whatever-windows-x86_64.zip
+            WhateverEditor-windows-x86_64.zip
+            WhateverEditor-linux-x86_64.tar.gz
+            WhateverEditor-macos-arm64.tar.gz
+          fail_on_unmatched_files: true
           generate_release_notes: true

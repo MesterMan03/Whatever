@@ -22,7 +22,7 @@ pub fn installation_root() -> anyhow::Result<PathBuf> {
         }
     }
     if cfg!(debug_assertions) {
-        return Ok(crate::development_root());
+        return Ok(crate::development_root().join("games/test"));
     }
     Ok(parent.to_path_buf())
 }
@@ -118,6 +118,9 @@ impl LoadedGame {
         } else {
             None
         };
+        let identity = project
+            .as_ref()
+            .map(|project| (project.game_id(), project.name.clone()));
         let (directories, meta_path) = if let Some(project) = project {
             let directories = project.roots()?;
             let core = project
@@ -135,7 +138,7 @@ impl LoadedGame {
                 cwd.join("mods/core/meta.toml"),
             )
         };
-        let meta = if meta_path.exists() {
+        let mut meta = if meta_path.exists() {
             toml::from_str::<GameMeta>(
                 &std::fs::read_to_string(&meta_path)
                     .with_context(|| format!("reading {}", meta_path.display()))?,
@@ -144,6 +147,10 @@ impl LoadedGame {
         } else {
             GameMeta::default()
         };
+        if let Some((id, name)) = identity {
+            meta.game.id = id;
+            meta.game.name = name;
+        }
         let mode = options.mode.unwrap_or(meta.game.default_mode);
         super::scheduler::TickClock::new(meta.game.tick_rate)?;
         tracing::info!(%mode, game=%meta.game.id, "loading game");

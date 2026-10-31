@@ -5,15 +5,16 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extension = process.platform === "win32" ? ".exe" : "";
 const overrideIndex = process.argv.indexOf("--bun");
+const debugRuntime = process.argv.includes("--debug-runtime");
+if (overrideIndex >= 0 && !process.argv[overrideIndex + 1]) throw new Error("--bun needs a fork executable path.");
 const candidates = overrideIndex >= 0
   ? [resolve(process.argv[overrideIndex + 1] ?? "")]
   : [
-      join(root, "vendor/bun/build/release/bun" + extension),
-      join(root, "vendor/bun/build/debug/bun-debug" + extension),
+      join(root, debugRuntime ? "vendor/bun/build/debug/bun-debug" + extension : "vendor/bun/build/release/bun" + extension),
     ];
 const bun = candidates.find(existsSync);
 if (!bun) {
-  throw new Error("Build vendor/bun first with bun run build:release, or pass --bun <fork-binary>.");
+  throw new Error("Build the pinned release fork with bun run build:bun. Development-only debug hosts require bun run build:host --debug-runtime.");
 }
 
 async function run(args: string[]): Promise<string> {
@@ -50,8 +51,11 @@ try {
   });
   const [infoText, code] = await Promise.all([new Response(check.stdout).text(), check.exited]);
   const info = JSON.parse(infoText);
-  if (code !== 0 || info.runtime !== "whatever-mod-host" || info.protocol !== 6 || info.native_policy !== 1) {
+  if (code !== 0 || info.runtime !== "whatever-mod-host" || info.protocol !== 8 || info.native_policy !== 1) {
     throw new Error("The compiled mod host failed its native-policy self check.");
+  }
+  if (!debugRuntime && String(info.bun_version).split(/[.-]/).includes("debug")) {
+    throw new Error("Release hosts require a release Bun fork; use --debug-runtime explicitly for development.");
   }
   renameSync(temporary, output);
   console.log("Built " + output);

@@ -36,9 +36,9 @@ pub fn default_core() -> anyhow::Result<PathBuf> {
         return Ok(installed);
     }
     if cfg!(debug_assertions) {
-        return Ok(crate::development_root().join("mods/core"));
+        return Ok(crate::development_root().join("engine/resources/core"));
     }
-    anyhow::bail!("core template is missing; provide a path to a core mod from a runtime kit")
+    anyhow::bail!("core template is missing from this editor installation")
 }
 
 pub fn create_mod(directory: &Path, options: &ModOptions) -> anyhow::Result<PathBuf> {
@@ -77,8 +77,8 @@ pub fn create_mod(directory: &Path, options: &ModOptions) -> anyhow::Result<Path
         std::fs::write(
             directory.join("scripts/index.ts"),
             format!(
-                "import {{ Engine, Scene }} from \"@whatever-engine/api\";\n\nEngine.on(\"init\", async () => {{\n  const scene = await Scene.loadScene(\"{}://main\");\n  if (Engine.mode === \"client\") Engine.setMainCamera(scene.get(\"camera\").id);\n}});\n",
-                options.id
+                "import {{ Engine, Scene }} from \"@whatever-engine/api\";\n\nEngine.on(\"init\", async () => {{\n  const initial = Scene.initialScene();\n  const paths = [\"{id}://main\", \"{id}://main.wscene\", \"{id}://scenes/main.wscene\"];\n  const scene = initial && paths.includes(initial.path) ? initial : await Scene.loadScene(\"{id}://main\");\n  if (Engine.mode === \"client\") Engine.setMainCamera(scene.get(\"camera\").id);\n}});\n",
+                id = options.id
             ),
         )?;
         let executable = std::env::current_exe()?;
@@ -142,6 +142,7 @@ pub fn create_project(
     create_mod(&directory.join("mods").join(id), &ModOptions::new(id, name))?;
     let project = Project {
         version: 1,
+        id: id.into(),
         name: name.into(),
         mods: vec!["mods/core".into(), format!("mods/{id}")],
         build: super::BuildSettings::default(),

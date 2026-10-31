@@ -37,6 +37,19 @@ runs:
         if ($LASTEXITCODE -ne 0) { throw 'NASM download failed' }
         Expand-Archive -LiteralPath $nasm -DestinationPath $tools -Force
 
+    - name: Install macOS native build prerequisites
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Homebrew only creates llvm@23 once the unversioned formula moves past 23.
+        formula=llvm
+        major=$(brew info --json=v2 llvm | jq -r '.formulae[0].versions.stable' | cut -d. -f1)
+        if [ "$major" != 23 ]; then formula=llvm@23; fi
+        brew install "$formula" cmake ninja nasm pkgconf autoconf automake libtool ccache coreutils gnu-sed go icu4c libiconv ruby
+        echo "$(brew --prefix "$formula")/bin" >> "$GITHUB_PATH"
+        echo "BUN_TOOLCHAIN_LLVM=$(brew --prefix "$formula")" >> "$GITHUB_ENV"
+
     - name: Install JavaScript build dependencies
       shell: bash
       run: bun install --frozen-lockfile --ignore-scripts
@@ -45,8 +58,26 @@ runs:
       shell: bash
       run: bun run prepare:bun
 
-    - name: Build native runtime
+    - name: Read pinned fork revision
+      id: fork
       shell: bash
+      run: |
+        echo "revision=$(git -C vendor/bun rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "image=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/cache@v4
+      id: native
+      with:
+        path: |
+          vendor/bun/build/release/bun
+          vendor/bun/build/release/bun.exe
+        key: bun-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.image }}-${{ steps.fork.outputs.revision }}-${{ hashFiles('tools/build-bun*', '.github/actions/build-mod-host/action.yml') }}
+
+    - name: Build native runtime
+      if: steps.native.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        WHATEVER_BUN_JOBS: ${{ runner.os == 'macOS' && '1' || '2' }}
       run: bun run build:bun
 
     - name: Build API and bundled mod host

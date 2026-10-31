@@ -25,7 +25,7 @@ impl Node {
             &LaunchOptions {
                 project: None,
                 mode: Some(mode),
-                mods: Some(crate::development_root().join("mods")),
+                mods: Some(crate::development_root().join("games/test/mods")),
                 network: crate::network::NetworkSettings {
                     directory: root.join("network"),
                     ..Default::default()
@@ -40,6 +40,7 @@ impl Node {
             input: Default::default(),
             presentation: Default::default(),
             stop: std::sync::atomic::AtomicBool::new(false),
+            editor_snapshot: Default::default(),
         });
         let (commands, receiver) = mpsc::channel();
         let mut simulation =

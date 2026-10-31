@@ -42,7 +42,15 @@ export type EventPayloads = {
    * Commands flush once per tick, independently of async handler completion.
    * Subscribe by calling `Engine.on("tick", handler)`.
    */
-  tick: { tick_number: number; delta_seconds: number; keys_pressed: string[]; mouse_delta: [number, number] };
+  tick: {
+    tick_number: number;
+    delta_seconds: number;
+    keys_pressed: string[];
+    /** Relative mouse motion since the last delivered tick; zero while uncaptured. */
+    mouse_delta: [number, number];
+    /** False while the console or editor owns the pointer. */
+    mouse_captured: boolean;
+  };
   /**
    * Fired when another mod sends this mod a message via `Message.send`.
    * If `request_id` is present the sender is awaiting a reply — call `Message.reply(request_id, data)`.

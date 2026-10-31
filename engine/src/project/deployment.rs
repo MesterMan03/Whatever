@@ -105,8 +105,9 @@ pub(super) fn export_files(
     files: &RuntimeFiles,
     destination: &Path,
 ) -> anyhow::Result<PathBuf> {
-    project.validate()?;
+    let project = project.for_build()?;
     files.validate()?;
+    crate::script::validate_release_host(&files.host)?;
     let game_executable = launcher_name(&project.name)?;
     let destination = std::path::absolute(destination)?;
     let parent = destination
@@ -184,14 +185,23 @@ pub(super) fn export_files(
                     .any(|kind| ext.eq_ignore_ascii_case(kind))
             }) {
                 copy_tree(&entry.path(), &stage.join("engine").join(entry.file_name()))?;
+                // The branded launcher is a separate executable at the game root.
+                if entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
+                {
+                    copy_tree(&entry.path(), &stage.join(entry.file_name()))?;
+                }
             }
         }
     }
     copy_tree(&files.license, &stage.join("LICENSE"))?;
     copy_tree(&files.bun_license, &stage.join("BUN-LICENSE.md"))?;
-    super::branding::brand(project, &stage.join(&game_executable), &stage)?;
+    super::branding::brand(&project, &stage.join(&game_executable), &stage)?;
     let mut deployed = Project {
         version: 1,
+        id: project.game_id(),
         name: project.name.clone(),
         mods: Vec::new(),
         build: project.build.clone(),
@@ -205,13 +215,25 @@ pub(super) fn export_files(
         deployed.mods.push(relative);
         versions.insert(manifest.meta.id, manifest.meta.version);
     }
+    let meta_path = stage.join("mods/core/meta.toml");
+    let mut meta: toml::Value = if meta_path.is_file() {
+        toml::from_str(&std::fs::read_to_string(&meta_path)?)?
+    } else {
+        toml::Value::Table(Default::default())
+    };
+    if meta.get("game").is_none() {
+        meta["game"] = toml::Value::Table(Default::default());
+    }
+    meta["game"]["id"] = toml::Value::String(project.game_id());
+    meta["game"]["name"] = toml::Value::String(project.name.clone());
+    std::fs::write(meta_path, toml::to_string_pretty(&meta)?)?;
     deployed.mods.sort();
     deployed.save()?;
     deployed.validate()?;
     std::fs::write(
         stage.join("build.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "version": 1, "engine_version": env!("CARGO_PKG_VERSION"),
+            "game": {"id":project.game_id(),"name":project.name}, "version": 1, "engine_version": env!("CARGO_PKG_VERSION"),
             "os": std::env::consts::OS, "arch": std::env::consts::ARCH, "mods": versions
         }))?,
     )?;

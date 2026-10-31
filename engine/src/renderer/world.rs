@@ -16,6 +16,10 @@ pub fn apply_render_command(
         RenderCommand::UpsertSprite { entity_idx } => {
             let entity_id = world.allocator.live_id(*entity_idx);
             let Some(entity_id) = entity_id else { return };
+            if !world.is_active(&entity_id) {
+                renderer.scene.remove_sprite(*entity_idx);
+                return;
+            }
             let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
             };
@@ -44,6 +48,10 @@ pub fn apply_render_command(
         RenderCommand::UpsertText { entity_idx } => {
             let entity_id = world.allocator.live_id(*entity_idx);
             let Some(entity_id) = entity_id else { return };
+            if !world.is_active(&entity_id) {
+                renderer.text.remove_text(*entity_idx);
+                return;
+            }
             let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
             };
@@ -69,6 +77,10 @@ pub fn apply_render_command(
         RenderCommand::UpsertMesh { entity_idx } => {
             let entity_id = world.allocator.live_id(*entity_idx);
             let Some(entity_id) = entity_id else { return };
+            if !world.is_active(&entity_id) {
+                renderer.scene.remove_mesh(*entity_idx);
+                return;
+            }
             let Some(world_transform) = world.world_transform(&entity_id) else {
                 return;
             };
@@ -105,7 +117,12 @@ pub fn collect_lights(world: &World) -> GpuLightingData {
     let mut data = GpuLightingData::zeroed();
 
     // Additive ambient: sum all ambient light components.
-    for al in world.ambient_lights.values() {
+    for (_, al) in world.ambient_lights.iter().filter(|(i, _)| {
+        world
+            .allocator
+            .live_id(**i)
+            .is_some_and(|id| world.is_active(&id))
+    }) {
         let c = glam::Vec3::from(al.color) * al.intensity;
         data.ambient_color = (glam::Vec3::from(data.ambient_color) + c).to_array();
         data.ambient_intensity = 1.0;
@@ -113,7 +130,18 @@ pub fn collect_lights(world: &World) -> GpuLightingData {
 
     // Directional lights (up to 4).
     let mut dir_count = 0u32;
-    for dl in world.directional_lights.values().take(4) {
+    for dl in world
+        .directional_lights
+        .iter()
+        .filter(|(i, _)| {
+            world
+                .allocator
+                .live_id(**i)
+                .is_some_and(|id| world.is_active(&id))
+        })
+        .map(|(_, light)| light)
+        .take(4)
+    {
         data.dir_lights[dir_count as usize] = GpuDirectionalLight {
             direction: dl.direction,
             _pad0: 0.0,
@@ -126,12 +154,23 @@ pub fn collect_lights(world: &World) -> GpuLightingData {
 
     // Point lights (up to 8) — position comes from core:transform.
     let mut pt_count = 0u32;
-    for (idx, pl) in world.point_lights.iter().take(8) {
-        let position = if let Some(t) = world.transforms.get(idx) {
-            t.position
-        } else {
-            [0.0, 0.0, 0.0]
-        };
+    for (idx, pl) in world
+        .point_lights
+        .iter()
+        .filter(|(i, _)| {
+            world
+                .allocator
+                .live_id(**i)
+                .is_some_and(|id| world.is_active(&id))
+        })
+        .take(8)
+    {
+        let position = world
+            .allocator
+            .live_id(*idx)
+            .and_then(|id| world.world_transform(&id))
+            .map(|transform| transform.position)
+            .unwrap_or([0.0; 3]);
         data.point_lights[pt_count as usize] = GpuPointLight {
             position,
             range: pl.range,
@@ -143,4 +182,59 @@ pub fn collect_lights(world: &World) -> GpuLightingData {
     data.point_light_count = pt_count;
 
     data
+}
+
+/// Refresh only changed render poses using the existing mesh/texture/text caches.
+pub fn sync_render_transforms(
+    renderer: &mut Renderer,
+    world: &World,
+    vfs: &dyn Vfs,
+    cache: &mut std::collections::HashMap<u32, (crate::ecs::EntityId, crate::ecs::Transform)>,
+) {
+    let indices: std::collections::HashSet<_> = world
+        .mesh_renderers
+        .keys()
+        .chain(world.sprite_renderers.keys())
+        .chain(world.text_renderers.keys())
+        .copied()
+        .collect();
+    cache.retain(|index, (id, _)| indices.contains(index) && world.is_alive(id));
+    for index in indices {
+        let Some(id) = world
+            .allocator
+            .live_id(index)
+            .filter(|id| world.is_active(id))
+        else {
+            continue;
+        };
+        let Some(pose) = world.world_transform(&id) else {
+            continue;
+        };
+        if cache
+            .get(&index)
+            .is_some_and(|(last_id, last)| *last_id == id && *last == pose)
+        {
+            continue;
+        }
+        for command in [
+            world
+                .mesh_renderers
+                .contains_key(&index)
+                .then_some(RenderCommand::UpsertMesh { entity_idx: index }),
+            world
+                .sprite_renderers
+                .contains_key(&index)
+                .then_some(RenderCommand::UpsertSprite { entity_idx: index }),
+            world
+                .text_renderers
+                .contains_key(&index)
+                .then_some(RenderCommand::UpsertText { entity_idx: index }),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            apply_render_command(&command, renderer, world, vfs);
+        }
+        cache.insert(index, (id, pose));
+    }
 }

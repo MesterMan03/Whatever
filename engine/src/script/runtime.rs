@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub const HOST_PROTOCOL: u32 = 6;
+pub const HOST_PROTOCOL: u32 = 8;
 
 #[derive(Deserialize)]
 struct HostInfo {
@@ -49,6 +49,12 @@ pub fn find_host() -> anyhow::Result<PathBuf> {
 }
 
 pub fn validate_host(path: &std::path::Path) -> anyhow::Result<()> {
+    check_host(path, false)
+}
+pub fn validate_release_host(path: &std::path::Path) -> anyhow::Result<()> {
+    check_host(path, true)
+}
+fn check_host(path: &std::path::Path, release: bool) -> anyhow::Result<()> {
     let output = host_command(path)
         .arg("--runtime-info")
         .output()
@@ -63,6 +69,17 @@ pub fn validate_host(path: &std::path::Path) -> anyhow::Result<()> {
     let info: HostInfo =
         serde_json::from_slice(&output.stdout).context("invalid bundled mod host metadata")?;
     let bun = semver::Version::parse(&info.bun_version).context("invalid bundled Bun version")?;
+    if release
+        && bun
+            .pre
+            .as_str()
+            .split(['.', '-'])
+            .any(|part| part == "debug")
+    {
+        bail!(
+            "Deployment requires the release Bun fork; run bun run build:bun then bun run build:host. Debug runtimes are for development only."
+        );
+    }
     if (bun.major, bun.minor, bun.patch) != (1, 4, 4)
         || info.runtime != "whatever-mod-host"
         || info.protocol != HOST_PROTOCOL

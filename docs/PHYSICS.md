@@ -309,7 +309,22 @@ commands execute on a later tick. Collider identities remain generational on rem
 ## Playground
 
 The client-only `physics_demo` mod registers `physicsdemo start [seed]`, `cubes [count]`,
-and `stop`. See [its controls and scene](../mods/physics_demo/README.md). It demonstrates
+and `stop`. See [its controls and scene](../games/test/mods/physics_demo/README.md). It demonstrates
 dynamic bodies, a compound frame, a joint entity, a per-scene world and camera parenting.
 Its authored `scenes/playground.wscene` holds the initial entities and references;
 the mod loads that scene, applies seeded variation and handles player behavior.
+
+### Body-owned joints and disabled templates
+
+Put a joint component on its first rigid-body entity and set `connectedBody` to the
+other body. The A anchor is local to the owner, and B is local to the connected
+body. The editor lists other scene entities and accepts hierarchy drops. Older
+bodyA/bodyB descriptors remain supported for migration. Entity Enabled state is
+hierarchical; inactive bodies, colliders, joints and worlds leave simulation
+without losing their authored component data.
+
+The playground authors a disabled Base Cube and Cube Spawn Point. Initial and
+extra cubes clone that template with `enabled: true`, preserving its mesh/body
+configuration and remapping references. The mod varies placement around the marker,
+scale, rotation and mass. The gate frame and door live under a Gate parent; its
+revolute joint lives on the door and connects to the frame.

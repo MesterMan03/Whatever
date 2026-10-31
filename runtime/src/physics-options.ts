@@ -201,8 +201,11 @@ export interface PhysicsJointRapierOptions {
 }
 export type PhysicsJointType = "fixed" | "revolute" | "prismatic" | "spherical" | "generic";
 export interface PhysicsJointOptions {
-  bodyA: PhysicsEntityInput;
-  bodyB: PhysicsEntityInput;
+  connectedBody?: PhysicsEntityInput;
+  /** @deprecated Put the joint on body A and use connectedBody. */
+  bodyA?: PhysicsEntityInput;
+  /** @deprecated Use connectedBody. */
+  bodyB?: PhysicsEntityInput;
   solver?: "impulse" | "multibody";
   /** Anchors, orientations and axes are in each body's local frame. */
   anchorA?: PhysicsVec3;

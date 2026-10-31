@@ -1,8 +1,12 @@
-import {fromWire, toWire, type Schema} from "./schema.ts";
+import { fromWire, toWire, type Schema } from "./schema.ts";
 
 /** Mutable SDK view of engine-owned data. Commit whole validated snapshots so array
  * mutators never expose half-applied edits to native validation. */
-export function dataProxy<T>(schema: Schema, initial: unknown, changed: (wire: unknown) => void): T {
+export function dataProxy<T>(
+  schema: Schema,
+  initial: unknown,
+  changed: (wire: unknown) => void,
+): T {
   let root = fromWire(schema, toWire(schema, initial));
   const cache = new Map<string, any>();
   const read = (path: PropertyKey[]) => path.reduce((value, key) => value[key], root);
@@ -19,7 +23,21 @@ export function dataProxy<T>(schema: Schema, initial: unknown, changed: (wire: u
     const proxy = new Proxy(array ? [] : Object.create(null), {
       get(_target, key, receiver) {
         const value = read(path);
-        if (array && typeof key === "string" && ["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "copyWithin"].includes(key)) {
+        if (
+          array &&
+          typeof key === "string" &&
+          [
+            "push",
+            "pop",
+            "shift",
+            "unshift",
+            "splice",
+            "sort",
+            "reverse",
+            "fill",
+            "copyWithin",
+          ].includes(key)
+        ) {
           return (...args: unknown[]) => {
             const next = clone();
             const target = path.reduce((value, key) => value[key], next);
@@ -32,32 +50,51 @@ export function dataProxy<T>(schema: Schema, initial: unknown, changed: (wire: u
         return child && typeof child === "object" ? wrap([...path, key]) : child;
       },
       set(_target, key, value) {
-        if (typeof key !== "string" || ["__proto__", "constructor", "prototype"].includes(key)) throw new Error("Invalid client-data property");
+        if (typeof key !== "string" || ["__proto__", "constructor", "prototype"].includes(key))
+          throw new Error("Invalid client-data property");
         const next = clone();
         const target = path.reduce((value, key) => value[key], next);
         Reflect.set(target, key, value);
-        commit(next); return true;
+        commit(next);
+        return true;
       },
       deleteProperty(_target, key) {
         const next = clone();
         const target = path.reduce((value, key) => value[key], next);
         Reflect.deleteProperty(target, key);
-        commit(next); return true;
+        commit(next);
+        return true;
       },
-      ownKeys() { return Reflect.ownKeys(read(path)); },
-      has(_target, key) { return Reflect.has(read(path), key); },
+      ownKeys() {
+        return Reflect.ownKeys(read(path));
+      },
+      has(_target, key) {
+        return Reflect.has(read(path), key);
+      },
       getOwnPropertyDescriptor(_target, key) {
         const descriptor = Reflect.getOwnPropertyDescriptor(read(path), key);
-        if (descriptor && "value" in descriptor && descriptor.value && typeof descriptor.value === "object") {
-          return {...descriptor, value: wrap([...path, key])};
+        if (
+          descriptor &&
+          "value" in descriptor &&
+          descriptor.value &&
+          typeof descriptor.value === "object"
+        ) {
+          return { ...descriptor, value: wrap([...path, key]) };
         }
         return descriptor;
       },
-      defineProperty() { throw new Error("Client data supports assignments, not property definitions"); },
-      setPrototypeOf() { throw new Error("Client-data prototypes cannot be changed"); },
-      preventExtensions() { throw new Error("Client-data proxies cannot be frozen"); },
+      defineProperty() {
+        throw new Error("Client data supports assignments, not property definitions");
+      },
+      setPrototypeOf() {
+        throw new Error("Client-data prototypes cannot be changed");
+      },
+      preventExtensions() {
+        throw new Error("Client-data proxies cannot be frozen");
+      },
     });
-    cache.set(id, proxy); return proxy;
+    cache.set(id, proxy);
+    return proxy;
   };
   return wrap([]);
 }

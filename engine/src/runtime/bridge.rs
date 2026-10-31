@@ -16,8 +16,24 @@ use std::thread::JoinHandle;
 pub struct RuntimeInput {
     pub keys: Vec<String>,
     pub mouse: (f32, f32),
+    pub mouse_captured: bool,
+}
+impl RuntimeInput {
+    pub fn take_tick(&mut self) -> (Vec<String>, (f32, f32), bool) {
+        let mouse = std::mem::take(&mut self.mouse);
+        (
+            self.keys.clone(),
+            if self.mouse_captured {
+                mouse
+            } else {
+                (0.0, 0.0)
+            },
+            self.mouse_captured,
+        )
+    }
 }
 pub enum RuntimeCommand {
+    Editor(super::editor::EditorControl),
     ConsoleInput(String),
     Ready,
     Ipc {
@@ -27,8 +43,10 @@ pub enum RuntimeCommand {
 }
 pub struct Presentation {
     pub world: World,
+    pub(crate) motion: crate::presentation::MotionHistory,
     pub main_camera: Option<EntityId>,
     pub tick_rate: f64,
+    pub editor_sequence: u64,
     pub render_cmds: std::collections::HashMap<(u8, u32), RenderCommand>,
     pub events: Vec<(String, ScriptMessage)>,
     pub client_commands: Vec<ScriptMessage>,
@@ -36,8 +54,10 @@ pub struct Presentation {
 impl Presentation {
     pub fn merge(&mut self, newer: Self) {
         self.world = newer.world;
+        self.motion = newer.motion;
         self.main_camera = newer.main_camera;
         self.tick_rate = newer.tick_rate;
+        self.editor_sequence = newer.editor_sequence;
         self.render_cmds.extend(newer.render_cmds);
         self.events.extend(newer.events);
         self.client_commands.extend(newer.client_commands);
@@ -47,6 +67,7 @@ pub struct Shared {
     pub input: Mutex<RuntimeInput>,
     pub presentation: Mutex<Option<Presentation>>,
     pub stop: AtomicBool,
+    pub editor_snapshot: Mutex<Option<std::sync::Weak<super::editor_transport::EditorMailbox>>>,
 }
 pub struct SimulationHandle {
     pub shared: Arc<Shared>,
@@ -59,6 +80,7 @@ impl SimulationHandle {
             input: Mutex::new(RuntimeInput::default()),
             presentation: Mutex::new(None),
             stop: AtomicBool::new(false),
+            editor_snapshot: Mutex::new(None),
         });
         let (commands, rx) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
@@ -107,12 +129,31 @@ mod tests {
     fn snapshot(command: RenderCommand) -> Presentation {
         Presentation {
             world: World::new(),
+            motion: Default::default(),
             main_camera: None,
             tick_rate: 60.0,
+            editor_sequence: 0,
             render_cmds: std::iter::once((command.key(), command)).collect(),
             events: vec![],
             client_commands: vec![],
         }
+    }
+    #[test]
+    fn uncaptured_ticks_discard_queued_mouse_motion() {
+        let mut input = RuntimeInput {
+            mouse: (10.0, -4.0),
+            ..Default::default()
+        };
+        assert_eq!(input.take_tick().1, (0.0, 0.0));
+        input.mouse_captured = true;
+        input.mouse = (2.0, 3.0);
+        assert_eq!(input.take_tick().1, (2.0, 3.0));
+        assert_eq!(input.take_tick().1, (0.0, 0.0));
+        input.mouse = (9.0, 1.0);
+        input.mouse_captured = false;
+        assert_eq!(input.take_tick().1, (0.0, 0.0));
+        input.mouse_captured = true;
+        assert_eq!(input.take_tick().1, (0.0, 0.0));
     }
     #[test]
     fn skipped_frames_keep_latest_world_and_latest_render_operation() {

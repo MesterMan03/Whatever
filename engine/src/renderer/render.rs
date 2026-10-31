@@ -7,6 +7,13 @@ use std::collections::{HashMap, HashSet};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+fn clipped_viewport(rect: [u32; 4], surface: [u32; 2]) -> Option<[u32; 4]> {
+    let [x, y, width, height] = rect;
+    let width = width.min(surface[0].saturating_sub(x));
+    let height = height.min(surface[1].saturating_sub(y));
+    (width > 0 && height > 0).then_some([x, y, width, height])
+}
+
 fn create_depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -413,116 +420,120 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            rpass.set_bind_group(0, &self.camera_bind_group, &[]);
-            if let Some([x, y, width, height]) = viewport {
-                let width = width.min(self.ctx.config.width.saturating_sub(x)).max(1);
-                let height = height.min(self.ctx.config.height.saturating_sub(y)).max(1);
+            if let Some([x, y, width, height]) = clipped_viewport(
+                viewport.unwrap_or([0, 0, self.ctx.config.width, self.ctx.config.height]),
+                [self.ctx.config.width, self.ctx.config.height],
+            ) {
+                rpass.set_bind_group(0, &self.camera_bind_group, &[]);
                 rpass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
                 rpass.set_scissor_rect(x, y, width, height);
-            }
-            rpass.set_bind_group(2, &self.lighting_bind_group, &[]);
+                rpass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
-            // --- Sprites grouped by shader ------------------------------------
-            // Collect (shader_path, entity_idx) pairs so we can sort by shader.
-            let mut sprite_by_shader: Vec<(&str, u32)> = self
-                .scene
-                .entity_sprites
-                .iter()
-                .map(|(&idx, q)| (q.shader_path.as_str(), idx))
-                .collect();
-            sprite_by_shader.sort_unstable_by_key(|(s, _)| *s);
+                // --- Sprites grouped by shader ------------------------------------
+                // Collect (shader_path, entity_idx) pairs so we can sort by shader.
+                let mut sprite_by_shader: Vec<(&str, u32)> = self
+                    .scene
+                    .entity_sprites
+                    .iter()
+                    .map(|(&idx, q)| (q.shader_path.as_str(), idx))
+                    .collect();
+                sprite_by_shader.sort_unstable_by_key(|(s, _)| *s);
 
-            let mut current_shader: Option<&str> = None;
-            for (shader, idx) in &sprite_by_shader {
-                if current_shader != Some(shader) {
-                    match self.pipeline_cache.get(&(shader.to_string(), false)) {
-                        Some(pipeline) => {
-                            rpass.set_pipeline(pipeline);
-                            current_shader = Some(shader);
-                        }
-                        None => {
-                            current_shader = None;
-                            continue;
+                let mut current_shader: Option<&str> = None;
+                for (shader, idx) in &sprite_by_shader {
+                    if current_shader != Some(shader) {
+                        match self.pipeline_cache.get(&(shader.to_string(), false)) {
+                            Some(pipeline) => {
+                                rpass.set_pipeline(pipeline);
+                                current_shader = Some(shader);
+                            }
+                            None => {
+                                current_shader = None;
+                                continue;
+                            }
                         }
                     }
+                    if current_shader.is_none() {
+                        continue;
+                    }
+                    if let Some(quad) = self.scene.entity_sprites.get(idx) {
+                        rpass.set_bind_group(1, &quad.bind_group, &[]);
+                        rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
+                        rpass.set_index_buffer(
+                            quad.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint16,
+                        );
+                        rpass.draw_indexed(0..6, 0, 0..1);
+                    }
                 }
-                if current_shader.is_none() {
-                    continue;
+
+                // --- Meshes grouped by shader -------------------------------------
+                let mut mesh_by_shader: Vec<(&str, u32)> = self
+                    .scene
+                    .entity_meshes
+                    .iter()
+                    .map(|(&idx, d)| (d.shader_path.as_str(), idx))
+                    .collect();
+                mesh_by_shader.sort_unstable_by_key(|(s, _)| *s);
+
+                current_shader = None;
+                for (shader, idx) in &mesh_by_shader {
+                    if current_shader != Some(shader) {
+                        match self.pipeline_cache.get(&(shader.to_string(), true)) {
+                            Some(pipeline) => {
+                                rpass.set_pipeline(pipeline);
+                                current_shader = Some(shader);
+                            }
+                            None => {
+                                current_shader = None;
+                                continue;
+                            }
+                        }
+                    }
+                    if current_shader.is_none() {
+                        continue;
+                    }
+                    if let Some(drawable) = self.scene.entity_meshes.get(idx) {
+                        rpass.set_bind_group(1, &drawable.bind_group, &[]);
+                        rpass.set_vertex_buffer(0, drawable.vertex_buffer.slice(..));
+                        rpass.set_index_buffer(
+                            drawable.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint16,
+                        );
+                        rpass.draw_indexed(0..drawable.index_count, 0, 0..1);
+                    }
                 }
-                if let Some(quad) = self.scene.entity_sprites.get(idx) {
+
+                // --- Text quads grouped by shader (no back-cull) ------------------
+                let mut text_by_shader: Vec<(&str, &scene::TexturedQuad)> = self
+                    .text
+                    .quads()
+                    .map(|q| (q.shader_path.as_str(), q))
+                    .collect();
+                text_by_shader.sort_unstable_by_key(|(s, _)| *s);
+
+                let mut current_text_shader: Option<&str> = None;
+                for (shader, quad) in &text_by_shader {
+                    if current_text_shader != Some(shader) {
+                        match self.pipeline_cache.get(&(shader.to_string(), false)) {
+                            Some(pipeline) => {
+                                rpass.set_pipeline(pipeline);
+                                current_text_shader = Some(shader);
+                            }
+                            None => {
+                                current_text_shader = None;
+                                continue;
+                            }
+                        }
+                    }
+                    if current_text_shader.is_none() {
+                        continue;
+                    }
                     rpass.set_bind_group(1, &quad.bind_group, &[]);
                     rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
                     rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
                     rpass.draw_indexed(0..6, 0, 0..1);
                 }
-            }
-
-            // --- Meshes grouped by shader -------------------------------------
-            let mut mesh_by_shader: Vec<(&str, u32)> = self
-                .scene
-                .entity_meshes
-                .iter()
-                .map(|(&idx, d)| (d.shader_path.as_str(), idx))
-                .collect();
-            mesh_by_shader.sort_unstable_by_key(|(s, _)| *s);
-
-            current_shader = None;
-            for (shader, idx) in &mesh_by_shader {
-                if current_shader != Some(shader) {
-                    match self.pipeline_cache.get(&(shader.to_string(), true)) {
-                        Some(pipeline) => {
-                            rpass.set_pipeline(pipeline);
-                            current_shader = Some(shader);
-                        }
-                        None => {
-                            current_shader = None;
-                            continue;
-                        }
-                    }
-                }
-                if current_shader.is_none() {
-                    continue;
-                }
-                if let Some(drawable) = self.scene.entity_meshes.get(idx) {
-                    rpass.set_bind_group(1, &drawable.bind_group, &[]);
-                    rpass.set_vertex_buffer(0, drawable.vertex_buffer.slice(..));
-                    rpass.set_index_buffer(
-                        drawable.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint16,
-                    );
-                    rpass.draw_indexed(0..drawable.index_count, 0, 0..1);
-                }
-            }
-
-            // --- Text quads grouped by shader (no back-cull) ------------------
-            let mut text_by_shader: Vec<(&str, &scene::TexturedQuad)> = self
-                .text
-                .quads()
-                .map(|q| (q.shader_path.as_str(), q))
-                .collect();
-            text_by_shader.sort_unstable_by_key(|(s, _)| *s);
-
-            let mut current_text_shader: Option<&str> = None;
-            for (shader, quad) in &text_by_shader {
-                if current_text_shader != Some(shader) {
-                    match self.pipeline_cache.get(&(shader.to_string(), false)) {
-                        Some(pipeline) => {
-                            rpass.set_pipeline(pipeline);
-                            current_text_shader = Some(shader);
-                        }
-                        None => {
-                            current_text_shader = None;
-                            continue;
-                        }
-                    }
-                }
-                if current_text_shader.is_none() {
-                    continue;
-                }
-                rpass.set_bind_group(1, &quad.bind_group, &[]);
-                rpass.set_vertex_buffer(0, quad.vertex_buffer.slice(..));
-                rpass.set_index_buffer(quad.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-                rpass.draw_indexed(0..6, 0, 0..1);
             }
         }
 
@@ -573,5 +584,31 @@ impl Renderer {
         self.ctx.resize(width, height);
         self.aspect = width as f32 / height.max(1) as f32;
         self.depth_view = create_depth_view(&self.ctx.device, width, height);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clipped_viewport;
+    #[test]
+    fn scene_viewports_outside_the_target_do_not_generate_gpu_commands() {
+        assert_eq!(
+            clipped_viewport([10, 20, 800, 600], [640, 480]),
+            Some([10, 20, 630, 460])
+        );
+        for rect in [
+            [u32::MAX, u32::MAX, 1, 1],
+            [640, 0, 1, 1],
+            [0, 480, 1, 1],
+            [0, 0, 0, 1],
+            [0, 0, 1, 0],
+        ] {
+            assert!(clipped_viewport(rect, [640, 480]).is_none());
+        }
+        assert_eq!(
+            clipped_viewport([0, 0, u32::MAX, u32::MAX], [640, 480]),
+            Some([0, 0, 640, 480])
+        );
+        assert!(clipped_viewport([0, 0, 1, 1], [0, 0]).is_none());
     }
 }

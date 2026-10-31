@@ -7,7 +7,12 @@ export const File = {
     return new Promise((resolve, reject) => {
       const request_id = nextReqId();
       _fileCallbacks.set(request_id, { resolve: () => resolve(), reject });
-      _send({ type: "FileWrite", request_id, path, data_base64: Buffer.from(data, "utf8").toString("base64") });
+      _send({
+        type: "FileWrite",
+        request_id,
+        path,
+        data_base64: Buffer.from(data, "utf8").toString("base64"),
+      });
     });
   },
 

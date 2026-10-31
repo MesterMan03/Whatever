@@ -1,6 +1,9 @@
 import { _requireClient } from "../environment.ts";
 import { _send as _sendIpc, nextReqId } from "../shared.ts";
-const _send = (message: unknown): void => { _requireClient("Audio"); _sendIpc(message); };
+const _send = (message: unknown): void => {
+  _requireClient("Audio");
+  _sendIpc(message);
+};
 
 export type AudioMetadata = {
   duration_ms: number | null;

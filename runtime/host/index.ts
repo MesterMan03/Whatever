@@ -6,26 +6,35 @@ import * as api from "../src/index.ts";
 import manifest from "../package.json";
 import { _configureMode } from "../src/environment.ts";
 
-const exit = (process as typeof process & { reallyExit(code: number): never }).reallyExit.bind(process);
+const exit = (process as typeof process & { reallyExit(code: number): never }).reallyExit.bind(
+  process,
+);
 const stdout = Bun.stdout.writer();
-const write = (data: string) => { stdout.write(data); stdout.flush(); };
+const write = (data: string) => {
+  stdout.write(data);
+  stdout.flush();
+};
 const inspect = Bun.inspect;
-const lockdown = (Bun as typeof Bun & {
-  __whateverLockdown?: (root: string) => number;
-}).__whateverLockdown;
+const lockdown = (
+  Bun as typeof Bun & {
+    __whateverLockdown?: (root: string) => number;
+  }
+).__whateverLockdown;
 
 try {
   if (typeof lockdown !== "function") {
     throw new Error("This host requires the Whatever Bun fork; stock Bun is not supported.");
   }
   if (process.argv[2] === "--runtime-info") {
-    write(JSON.stringify({
-      runtime: "whatever-mod-host",
-      protocol: 6,
-      native_policy: 1,
-      bun_version: Bun.version,
-      api_version: manifest.version,
-    }) + "\n");
+    write(
+      JSON.stringify({
+        runtime: "whatever-mod-host",
+        protocol: 8,
+        native_policy: 1,
+        bun_version: Bun.version,
+        api_version: manifest.version,
+      }) + "\n",
+    );
     exit(0);
   }
   const [entryArg, rootArg, mode = "client"] = process.argv.slice(2);
@@ -55,7 +64,9 @@ try {
   const consoleMethods: Record<string, (...args: unknown[]) => void> = Object.create(null);
   for (const name of ["log", "info", "warn", "error", "debug", "trace"]) {
     consoleMethods[name] = (...args) => {
-      const message = args.map(value => typeof value === "string" ? value : inspect(value)).join(" ");
+      const message = args
+        .map((value) => (typeof value === "string" ? value : inspect(value)))
+        .join(" ");
       api.Engine.log(name === "error" ? "error" : name === "warn" ? "warn" : "info", message);
     };
   }
@@ -69,11 +80,13 @@ try {
     throw new Error("The native runtime policy version is unsupported.");
   }
   await import(entryUrl);
-  write(JSON.stringify({ type: "RuntimeReady", protocol: 6 }) + "\n");
+  write(JSON.stringify({ type: "RuntimeReady", protocol: 8 }) + "\n");
 } catch (error) {
-  write(JSON.stringify({
-    type: "RuntimeFailed",
-    message: "Mod host startup failed: " + String(error),
-  }) + "\n");
+  write(
+    JSON.stringify({
+      type: "RuntimeFailed",
+      message: "Mod host startup failed: " + String(error),
+    }) + "\n",
+  );
   exit(1);
 }

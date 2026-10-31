@@ -7,13 +7,13 @@ const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
 if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
-async function runServer(source:string, options:{mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>}={}) {
+async function runServer(source:string, options:{initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     const put=(name:string,value:string)=>{const path=join(directory,name);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,value);};
     put("mods/core/meta.toml",'[game]\nid="separation_fixture"\nname="Server Fixture"\ntick_rate=100\ndefault_mode="'+(options.defaultMode??"client")+'"\n');
-    put("mods/core/mod.toml",'[mod]\nid="core"\nname="Core"\nversion="1.0.0"\n[script]\nentry="wrong.ts"\nclient="wrong.ts"\nserver="server.ts"\n');
+    put("mods/core/mod.toml",(options.initialScene ? `initial_scene = "${options.initialScene}"\n` : "")+'[mod]\nid="core"\nname="Core"\nversion="1.0.0"\n[script]\nentry="wrong.ts"\nclient="wrong.ts"\nserver="server.ts"\n');
     put("mods/core/wrong.ts",'throw new Error("wrong entry selected");');
     put("mods/core/server.ts",source);
     for(const [path,text] of Object.entries(options.files??{}))put("mods/core/"+path,text);
@@ -277,7 +277,8 @@ function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHY
 Engine.on("init",async()=>{try{
  scene=await createDemoScene(undefined,"core://playground");
  const cubes=await Scene.query(["physics_demo:cube","core:transform"]).get();if(cubes.length!==24)throw new Error("initial cubes");
- if(!cubes.some(row=>Math.abs(row.components["core:transform"].position[0]-20)<0.001))throw new Error("authored cube placement was overwritten");
+ if(cubes.some(row=>Math.abs(row.components["core:transform"].position[0]-20)>4.51))throw new Error("authored spawn point was ignored");
+ if(await scene.baseCube.getEnabled().get())throw new Error("base cube must remain disabled");
  const colliders=await Scene.query(["core:collider"]).get();if(colliders.length!==30)throw new Error("compound frame colliders");
  spawnCubes(scene,3);
  const more=await Scene.query(["physics_demo:cube"]).get();if(more.length!==27)throw new Error("additional cubes");
@@ -294,9 +295,9 @@ Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)start
  const remaining=await Scene.listEntities().get();if(remaining.length!==0)throw new Error("playground leaked "+remaining.length+" entities");
  finish();
 }catch(error){finish(error);}});`;
-  const sceneSource=readFileSync(join(repository,"mods/physics_demo/scripts/scene.ts"),"utf8");
-  const authored=JSON.parse(readFileSync(join(repository,"mods/physics_demo/scenes/playground.wscene"),"utf8"));
-  authored.entities.find((entity:{script_id?:string})=>entity.script_id==="cube_0").components["core:transform"].position[0]=20;
+  const sceneSource=readFileSync(join(repository,"games/test/mods/physics_demo/scripts/scene.ts"),"utf8");
+  const authored=JSON.parse(readFileSync(join(repository,"games/test/mods/physics_demo/scenes/playground.wscene"),"utf8"));
+  authored.entities.find((entity:{script_id?:string})=>entity.script_id==="cube_spawn").components["core:transform"].position[0]=20;
   const result=await runServer(source,{mode:"server",files:{"physics-scene.ts":sceneSource,"scenes/playground.wscene":JSON.stringify(authored)}});
   expect(result.stdout).toContain("PHYSICS_SCENE_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
 });
@@ -317,4 +318,41 @@ Engine.on("init",async()=>{try{
 }catch(error){Engine.log("error","PHYSICS_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
   const result=await runServer(source,{mode:"server"});
   expect(result.stdout).toContain("PHYSICS_CLOCK_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
+});
+
+
+test("clones remap hierarchy references and disabled entities leave active queries",async()=>{
+ const source=String.raw`
+import {Engine,Scene} from "@whatever-engine/api";
+Engine.on("init",async()=>{try {
+ const root=Scene.createEntity().setEnabled(false);
+ const child=Scene.createEntity().setParent(root).setComponent("fixture:active",{value:1});
+ root.setComponent("fixture:link",{child});
+ const copy=root.clone({enabled:true});
+ const children=await copy.getChildren().get();
+ if(children.length!==1)throw Error("clone hierarchy missing");
+ const link=await copy.getComponent("fixture:link").get();
+ if(link.child.id!==children[0].id)throw Error("clone reference did not remap");
+ if(!await copy.getEnabled().get()||await root.getEnabled().get())throw Error("enabled state mismatch");
+ if((await Scene.query(["fixture:active"]).get()).length!==1)throw Error("inactive hierarchy queried");
+ copy.setEnabled(false);
+ if((await Scene.query(["fixture:active"]).get()).length!==0)throw Error("disable did not propagate");
+ root.destroy();copy.destroy();let rejected=false;
+ try{await root.clone().get();}catch{rejected=true;}
+ if(!rejected)throw Error("stale clone did not reject");
+ Engine.log("info","ENTITY_LIFECYCLE_OK");
+ }catch(error){Engine.log("error","ENTITY_LIFECYCLE_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
+ const result=await runServer(source,{mode:"server"});
+ expect(result.stdout).toContain("ENTITY_LIFECYCLE_OK");expect(result.stdout).not.toContain("ENTITY_LIFECYCLE_FAILURE");
+});
+
+test("core initial scene is live before init and is not instantiated again by the API",async()=>{
+ const scene={version:1,entities:[{name:"Startup Camera",script_id:"camera",components:{"core:transform":{position:[0,0,5],rotation:[0,0,0,1],scale:[1,1,1]},"core:camera":{}}},{name:"Template",script_id:"template",enabled:false,components:{"fixture:template":{}}}]};
+ const source=String.raw`import {Engine,Scene} from "@whatever-engine/api";
+Engine.on("init",async()=>{try{const startup=Scene.initialScene();if(!startup||startup.entityCount!==2||startup.path!=="core://startup")throw Error("startup metadata missing");
+ if((await Scene.listEntities().get()).length!==2)throw Error("startup loaded twice");
+ if(await startup.get("template").getEnabled().get())throw Error("startup disabled flag lost");Engine.log("info","INITIAL_SCENE_OK");
+ }catch(error){Engine.log("error","INITIAL_SCENE_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
+ const result=await runServer(source,{mode:"server",initialScene:"core://startup",files:{"scenes/startup.wscene":JSON.stringify(scene)}});
+ expect(result.stdout).toContain("INITIAL_SCENE_OK");expect(result.stdout).not.toContain("INITIAL_SCENE_FAILURE");
 });

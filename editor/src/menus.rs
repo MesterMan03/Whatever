@@ -3,6 +3,15 @@ use anyhow::Context;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
+    Home,
+    Preferences,
+    ModSettings,
+    NewScript,
+    Copy,
+    Cut,
+    Paste,
+    Duplicate,
+    Rename,
     NewProject,
     OpenProject,
     OpenFolder,
@@ -15,7 +24,13 @@ pub(super) enum Action {
     Redo,
     Delete,
     AddEntity,
-    AddChild,
+    Cube,
+    Sphere,
+    Bean,
+    Camera,
+    AmbientLight,
+    DirectionalLight,
+    PointLight,
     Frame,
     NewMod,
     AddMod,
@@ -23,11 +38,23 @@ pub(super) enum Action {
     Build,
 }
 
+pub(super) const PRESETS: &[(&str, Action)] = &[
+    ("Empty Entity", Action::AddEntity),
+    ("Cube", Action::Cube),
+    ("Sphere", Action::Sphere),
+    ("Bean / Capsule", Action::Bean),
+    ("Camera", Action::Camera),
+    ("Ambient Light", Action::AmbientLight),
+    ("Directional Light", Action::DirectionalLight),
+    ("Point Light", Action::PointLight),
+];
+
 type MenuEntry = (&'static str, &'static str, Action);
 pub(super) const GROUPS: &[(&str, &[MenuEntry])] = &[
     (
         "File",
         &[
+            ("home", "Welcome / Close Project", Action::Home),
             ("new_project", "New Project…", Action::NewProject),
             ("open_project", "Open Project…", Action::OpenProject),
             ("open_folder", "Open Game Folder…", Action::OpenFolder),
@@ -43,20 +70,34 @@ pub(super) const GROUPS: &[(&str, &[MenuEntry])] = &[
         &[
             ("undo", "Undo", Action::Undo),
             ("redo", "Redo", Action::Redo),
+            ("copy", "Copy Entity", Action::Copy),
+            ("cut", "Cut Entity", Action::Cut),
+            ("paste", "Paste Entity", Action::Paste),
+            ("duplicate", "Duplicate Entity", Action::Duplicate),
+            ("rename", "Rename Entity", Action::Rename),
             ("delete", "Delete Entity", Action::Delete),
+            ("preferences", "Editor Settings…", Action::Preferences),
         ],
     ),
     (
         "Scene",
         &[
-            ("entity", "Create Entity", Action::AddEntity),
-            ("child", "Create Child", Action::AddChild),
+            ("entity", "Empty Entity", Action::AddEntity),
+            ("cube", "Cube", Action::Cube),
+            ("sphere", "Sphere", Action::Sphere),
+            ("bean", "Bean", Action::Bean),
+            ("camera", "Camera", Action::Camera),
+            ("ambient", "Ambient Light", Action::AmbientLight),
+            ("directional", "Directional Light", Action::DirectionalLight),
+            ("point", "Point Light", Action::PointLight),
             ("frame", "Frame Selected", Action::Frame),
         ],
     ),
     (
         "Project",
         &[
+            ("mod_settings", "Edit Active Mod…", Action::ModSettings),
+            ("new_script", "New Script…", Action::NewScript),
             ("new_mod", "Create Mod…", Action::NewMod),
             ("add_mod", "Add Existing Mod…", Action::AddMod),
             ("settings", "Project & Build Settings…", Action::Settings),
@@ -68,6 +109,7 @@ pub(super) const GROUPS: &[(&str, &[MenuEntry])] = &[
 #[cfg(any(windows, target_os = "macos"))]
 pub(super) struct Menus {
     pub bar: muda::Menu,
+    pub shortcuts: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(any(windows, target_os = "macos"))]
@@ -98,7 +140,10 @@ impl Menus {
             }
             bar.append(&submenu)?;
         }
-        Ok(Self { bar })
+        Ok(Self {
+            bar,
+            shortcuts: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        })
     }
     pub fn attach(&self, window: &winit::window::Window) -> anyhow::Result<()> {
         #[cfg(windows)]

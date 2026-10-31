@@ -20,12 +20,14 @@ if (process.platform === "win32") {
   }
 }
 const debug = process.argv.includes("--debug");
+const jobs = process.env.WHATEVER_BUN_JOBS ?? "4";
+if (!/^[1-8]$/.test(jobs)) throw Error("WHATEVER_BUN_JOBS must be 1 through 8");
 const arguments_ = debug ? ["bd"] : ["run", "build:release"];
 const command = process.platform === "win32"
   ? [Bun.which("pwsh.exe") ?? "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "tools/build-bun-windows.ps1"),
-      "-BunExecutable", process.execPath, "-Checkout", checkout, "-Tools", join(root, "target/build-tools"),
+      "-BunExecutable", process.execPath, "-Checkout", checkout, "-Tools", join(root, "target/build-tools"), "-Jobs", jobs,
       ...(debug ? ["-DebugBuild"] : [])]
-  : [process.execPath, ...arguments_, "-j4"];
+  : [process.execPath, ...arguments_, "-j" + jobs];
 const build = Bun.spawn(command, {
   cwd: checkout,
   env: { ...process.env, PATH: [...extraPaths, process.env.PATH ?? ""].join(delimiter) },

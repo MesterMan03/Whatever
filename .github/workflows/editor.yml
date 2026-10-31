@@ -1,0 +1,84 @@
+name: Portable editor
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: portable-editor-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  editor:
+    name: Editor (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            platform: windows
+            architecture: x86_64
+          - os: ubuntu-24.04
+            platform: linux
+            architecture: x86_64
+          - os: macos-15
+            platform: macos
+            architecture: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portable-editor
+      - name: Linux desktop and packaging dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config patchelf libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev
+      - uses: ./.github/actions/build-mod-host
+      - name: Format and lint
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          bun run format:check
+      - name: Build and test workspace
+        shell: bash
+        run: |
+          cargo build --workspace --locked
+          cargo test --workspace --locked
+          bun run test:network
+          bun run test:runtime
+          bun run test:server
+          bun run test:mods
+          bun run test:project
+          cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
+          cargo test -p whatever-engine --locked network_messenger -- --ignored
+          cargo test -p whatever-engine --locked editor_controls_apply_before_physics -- --ignored
+      - name: Build release workspace
+        shell: bash
+        run: cargo build --workspace --release --locked
+      - name: Assemble, relocate, smoke-test and archive editor
+        shell: bash
+        run: bun run package:editor
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WhateverEditor-${{ matrix.platform }}-${{ matrix.architecture }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0

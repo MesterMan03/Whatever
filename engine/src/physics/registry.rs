@@ -137,7 +137,13 @@ fn component_data(world: &World, kind: &str) -> BTreeMap<EntityId, Value> {
         .get(kind)
         .into_iter()
         .flat_map(|components| components.iter())
-        .filter_map(|(&index, data)| world.allocator.live_id(index).map(|id| (id, data.clone())))
+        .filter_map(|(&index, data)| {
+            world
+                .allocator
+                .live_id(index)
+                .filter(|id| world.is_active(id))
+                .map(|id| (id, data.clone()))
+        })
         .collect()
 }
 fn status(
@@ -270,7 +276,11 @@ impl PhysicsRegistry {
             JOINT => {
                 let config: JointConfig = serde_json::from_value(data)?;
                 ensure!(
-                    entity(&config.body_a)? != entity(&config.body_b)?,
+                    (if config.body_a.is_null() {
+                        id
+                    } else {
+                        entity(&config.body_a)?
+                    }) != entity(&config.body_b)?,
                     "a joint must connect two different bodies"
                 );
                 config.native()?;
@@ -579,7 +589,11 @@ impl PhysicsRegistry {
                 self.remove_joint(id);
             }
             let config: JointConfig = serde_json::from_value(data.clone())?;
-            let a = entity(&config.body_a)?;
+            let a = if config.body_a.is_null() {
+                id
+            } else {
+                entity(&config.body_a)?
+            };
             let b = entity(&config.body_b)?;
             let Some((world_id, a_handle, b_handle)) = self
                 .bodies

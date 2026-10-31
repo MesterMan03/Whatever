@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
   "files": {
     "includes": [
-      "{mods,mods_user,games}/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts,json,jsonc}",
+      "{mods,mods_user,games,runtime}/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts,json,jsonc}",
       "!!**/assets",
       "!!**/node_modules",
       "!!**/dist",
@@ -18,9 +18,22 @@
     "lineEnding": "lf"
   },
   "linter": {
-    "enabled": false
+    "rules": {
+      "preset": "recommended"
+    },
+    "enabled": true
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
   },
   "assist": {
-    "enabled": false
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   }
 }

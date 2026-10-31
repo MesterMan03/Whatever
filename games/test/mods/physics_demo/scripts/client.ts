@@ -1,4 +1,11 @@
-import { BuiltInComponents, Console, Engine, Physics, type Entity } from "@whatever-engine/api";
+import {
+  Scene,
+  BuiltInComponents,
+  Console,
+  Engine,
+  Physics,
+  type Entity,
+} from "@whatever-engine/api";
 import { createDemoScene, destroyDemoScene, spawnCubes, type DemoScene } from "./scene.ts";
 
 let scene: DemoScene | undefined;
@@ -116,9 +123,20 @@ Engine.on("tick", ({ keys_pressed, mouse_delta }) => {
   resetHeld = reset;
   updateCamera();
 });
-Engine.on("init", () =>
-  Engine.log(
-    "info",
-    "Physics playground available: physicsdemo start (F2 console). Nothing spawns until activated.",
-  ),
-);
+Engine.on("init", () => {
+  const initial = Scene.initialScene();
+  if (
+    initial &&
+    initial.path.replace("://scenes/", "://").replace(/\.wscene$/, "") ===
+      "physics_demo://playground"
+  ) {
+    void start()
+      .then((message) => Engine.log("info", message))
+      .catch((error) => Engine.log("error", String(error)));
+  } else {
+    Engine.log(
+      "info",
+      "Physics playground available: physicsdemo start (F2 console). Nothing spawns until activated.",
+    );
+  }
+});

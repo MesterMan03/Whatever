@@ -47,6 +47,9 @@ fn installed() -> anyhow::Result<Option<RuntimeFiles>> {
 fn prepare(release: bool, progress: &mut impl FnMut(String)) -> anyhow::Result<RuntimeFiles> {
     if let Some(files) = installed()? {
         files.validate()?;
+        if release {
+            crate::script::validate_release_host(&files.host)?;
+        }
         progress("Using the engine and mod runtime included with the editor".into());
         return Ok(files);
     }
@@ -92,7 +95,25 @@ fn prepare(release: bool, progress: &mut impl FnMut(String)) -> anyhow::Result<R
     let host = source
         .join("runtime/dist")
         .join(format!("whatever-mod-host{suffix}"));
-    if crate::script::validate_host(&host).is_err() {
+    let valid = if release {
+        crate::script::validate_release_host(&host)
+    } else {
+        crate::script::validate_host(&host)
+    };
+    if valid.is_err() {
+        if !source
+            .join("vendor/bun/build/release")
+            .join(format!("bun{suffix}"))
+            .is_file()
+        {
+            run(
+                Command::new("bun")
+                    .current_dir(&source)
+                    .args(["run", "build:bun"]),
+                "Building the pinned release Bun runtime…",
+                progress,
+            )?;
+        }
         run(
             Command::new("bun")
                 .current_dir(&source)
@@ -129,10 +150,10 @@ pub fn build_game(
     mut progress: impl FnMut(String),
 ) -> anyhow::Result<PathBuf> {
     progress("Validating project and scenes…".into());
-    project.validate()?;
+    let project = project.for_build()?;
     let files = prepare(true, &mut progress)?;
     progress("Packaging mods and branding the launcher…".into());
-    let output = export_files(project, &files, destination)?;
+    let output = export_files(&project, &files, destination)?;
     progress(format!("Build complete: {}", super::display_path(&output)));
     Ok(output)
 }

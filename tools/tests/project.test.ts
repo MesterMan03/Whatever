@@ -22,7 +22,9 @@ test("CLI scaffolding, editor validation, branded deployment and relocated scene
   let player: ReturnType<typeof Bun.spawn> | undefined;
   try {
     const project = join(directory, "source");
-    await wmod(["project", "create", project, "--id", "packaged_fixture", "--name", "Branded Fixture", "--core", join(repository, "mods/core")]);
+    await wmod(["project", "create", project, "--id", "packaged_fixture", "--name", "Branded Fixture", "--core", join(repository, "engine/resources/core")]);
+    await wmod(["mod","create",join(project,"mods/dev_tools"),"--id","dev_tools","--project",project,"--no-scripts"]);
+    writeFileSync(join(project,"whatever.wproject"),readFileSync(join(project,"whatever.wproject"),"utf8").replace("exclude_mods = []",'exclude_mods = ["dev_tools"]'));
     const mod = join(project, "mods/packaged_fixture");
     expect(existsSync(join(mod, "scenes/main.wscene"))).toBe(true);
     expect(existsSync(join(mod, "tsconfig.json"))).toBe(true);
@@ -51,6 +53,10 @@ Engine.on("init", async () => {
     expect(existsSync(join(output,"engine/runtime"+extension))).toBe(true);
     expect(existsSync(join(output,"mods/packaged_fixture/node_modules"))).toBe(false);
     expect(existsSync(join(output,"branding/icon.png"))).toBe(true);
+    expect(existsSync(join(output,"mods/dev_tools"))).toBe(false);
+    expect(readFileSync(join(output,"mods/core/meta.toml"),"utf8")).toContain('id = "packaged_fixture"');
+    expect(readFileSync(join(output,"mods/core/meta.toml"),"utf8")).toContain('name = "Branded Fixture"');
+    expect(readFileSync(join(output,"whatever.wproject"),"utf8")).toContain('id = "packaged_fixture"');
     if(process.platform==="win32") {
       const executable=join(output,"Branded Fixture.exe").replaceAll("'","''");
       const info=Bun.spawn(["powershell","-NoProfile","-Command",`[System.Diagnostics.FileVersionInfo]::GetVersionInfo('${executable}').FileDescription`],{stdout:"pipe",stderr:"pipe"});

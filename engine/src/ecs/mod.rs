@@ -1,5 +1,6 @@
 mod components;
 mod entity;
+mod lifecycle;
 mod references;
 mod world;
 pub use references::{referenced_entity, resolve_references};

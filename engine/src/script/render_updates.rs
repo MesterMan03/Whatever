@@ -26,7 +26,7 @@ impl RenderCommand {
         let mut commands = Vec::new();
         for id in world.hierarchy(roots) {
             if world.transforms.contains_key(&id.index) {
-                Self::entity(world, id, false, &mut commands);
+                Self::entity(world, id, !world.is_active(&id), &mut commands);
             }
         }
         commands

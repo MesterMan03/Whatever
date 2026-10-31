@@ -2,6 +2,13 @@ use super::EntityId;
 use anyhow::{Context, ensure};
 use serde_json::Value;
 
+pub fn deserialize_reference<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<EntityId, D::Error> {
+    let value = <Value as serde::Deserialize>::deserialize(deserializer)?;
+    referenced_entity(&value).ok_or_else(|| serde::de::Error::custom("invalid entity reference"))
+}
+
 pub fn serialize_reference<S: serde::Serializer>(
     id: &EntityId,
     serializer: S,

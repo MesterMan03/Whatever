@@ -133,6 +133,7 @@ export namespace Physics {
     rapier: NonNullable<WorldOptions["rapier"]> = {};
     constructor(options: WorldOptions = {}) {
       Object.assign(this, options);
+      delete (this as unknown as Record<string, unknown>).bodyB;
     }
   }
   export class RigidBody {
@@ -190,8 +191,15 @@ export namespace Physics {
   export class Joint {
     readonly id = JOINT_ID;
     type: Options.PhysicsJointType = "fixed";
-    bodyA: EntityReference;
-    bodyB: EntityReference;
+    bodyA?: EntityReference;
+    connectedBody: EntityReference;
+    /** @deprecated Use connectedBody. */
+    get bodyB(): EntityReference {
+      return this.connectedBody;
+    }
+    set bodyB(value: EntityReference) {
+      this.connectedBody = ref(value);
+    }
     solver: "impulse" | "multibody" = "impulse";
     anchorA: Vec3 = [0, 0, 0];
     anchorB: Vec3 = [0, 0, 0];
@@ -205,11 +213,11 @@ export namespace Physics {
     motor?: Motor | null;
     rapier: JointRapierOptions = {};
     constructor(options: JointOptions & { type?: Options.PhysicsJointType }) {
-      this.bodyA = ref(options.bodyA);
-      this.bodyB = ref(options.bodyB);
+      this.bodyA = options.bodyA ? ref(options.bodyA) : undefined;
+      this.connectedBody = ref(options.connectedBody ?? options.bodyB!);
       Object.assign(this, options);
-      this.bodyA = ref(options.bodyA);
-      this.bodyB = ref(options.bodyB);
+      this.bodyA = options.bodyA ? ref(options.bodyA) : undefined;
+      this.connectedBody = ref(options.connectedBody ?? options.bodyB!);
     }
     static fixed(options: JointOptions): Joint {
       return new Joint({ ...options, type: "fixed" });

@@ -1,0 +1,5 @@
+[game]
+default_mode = "client"
+id   = "whatever"
+name = "Whatever"
+tick_rate = 60

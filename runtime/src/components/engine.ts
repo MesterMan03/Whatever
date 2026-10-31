@@ -9,7 +9,9 @@ import { _pending, type Pending } from "../pending.ts";
 /** Core engine events and logging. */
 export const Engine = {
   /** Runtime side, available before top-level mod code executes. */
-  get mode() { return _getMode(); },
+  get mode() {
+    return _getMode();
+  },
   /**
    * Subscribe to an engine event. The handler is called each time the event fires.
    * Tick commands are submitted automatically before awaiting user promises.
@@ -17,7 +19,10 @@ export const Engine = {
    * Registering a handler also sends a `Subscribe` message to the engine automatically
    * (except `mod_message`, which the engine routes unconditionally).
    */
-  on<E extends EventName>(event: E, handler: (payload: EventPayloads[E]) => void | Promise<void>): void {
+  on<E extends EventName>(
+    event: E,
+    handler: (payload: EventPayloads[E]) => void | Promise<void>,
+  ): void {
     if (!_handlers.has(event)) _handlers.set(event, new Set());
     _handlers.get(event)!.add(handler as (payload: any) => void | Promise<void>);
     const msgType = _EVENT_SUBSCRIBE[event];
@@ -59,7 +64,7 @@ export const Engine = {
    */
   setMainCamera(entity: string | EntityReference): void {
     _requireClient("Engine.setMainCamera");
-    const entity_id=typeof entity==="string" ? entity : entity.toJSON().$entity;
+    const entity_id = typeof entity === "string" ? entity : entity.toJSON().$entity;
     _send({ type: "SetMainCamera", entity_id });
   },
 
@@ -71,12 +76,14 @@ export const Engine = {
     _requireClient("Engine.clearCamera");
     _send({ type: "SetMainCamera", entity_id: "" });
   },
-  getMainCamera():Pending<Entity|null> {
+  getMainCamera(): Pending<Entity | null> {
     _requireClient("Engine.getMainCamera");
-    const request_id=nextReqId();
-    return _pending(new Promise<string|null>((resolve,reject)=>{
-      _mainCameraCallbacks.set(request_id,{resolve,reject});
-      _send({type:"GetMainCamera",request_id});
-    }).then(id=>id===null?null:new Entity(id)));
+    const request_id = nextReqId();
+    return _pending(
+      new Promise<string | null>((resolve, reject) => {
+        _mainCameraCallbacks.set(request_id, { resolve, reject });
+        _send({ type: "GetMainCamera", request_id });
+      }).then((id) => (id === null ? null : new Entity(id))),
+    );
   },
 };

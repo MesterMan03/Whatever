@@ -29,13 +29,18 @@ pub struct Engine {
     vfs: VfsHandle,
     registry: Arc<ModRegistry>,
     simulation: SimulationHandle,
+    editor_link: Option<crate::runtime::EditorClient>,
     input: InputState,
+    #[cfg(windows)]
+    embedded_cursor: Arc<crate::cursor::EmbeddedCursor>,
     frame_number: u64,
     last_frame: Instant,
-    fps_ema: f32,
+    fps_meter: crate::presentation::FrameRate,
+    frame_clock: crate::presentation::FrameClock,
+    motion: crate::presentation::MotionHistory,
+    rendered_poses: std::collections::HashMap<u32, (EntityId, crate::ecs::Transform)>,
     fps_cap: Option<f64>,
     vsync: bool,
-    next_frame_target: Instant,
     renderer: Option<Renderer>,
     window: Option<Arc<Window>>,
     world: World,
@@ -56,7 +61,10 @@ impl Engine {
         let registry = Arc::clone(&game.registry);
         let tick_interval = Duration::from_secs_f64(1.0 / game.meta.game.tick_rate);
         let simulation = SimulationHandle::spawn(game)?;
+        let editor_link =
+            crate::runtime::EditorClient::connect(simulation.commands.clone(), &simulation.shared)?;
         Ok(Self {
+            editor_link,
             debug,
             debug_mirror,
             log_mirror,
@@ -65,12 +73,16 @@ impl Engine {
             registry,
             simulation,
             input: InputState::new(),
+            #[cfg(windows)]
+            embedded_cursor: Arc::default(),
             frame_number: 0,
             last_frame: Instant::now(),
-            fps_ema: 0.0,
+            fps_meter: Default::default(),
+            frame_clock: Default::default(),
+            motion: Default::default(),
+            rendered_poses: Default::default(),
             fps_cap: None,
             vsync: true,
-            next_frame_target: Instant::now(),
             renderer: None,
             window: None,
             world: World::new(),
@@ -84,6 +96,27 @@ impl Engine {
         })
     }
     fn frame(&mut self) {
+        #[cfg(windows)]
+        if self.input.mouse_captured
+            && std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
+            && self
+                .window
+                .as_ref()
+                .is_some_and(|w| !crate::cursor::EmbeddedCursor::focused(w))
+        {
+            self.set_cursor_captured(false);
+        }
+
+        if self
+            .editor_link
+            .as_ref()
+            .is_some_and(|link| link.inspecting())
+        {
+            self.set_cursor_captured(false);
+            self.input.keys_pressed.clear();
+            self.input.mouse_delta = (0.0, 0.0);
+            self.sync_input();
+        }
         if let Ok(mut lines) = self.debug_mirror.lock() {
             for line in lines.drain(..) {
                 self.console.push_debug_line(line);
@@ -95,17 +128,17 @@ impl Engine {
             }
         }
 
+        #[cfg(windows)]
+        if self.input.mouse_captured
+            && std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
+            && let Err(error) = self.embedded_cursor.confine()
+        {
+            tracing::warn!("play viewport confinement: {error:#}");
+            self.set_cursor_captured(false);
+        }
         let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
-
-        let raw_fps = if dt > 0.0 { 1.0 / dt } else { self.fps_ema };
-        self.fps_ema = if self.fps_ema == 0.0 {
-            raw_fps
-        } else {
-            self.fps_ema * 0.9 + raw_fps * 0.1
-        };
-        self.console.fps = self.fps_ema;
+        self.console.fps = self.fps_meter.record(now);
         self.console.fps_cap = self.fps_cap;
         self.console.vsync = self.vsync;
 
@@ -114,8 +147,7 @@ impl Engine {
         self.frame_number += 1;
 
         // Compute camera view-projection and position for this frame.
-        let (camera_vp, camera_pos) = self.compute_camera_info();
-        let no_camera = camera_vp.is_none();
+        let no_camera = self.compute_camera_info().0.is_none();
 
         // Run egui for this frame
         let egui_raw_input =
@@ -166,7 +198,7 @@ impl Engine {
                     self.simulation.send(mod_id, message);
                 }
                 ConsoleAction::EngineSettings(action) => match action {
-                    EngineSettingAction::SetFpsCap(cap) => self.fps_cap = cap,
+                    EngineSettingAction::SetFpsCap(cap) => self.set_fps_cap(cap),
                     EngineSettingAction::SetVsync(enabled) => {
                         self.vsync = enabled;
                         self.apply_vsync();
@@ -212,7 +244,18 @@ impl Engine {
             None
         };
 
+        // Only the client render pass sees these poses. Console, simulation and editor snapshots
+        // keep authoritative tick values; all visible objects and the camera share one render time.
+        let transforms = self.motion.sample(&self.world, Instant::now());
+        let authoritative = std::mem::replace(&mut self.world.transforms, transforms);
+        let (camera_vp, camera_pos) = self.compute_camera_info();
         if let Some(renderer) = self.renderer.as_mut() {
+            crate::renderer::sync_render_transforms(
+                renderer,
+                &self.world,
+                self.vfs.as_ref(),
+                &mut self.rendered_poses,
+            );
             renderer.update_lighting(&collect_lights(&self.world));
             if let Err(e) =
                 renderer.render(camera_vp, camera_pos, egui_out.as_ref(), self.vfs.as_ref())
@@ -220,6 +263,7 @@ impl Engine {
                 tracing::error!("render error: {e}");
             }
         }
+        self.world.transforms = authoritative;
     }
 
     /// Derive a view-projection matrix and world-space camera position from the
@@ -229,7 +273,7 @@ impl Engine {
         let Some(camera_id) = self.main_camera.as_ref() else {
             return (None, None);
         };
-        if !self.world.is_alive(camera_id) {
+        if !self.world.is_active(camera_id) {
             return (None, None);
         }
         let idx = camera_id.index;
@@ -248,21 +292,43 @@ impl Engine {
     }
 
     fn set_cursor_captured(&mut self, captured: bool) {
-        self.input.mouse_captured = captured;
+        #[cfg(windows)]
+        if std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
+            && let Some(window) = &self.window
+        {
+            let captured = captured && crate::cursor::EmbeddedCursor::focused(window);
+            match self.embedded_cursor.capture(window, captured) {
+                Ok(()) => self.input.mouse_captured = captured,
+                Err(error) => {
+                    self.input.mouse_captured = false;
+                    window.set_cursor_visible(true);
+                    tracing::warn!("cursor capture: {error:#}");
+                }
+            }
+            self.sync_input();
+            return;
+        }
+
+        self.input.mouse_captured = false;
         if let Some(window) = self.window.as_ref() {
             if captured {
                 // Prefer Locked (cursor position frozen, ideal for camera look).
                 // Fall back to Confined (cursor stays inside the window) on
                 // platforms that don't support Locked.
-                let _ = window
+                match window
                     .set_cursor_grab(CursorGrabMode::Locked)
-                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-                window.set_cursor_visible(false);
+                    .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined))
+                {
+                    Ok(()) => self.input.mouse_captured = true,
+                    Err(error) => tracing::warn!("cursor capture: {error}"),
+                }
+                window.set_cursor_visible(!self.input.mouse_captured);
             } else {
                 let _ = window.set_cursor_grab(CursorGrabMode::None);
                 window.set_cursor_visible(true);
             }
         }
+        self.sync_input();
     }
 
     fn receive_simulation(&mut self) {
@@ -273,6 +339,7 @@ impl Engine {
             return;
         };
         self.world = update.world;
+        self.motion = update.motion;
         self.main_camera = update.main_camera;
         self.tick_interval = Duration::from_secs_f64(1.0 / update.tick_rate);
         for (mod_id, msg) in update.events {
@@ -331,6 +398,14 @@ impl Engine {
             }
         }
         for command in update.client_commands {
+            if std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
+                && matches!(
+                    command,
+                    ScriptMessage::SetWindowSize { .. } | ScriptMessage::SetWindowMode { .. }
+                )
+            {
+                continue;
+            }
             match command {
                 ScriptMessage::SetWindowTitle { title } => {
                     if let Some(window) = &self.window {
@@ -357,7 +432,7 @@ impl Engine {
                         window.set_fullscreen(fullscreen);
                     }
                 }
-                ScriptMessage::SetFpsCap { fps } => self.fps_cap = fps,
+                ScriptMessage::SetFpsCap { fps } => self.set_fps_cap(fps),
                 ScriptMessage::SetVsync { enabled } => {
                     self.vsync = enabled;
                     self.apply_vsync();
@@ -367,6 +442,7 @@ impl Engine {
         }
         if let Some(renderer) = self.renderer.as_mut() {
             for command in update.render_cmds.into_values() {
+                self.rendered_poses.remove(&command.key().1);
                 apply_render_command(&command, renderer, &self.world, self.vfs.as_ref());
             }
         }
@@ -383,8 +459,9 @@ impl Engine {
                     .collect()
             };
             input.keys.sort_unstable();
+            input.mouse_captured = self.input.mouse_captured && !self.console.is_open;
             let (dx, dy) = self.input.flush_mouse();
-            if self.console.is_open {
+            if !input.mouse_captured {
                 input.mouse = (0.0, 0.0);
             } else {
                 input.mouse.0 += dx;
@@ -393,6 +470,12 @@ impl Engine {
         }
     }
 
+    fn set_fps_cap(&mut self, cap: Option<f64>) {
+        match self.frame_clock.set_cap(cap, self.last_frame) {
+            Ok(()) => self.fps_cap = cap,
+            Err(error) => tracing::warn!("FPS cap: {error}"),
+        }
+    }
     fn apply_vsync(&mut self) {
         let mode = if self.vsync {
             wgpu::PresentMode::AutoVsync
@@ -473,8 +556,49 @@ fn render_debug_overlay(
         });
 }
 
+#[cfg(windows)]
+fn embedded_window_attributes(
+    attributes: winit::window::WindowAttributes,
+) -> anyhow::Result<winit::window::WindowAttributes> {
+    use anyhow::Context;
+    use std::num::NonZeroIsize;
+    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::IsWindow};
+    use winit::raw_window_handle::{RawWindowHandle, Win32WindowHandle};
+    let Ok(parent) = std::env::var("WHATEVER_EDITOR_PARENT") else {
+        return Ok(attributes);
+    };
+    let handle = NonZeroIsize::new(parent.parse()?).context("invalid editor window handle")?;
+    anyhow::ensure!(
+        unsafe { IsWindow(HWND(handle.get() as _)).as_bool() },
+        "editor window closed"
+    );
+    let bounds = std::env::var("WHATEVER_EDITOR_RECT")?
+        .split(',')
+        .map(str::parse::<i32>)
+        .collect::<Result<Vec<_>, _>>()?;
+    anyhow::ensure!(
+        bounds.len() == 4 && bounds[2] > 0 && bounds[3] > 0,
+        "invalid editor viewport bounds"
+    );
+    // The editor owns this live parent for the entire Play session and kills its child on exit.
+    let attributes = unsafe {
+        attributes.with_parent_window(Some(RawWindowHandle::Win32(Win32WindowHandle::new(handle))))
+    };
+    Ok(attributes
+        .with_decorations(false)
+        .with_resizable(false)
+        .with_position(winit::dpi::PhysicalPosition::new(bounds[0], bounds[1]))
+        .with_inner_size(winit::dpi::PhysicalSize::new(
+            bounds[2] as u32,
+            bounds[3] as u32,
+        )))
+}
+
 impl ApplicationHandler for Engine {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some() {
+            event_loop.listen_device_events(winit::event_loop::DeviceEvents::Always);
+        }
         if self.window.is_some() {
             return;
         }
@@ -489,7 +613,17 @@ impl ApplicationHandler for Engine {
             });
         let attrs = Window::default_attributes()
             .with_title(&self.game_name)
-            .with_window_icon(icon);
+            .with_window_icon(icon)
+            .with_visible(false);
+        #[cfg(windows)]
+        let attrs = match embedded_window_attributes(attrs) {
+            Ok(attrs) => attrs,
+            Err(error) => {
+                tracing::error!("embedded player window: {error:#}");
+                event_loop.exit();
+                return;
+            }
+        };
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -544,12 +678,43 @@ impl ApplicationHandler for Engine {
 
         self.renderer = Some(renderer);
         self.window = Some(Arc::clone(&window));
+        self.set_cursor_captured(false);
+        window.set_visible(true);
+        if std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_none() {
+            window.focus_window();
+            self.debug.window(&format!(
+                "player ready; startup focus={}",
+                window.has_focus()
+            ));
+        }
         self.simulation.ready();
 
         window.request_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        #[cfg(windows)]
+        if matches!(
+            event,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            }
+        ) && std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
+            && let Some(window) = &self.window
+        {
+            use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = window.window_handle()
+                && let RawWindowHandle::Win32(handle) = handle.as_raw()
+            {
+                // Child windows do not receive keyboard focus automatically on a mouse click.
+                unsafe {
+                    let _ = windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(
+                        windows::Win32::Foundation::HWND(handle.hwnd.get() as _),
+                    );
+                }
+            }
+        }
         // F2 avoids the Windows Alt+Enter fullscreen shortcut.
         if let WindowEvent::KeyboardInput { ref event, .. } = event
             && let PhysicalKey::Code(code) = event.physical_key
@@ -604,6 +769,16 @@ impl ApplicationHandler for Engine {
 
         match event {
             WindowEvent::Focused(false) => {
+                #[cfg(windows)]
+                if std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
+                    && self
+                        .window
+                        .as_ref()
+                        .is_some_and(|w| crate::cursor::EmbeddedCursor::focused(w))
+                {
+                    return;
+                }
+                self.set_cursor_captured(false);
                 self.input.keys_pressed.clear();
                 self.input.mouse_delta = (0.0, 0.0);
             }
@@ -622,6 +797,13 @@ impl ApplicationHandler for Engine {
                 }
             }
             WindowEvent::RedrawRequested => {
+                // OS redraw requests must obey the same cap as scheduled frames.
+                if !self.frame_clock.ready(Instant::now()) {
+                    if let Some(deadline) = self.frame_clock.deadline() {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                    }
+                    return;
+                }
                 self.frame();
                 if self.should_quit {
                     self.debug.window("quit command issued");
@@ -632,12 +814,7 @@ impl ApplicationHandler for Engine {
                     self.sync_input();
                     return;
                 }
-                if let Some(cap) = self.fps_cap {
-                    self.next_frame_target = self.last_frame + Duration::from_secs_f64(1.0 / cap);
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
-                } else if let Some(w) = self.window.as_ref() {
-                    w.request_redraw();
-                }
+                self.frame_clock.complete(self.last_frame);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
@@ -660,28 +837,43 @@ impl ApplicationHandler for Engine {
             }
             _ => {}
         }
+        if self
+            .editor_link
+            .as_ref()
+            .is_some_and(|link| link.inspecting())
+        {
+            self.set_cursor_captured(false);
+            self.input.keys_pressed.clear();
+            self.input.mouse_delta = (0.0, 0.0);
+        }
         self.sync_input();
     }
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if !self.input.mouse_captured {
+                return;
+            }
+            if self
+                .editor_link
+                .as_ref()
+                .is_some_and(|link| link.inspecting())
+            {
+                return;
+            }
             self.input.accumulate_mouse(dx as f32, dy as f32);
             self.sync_input();
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.fps_cap.is_some() {
-            // Only request a redraw once the target time has elapsed; otherwise
-            // keep sleeping. Calling request_redraw() unconditionally here would
-            // bypass WaitUntil and ignore the cap entirely.
-            if Instant::now() >= self.next_frame_target {
-                if let Some(w) = self.window.as_ref() {
-                    w.request_redraw();
-                }
-            } else {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_target));
+        if self.frame_clock.ready(Instant::now()) {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            if let Some(window) = &self.window {
+                window.request_redraw();
             }
+        } else if let Some(deadline) = self.frame_clock.deadline() {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
         }
     }
 }

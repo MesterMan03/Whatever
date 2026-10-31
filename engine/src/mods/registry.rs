@@ -9,6 +9,7 @@ pub struct LoadedMod {
 
 pub struct ModRegistry {
     mods: Vec<LoadedMod>,
+    pub(super) excluded: std::collections::HashSet<String>,
     id_to_index: HashMap<String, usize>,
 }
 
@@ -16,17 +17,33 @@ impl ModRegistry {
     pub fn new() -> Self {
         ModRegistry {
             mods: Vec::new(),
+            excluded: Default::default(),
             id_to_index: HashMap::new(),
         }
     }
 
     pub fn register(&mut self, loaded: LoadedMod) {
         let id = loaded.manifest.meta.id.clone();
+        self.excluded.remove(&id);
         let idx = self.mods.len();
         self.mods.push(loaded);
         self.id_to_index.insert(id, idx);
     }
 
+    /// A startup scene follows its owning mod's runtime-side availability.
+    pub fn startup_scene(&self) -> anyhow::Result<Option<&str>> {
+        let Some(path) = self
+            .get("core")
+            .and_then(|manifest| manifest.initial_scene.as_deref())
+        else {
+            return Ok(None);
+        };
+        let scene = crate::scene::scene_path(path)?;
+        if self.excluded.contains(&scene.mod_id) {
+            return Ok(None);
+        }
+        Ok(Some(path))
+    }
     pub fn iter(&self) -> impl Iterator<Item = &LoadedMod> {
         self.mods.iter()
     }

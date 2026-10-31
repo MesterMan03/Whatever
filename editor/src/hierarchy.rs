@@ -13,6 +13,12 @@ pub(super) fn entity_paths(
     }
 }
 
+#[derive(Clone, Default)]
+pub(super) struct DroppedEntity {
+    pub path: Vec<usize>,
+    pub position: egui::Pos2,
+}
+
 enum TreeEvent {
     Select(Vec<usize>),
     Command(Vec<usize>, Action),
@@ -166,7 +172,7 @@ fn rows(
             egui::Align2::LEFT_CENTER,
             name,
             egui::FontId::proportional(13.0),
-            egui::Color32::from_gray(217),
+            egui::Color32::from_gray(if entity.enabled { 217 } else { 95 }),
         );
         if response.clicked() && !toggle {
             events.push(TreeEvent::Select(path.clone()));
@@ -175,8 +181,20 @@ fn rows(
             *dragging = Some(path.clone());
         }
         response.context_menu(|ui| {
+            ui.menu_button("Create", |ui| {
+                for &(label, action) in menus::PRESETS {
+                    if ui.button(label).clicked() {
+                        events.push(TreeEvent::Command(path.clone(), action));
+                        ui.close_menu();
+                    }
+                }
+            });
             for (label, action) in [
-                ("Create child", Action::AddChild),
+                ("Copy (Ctrl+C)", Action::Copy),
+                ("Cut (Ctrl+X)", Action::Cut),
+                ("Paste (Ctrl+V)", Action::Paste),
+                ("Duplicate (Ctrl+D)", Action::Duplicate),
+                ("Rename (F2)", Action::Rename),
                 ("Frame selected", Action::Frame),
                 ("Delete", Action::Delete),
             ] {
@@ -241,6 +259,9 @@ fn rows(
 
 impl Editor {
     pub(super) fn hierarchy_ui(&mut self, ui: &mut egui::Ui) {
+        if self.has_dialog() || self.live_waiting() {
+            ui.disable();
+        }
         let mut events = Vec::new();
         let mut hits = Vec::new();
         if let Some(doc) = &self.document {
@@ -286,9 +307,21 @@ impl Editor {
                     doc.scene.entities.len(),
                 ));
             }
-            if let Some((start, end)) = pointer_gesture(ui.ctx(), &mut self.hierarchy_press)
+            if !self.input_blocked()
+                && let Some((start, end)) = pointer_gesture(ui.ctx(), &mut self.hierarchy_press)
                 && ui.ctx().layer_id_at(start) == Some(ui.layer_id())
             {
+                if let Some((_, path)) = hits.iter().find(|(rect, _)| rect.contains(start)) {
+                    ui.ctx().data_mut(|state| {
+                        state.insert_temp(
+                            egui::Id::new("entity_drop"),
+                            DroppedEntity {
+                                path: path.clone(),
+                                position: end,
+                            },
+                        )
+                    });
+                }
                 events.retain(|event| matches!(event, TreeEvent::Command(..)));
                 if let Some(event) = gesture_move(&doc.scene.entities, &hits, rect, start, end) {
                     events.push(event);
@@ -296,10 +329,14 @@ impl Editor {
             }
         } else {
             ui.add_space(25.0);
-            ui.weak("Open a scene from the Project browser\nor create one from File → New Scene.");
+            ui.weak("Open a scene from the Project browser\nor create one from File > New Scene.");
         }
         if ui.ctx().input(|input| input.pointer.any_released()) {
             self.dragging_entity = None;
+        }
+        if self.input_blocked() || self.live_waiting() {
+            self.dragging_entity = None;
+            return;
         }
         for event in events {
             let result = match event {
@@ -425,5 +462,173 @@ mod tests {
                 matches!(coalesced,Some(TreeEvent::Move(_,parent,index)) if parent==expected_parent&&index==expected_index)
             );
         }
+    }
+}
+
+impl Editor {
+    pub(super) fn entity_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.input_blocked() || ctx.wants_keyboard_input() {
+            return;
+        }
+        if ctx.input(|i| i.pointer.primary_pressed()) {
+            self.hierarchy_focused = ctx
+                .pointer_hover_pos()
+                .is_some_and(|p| p.x < self.viewport.left());
+        }
+        if !self.hierarchy_focused {
+            return;
+        }
+        for event in ctx.input(|i| i.events.clone()) {
+            let action = match event {
+                egui::Event::Copy => Some(Action::Copy),
+                egui::Event::Cut => Some(Action::Cut),
+                egui::Event::Paste(text) => {
+                    self.entity_clipboard = Some(text);
+                    Some(Action::Paste)
+                }
+                egui::Event::Key {
+                    key: egui::Key::Delete,
+                    pressed: true,
+                    ..
+                } => Some(Action::Delete),
+                egui::Event::Key {
+                    key: egui::Key::F2,
+                    pressed: true,
+                    ..
+                } => Some(Action::Rename),
+                egui::Event::Key {
+                    key: egui::Key::D,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.command => Some(Action::Duplicate),
+                _ => None,
+            };
+            if let Some(action) = action {
+                let result = self.action(action);
+                self.report(result);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod modal_tests {
+    use super::*;
+    #[test]
+    fn settings_modal_blocks_row_selection_and_entity_shortcuts() {
+        let path = std::env::temp_dir().join(format!(
+            "whatever-modal-{}-{}.wscene",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        std::fs::write(&path,r#"{"version":1,"entities":[{"script_id":"a","name":"A"},{"script_id":"b","name":"B"}]}"#).expect("fixture");
+        let mut editor = Editor::new(None, None);
+        editor.document = Some(Document::open(&path).expect("open"));
+        std::fs::remove_file(&path).expect("cleanup");
+        editor.document.as_mut().expect("doc").selected = vec![0];
+        editor.hierarchy_focused = true;
+        let ctx = editor.ctx.clone();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let mut hits = Vec::new();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    rows(
+                        ui,
+                        &editor.document.as_ref().expect("doc").scene.entities,
+                        &[],
+                        &[0],
+                        &mut Vec::new(),
+                        &mut None,
+                        &mut hits,
+                    );
+                });
+            },
+        );
+        let point = hits[1].0.center();
+        editor.show_preferences = true;
+        for pressed in [true, false] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events: vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                        egui::Event::Key {
+                            key: egui::Key::Delete,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Default::default(),
+                        },
+                        egui::Event::Key {
+                            key: egui::Key::F2,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| {
+                    editor.preferences_ui(ctx);
+                    editor.entity_shortcuts(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| editor.hierarchy_ui(ui));
+                },
+            );
+        }
+        assert_eq!(editor.document.as_ref().expect("doc").selected, vec![0]);
+        assert_eq!(
+            editor.document.as_ref().expect("doc").scene.entities.len(),
+            2
+        );
+        assert!(!editor.rename_requested);
+        editor.show_preferences = false;
+        for _ in 0..2 {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| editor.hierarchy_ui(ui));
+                },
+            );
+        }
+        for pressed in [true, false] {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events: vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| editor.hierarchy_ui(ui));
+                },
+            );
+        }
+        assert_eq!(editor.document.as_ref().expect("doc").selected, vec![1]);
     }
 }

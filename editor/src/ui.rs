@@ -23,6 +23,29 @@ impl Editor {
         self.ctx.set_style(style);
     }
     pub(super) fn ui(&mut self, ctx: &egui::Context) {
+        self.dialogs(ctx);
+        self.preferences_ui(ctx);
+        self.mod_editor_ui(ctx);
+        if self.input_blocked() {
+            ctx.data_mut(|state| {
+                state.remove::<hierarchy::DroppedEntity>(egui::Id::new("entity_drop"))
+            });
+            self.gizmo_drag = None;
+            self.viewport_press = None;
+            self.hierarchy_press = None;
+            self.dragging_entity = None;
+            self.dragging_entity = None;
+        }
+        if self.project.is_none() {
+            self.viewport = egui::Rect::NOTHING;
+            self.welcome_ui(ctx);
+            return;
+        }
+        self.entity_shortcuts(ctx);
+
+        ctx.data_mut(|state| {
+            state.remove_temp::<hierarchy::DroppedEntity>(egui::Id::new("entity_drop"))
+        });
         #[cfg(not(any(windows, target_os = "macos")))]
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
@@ -57,6 +80,9 @@ impl Editor {
         egui::TopBottomPanel::top("toolbar")
             .exact_height(45.0)
             .show(ctx, |ui| {
+                if self.has_dialog() {
+                    ui.disable();
+                }
                 ui.horizontal_centered(|ui| {
                     ui.add_space(6.0);
                     ui.label(
@@ -100,6 +126,9 @@ impl Editor {
                                 self.project.is_some() && self.job.is_none(),
                                 egui::Button::new("▶  Play"),
                             )
+                            .on_hover_text(
+                                "Play in the viewport. Hold Shift to open a separate window.",
+                            )
                             .clicked()
                         {
                             let result = self.play();
@@ -140,10 +169,7 @@ impl Editor {
                     ui.strong("Hierarchy");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.menu_button("+", |ui| {
-                            for (label, action) in [
-                                ("Create Entity", Action::AddEntity),
-                                ("Create Child", Action::AddChild),
-                            ] {
+                            for &(label, action) in menus::PRESETS {
                                 if ui.button(label).clicked() {
                                     let result = self.action(action);
                                     self.report(result);
@@ -154,7 +180,11 @@ impl Editor {
                     });
                 });
                 ui.separator();
-                egui::ScrollArea::vertical().show(ui, |ui| self.hierarchy_ui(ui));
+                self.hierarchy_focused |= ui.rect_contains_pointer(ui.max_rect())
+                    && ui.input(|i| i.pointer.primary_pressed());
+                egui::ScrollArea::vertical()
+                    .drag_to_scroll(false)
+                    .show(ui, |ui| self.hierarchy_ui(ui));
             });
         egui::SidePanel::right("inspector")
             .resizable(true)
@@ -165,6 +195,7 @@ impl Editor {
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt("inspector_scroll")
+                    .drag_to_scroll(false)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         self.inspector_ui(ui);
@@ -173,89 +204,10 @@ impl Editor {
         egui::CentralPanel::default()
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
-                self.viewport = ui.max_rect();
-                let response = ui.allocate_rect(self.viewport, egui::Sense::click_and_drag());
-                if response.hovered()
-                    && !ctx.wants_keyboard_input()
-                    && ctx.input(|input| input.key_pressed(egui::Key::F))
-                {
-                    self.frame_selected();
-                }
-                if response.dragged_by(egui::PointerButton::Secondary)
-                    || response.dragged_by(egui::PointerButton::Primary)
-                {
-                    let delta = ctx.input(|input| input.pointer.delta());
-                    self.orbit[0] -= delta.x * 0.006;
-                    self.orbit[1] = (self.orbit[1] + delta.y * 0.006).clamp(-1.5, 1.5);
-                }
-                if response.dragged_by(egui::PointerButton::Middle) {
-                    let delta = ctx.input(|input| input.pointer.delta());
-                    let forward = (self.target - self.camera_position()).normalize();
-                    let right = forward.cross(Vec3::Y).normalize();
-                    let up = right.cross(forward);
-                    self.target += (-right * delta.x + up * delta.y) * self.distance * 0.002;
-                }
-                if response.hovered() {
-                    self.distance = (self.distance
-                        * (-ctx.input(|input| input.smooth_scroll_delta.y) * 0.002).exp())
-                    .clamp(0.1, 10000.0);
-                }
-                self.viewport_overlay(ui);
+                self.viewport_ui(ui);
             });
-        self.dialogs(ctx);
     }
-    fn browser_ui(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            for (index, label) in ["Project", "Assets", "Build Log"].iter().enumerate() {
-                ui.selectable_value(&mut self.browser_tab, index, *label);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.browser_tab != 2 {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.asset_search)
-                            .hint_text("Search")
-                            .desired_width(190.0),
-                    );
-                }
-            });
-        });
-        ui.separator();
-        if self.browser_tab == 2 {
-            egui::ScrollArea::vertical()
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for line in &self.logs {
-                        ui.monospace(line);
-                    }
-                });
-            return;
-        }
-        ui.horizontal_top(|ui| {
-            egui::ScrollArea::vertical().id_salt("mods").max_width(180.0).show(ui,|ui| {
-                ui.set_width(165.0);
-                ui.vertical(|ui| {for(index,(id,_))in self.mod_roots.iter().enumerate() {
-                    if ui.add_sized([165.0,24.0],egui::SelectableLabel::new(self.active_mod==index,id)).clicked(){self.active_mod=index;}
-                }});
-            });
-            ui.separator();
-            egui::ScrollArea::vertical().id_salt("resources").show(ui,|ui| {
-                ui.vertical(|ui| {
-                    let active=self.mod_roots.get(self.active_mod).map(|(id,_)|id.clone()).unwrap_or_default();
-                    let indices=self.resources.iter().enumerate().filter(|(_,r)|r.mod_id==active&&r.scene==(self.browser_tab==0)&&r.uri.to_lowercase().contains(&self.asset_search.to_lowercase())).map(|(i,_)|i).collect::<Vec<_>>();
-                    if indices.is_empty(){ui.add_space(12.0);ui.weak(if self.browser_tab==0{"No scenes in this mod. File → New Scene creates one."}else{"No matching assets. Choose an asset in the Inspector to import a file."});}
-                    for index in indices {
-                        let resource=&self.resources[index];
-                        let label=resource.uri.split_once("://").map(|(_,path)|path).unwrap_or(&resource.uri);
-                        let response=ui.selectable_label(self.document.as_ref().is_some_and(|doc|doc.path==resource.path),label).on_hover_text(&resource.uri);
-                        response.dnd_set_drag_payload(resource.uri.clone());let path=resource.path.clone();let scene=resource.scene;
-                        response.context_menu(|ui|{if ui.button("Copy VFS path").clicked(){ui.ctx().copy_text(self.resources[index].uri.clone());ui.close_menu();}});
-                        if scene&&response.double_clicked(){let result=self.request_scene(&path);self.report(result);}
-                    }
-                });
-            });
-        });
-    }
-    fn viewport_overlay(&self, ui: &mut egui::Ui) {
+    pub(super) fn viewport_overlay(&self, ui: &mut egui::Ui) {
         let painter = ui.painter();
         let rect = self.viewport;
         let position = self.camera_position();
@@ -316,7 +268,7 @@ impl Editor {
                         if selected { 7.0 } else { 3.0 },
                         egui::Stroke::new(1.5_f32, color),
                     );
-                    if selected {
+                    if selected && self.tool == viewport::Tool::Select {
                         for (axis, color) in [
                             (Vec3::X, egui::Color32::from_rgb(229, 95, 104)),
                             (Vec3::Y, egui::Color32::from_rgb(113, 211, 135)),
@@ -358,9 +310,9 @@ impl Editor {
     fn dialogs(&mut self, ctx: &egui::Context) {
         if self.show_settings {
             let mut open = true;
-            egui::Window::new("Project & Build Settings").open(&mut open).resizable(false).default_width(460.0).show(ctx,|ui|{
+            egui::Modal::new(egui::Id::new("project_settings")).show(ctx,|ui|{ui.set_width(460.0);ui.horizontal(|ui| {ui.heading("Project & Build Settings");if ui.button("Close").clicked(){open=false;}});
             if let Some(mut project)=self.project.clone(){
-                let mut changed=false;ui.heading("Game branding");ui.label("Display name / executable name");changed|=ui.text_edit_singleline(&mut project.name).changed();
+                let mut changed=false;ui.heading("Game branding");ui.label("Game ID");changed|=ui.text_edit_singleline(&mut project.id).changed();ui.label("Display name / executable name");changed|=ui.text_edit_singleline(&mut project.name).changed();
                 ui.horizontal(|ui|{ui.label("Version");changed|=ui.text_edit_singleline(&mut project.build.version).changed();});
                 ui.horizontal(|ui|{ui.label("Company");changed|=ui.text_edit_singleline(&mut project.build.company).changed();});
                 ui.separator();ui.label("Executable icon");
@@ -374,29 +326,34 @@ impl Editor {
                     if project.build.icon.is_some()&&ui.button("Reset").clicked(){project.build.icon=None;changed=true;}
                 });
                 ui.weak("PNG or ICO. Build embeds multiple icon sizes and game metadata into the launcher.");
-                ui.separator();ui.heading("Build");ui.weak("Player and mod runtime are included automatically.");
+                ui.separator();ui.heading("Build");ui.label("Exclude mods from the final build");
+                for (id,_) in &self.mod_roots { if id=="core" {continue;} let mut excluded=project.build.exclude_mods.contains(id);if ui.checkbox(&mut excluded,id).changed(){project.build.exclude_mods.retain(|item|item!=id);if excluded{project.build.exclude_mods.push(id.clone());}changed=true;} }
+                ui.weak("Player and mod runtime are included automatically.");
                 ui.horizontal(|ui|{ui.add(egui::Label::new(self.build_destination.as_ref().map(|path|display_path(path)).unwrap_or("Choose a destination on first Build".into())).truncate());
                     if ui.button("Browse…").clicked(){self.build_destination=self.file_dialog("Choose game build folder").pick_folder();}});
                 ui.weak("An empty folder or a previous Whatever build can be used. Source mods are protected.");
-                if changed{match project.save(){Ok(())=>self.project=Some(project),Err(error)=>self.status=format!("{error:#}")}}
+                if changed{match project.save(){Ok(())=>{if let Some(window)=&self.window{window.set_title(&format!("{} — Whatever Editor",project.name));}self.project=Some(project);},Err(error)=>self.status=format!("{error:#}")}}
                 ui.add_space(10.0);if ui.button("Build Game").clicked(){let result=self.action(Action::Build);self.report(result);}
             }
         });
-            self.show_settings = open;
+            self.show_settings = open && !ctx.input(|i| i.key_pressed(egui::Key::Escape));
         }
         if self.show_new_project || self.show_new_mod {
             let is_project = self.show_new_project;
             let mut open = true;
             let mut create = false;
-            egui::Window::new(if is_project {
-                "New Project"
-            } else {
-                "Create Mod"
-            })
-            .open(&mut open)
-            .resizable(false)
-            .default_width(420.0)
-            .show(ctx, |ui| {
+            egui::Modal::new(egui::Id::new("create_project_mod")).show(ctx, |ui| {
+                ui.set_width(420.0);
+                ui.horizontal(|ui| {
+                    ui.heading(if is_project {
+                        "New Project"
+                    } else {
+                        "Create Mod"
+                    });
+                    if ui.button("Cancel").clicked() {
+                        open = false;
+                    }
+                });
                 ui.label("Name");
                 ui.text_edit_singleline(&mut self.draft_name);
                 ui.label(if is_project { "Game ID" } else { "Mod ID" });

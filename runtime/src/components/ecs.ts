@@ -1,12 +1,18 @@
+import { _startupScene } from "../shared.ts";
 import type { Component, QueryResult } from "../types.ts";
 import { _pending, type Pending } from "../pending.ts";
 import { EntityRef, type EntityReference, type ComponentValue } from "../references.ts";
 import {
-  _send, nextReqId,
-  _entityCallbacks, _entityListCallbacks,
-  _componentGetCallbacks, _componentQueryCallbacks,
-  _entityParentCallbacks, _entityChildrenCallbacks,
-  _sceneCallbacks, type LoadedSceneData,
+  _send,
+  nextReqId,
+  _entityCallbacks,
+  _entityListCallbacks,
+  _componentGetCallbacks,
+  _componentQueryCallbacks,
+  _entityParentCallbacks,
+  _entityChildrenCallbacks,
+  _sceneCallbacks,
+  type LoadedSceneData,
 } from "../shared.ts";
 
 export namespace BuiltInComponents {
@@ -22,7 +28,13 @@ export namespace BuiltInComponents {
     rotation: [number, number, number, number];
     scale: [number, number, number];
 
-    constructor(init: { position?: [number, number, number]; rotation?: [number, number, number, number]; scale?: [number, number, number] } = {}) {
+    constructor(
+      init: {
+        position?: [number, number, number];
+        rotation?: [number, number, number, number];
+        scale?: [number, number, number];
+      } = {},
+    ) {
       this.position = init.position ?? [0, 0, 0];
       this.rotation = init.rotation ?? [0, 0, 0, 1];
       this.scale = init.scale ?? [1, 1, 1];
@@ -30,15 +42,39 @@ export namespace BuiltInComponents {
 
     // --- Position ---
 
-    getX(): number { return this.position[0]; }
-    setX(x: number): this { this.position[0] = x; return this; }
-    addX(x: number): this { this.position[0] += x; return this; }
-    getY(): number { return this.position[1]; }
-    setY(y: number): this { this.position[1] = y; return this; }
-    addY(y: number): this { this.position[1] += y; return this; }
-    getZ(): number { return this.position[2]; }
-    setZ(z: number): this { this.position[2] = z; return this; }
-    addZ(z: number): this { this.position[2] += z; return this; }
+    getX(): number {
+      return this.position[0];
+    }
+    setX(x: number): this {
+      this.position[0] = x;
+      return this;
+    }
+    addX(x: number): this {
+      this.position[0] += x;
+      return this;
+    }
+    getY(): number {
+      return this.position[1];
+    }
+    setY(y: number): this {
+      this.position[1] = y;
+      return this;
+    }
+    addY(y: number): this {
+      this.position[1] += y;
+      return this;
+    }
+    getZ(): number {
+      return this.position[2];
+    }
+    setZ(z: number): this {
+      this.position[2] = z;
+      return this;
+    }
+    addZ(z: number): this {
+      this.position[2] += z;
+      return this;
+    }
 
     /** Returns a copy of the position as [x, y, z]. */
     getPosition(): [number, number, number] {
@@ -53,12 +89,27 @@ export namespace BuiltInComponents {
 
     // --- Scale ---
 
-    getScaleX(): number { return this.scale[0]; }
-    setScaleX(x: number): this { this.scale[0] = x; return this; }
-    getScaleY(): number { return this.scale[1]; }
-    setScaleY(y: number): this { this.scale[1] = y; return this; }
-    getScaleZ(): number { return this.scale[2]; }
-    setScaleZ(z: number): this { this.scale[2] = z; return this; }
+    getScaleX(): number {
+      return this.scale[0];
+    }
+    setScaleX(x: number): this {
+      this.scale[0] = x;
+      return this;
+    }
+    getScaleY(): number {
+      return this.scale[1];
+    }
+    setScaleY(y: number): this {
+      this.scale[1] = y;
+      return this;
+    }
+    getScaleZ(): number {
+      return this.scale[2];
+    }
+    setScaleZ(z: number): this {
+      this.scale[2] = z;
+      return this;
+    }
 
     /** Returns a copy of the scale tuple. */
     getScale(): [number, number, number] {
@@ -121,9 +172,12 @@ export namespace BuiltInComponents {
      * i.e. q = Qz·Qy·Qx). Consistent with `getEulerRadians`. Chainable.
      */
     setEulerRadians(rx: number, ry: number, rz: number): this {
-      const cx = Math.cos(rx / 2), sx = Math.sin(rx / 2);
-      const cy = Math.cos(ry / 2), sy = Math.sin(ry / 2);
-      const cz = Math.cos(rz / 2), sz = Math.sin(rz / 2);
+      const cx = Math.cos(rx / 2),
+        sx = Math.sin(rx / 2);
+      const cy = Math.cos(ry / 2),
+        sy = Math.sin(ry / 2);
+      const cz = Math.cos(rz / 2),
+        sz = Math.sin(rz / 2);
       this.rotation = [
         sx * cy * cz - cx * sy * sz,
         cx * sy * cz + sx * cy * sz,
@@ -138,34 +192,37 @@ export namespace BuiltInComponents {
     /** Decompose the current quaternion into intrinsic XYZ Euler angles in degrees. */
     getEulerDegrees(): [number, number, number] {
       const r = this.getEulerRadians();
-      return [r[0] * 180 / Math.PI, r[1] * 180 / Math.PI, r[2] * 180 / Math.PI];
+      return [(r[0] * 180) / Math.PI, (r[1] * 180) / Math.PI, (r[2] * 180) / Math.PI];
     }
 
     /** Set rotation from intrinsic XYZ Euler angles in degrees. Chainable. */
     setEulerDegrees(x: number, y: number, z: number): this {
-      return this.setEulerRadians(x * Math.PI / 180, y * Math.PI / 180, z * Math.PI / 180);
+      return this.setEulerRadians((x * Math.PI) / 180, (y * Math.PI) / 180, (z * Math.PI) / 180);
     }
 
     // --- Rotation: incremental world-space helpers ---
 
     /** Rotate by `degrees` around the world X axis. Chainable. */
     rotateX(degrees: number): this {
-      const r = degrees * Math.PI / 180;
-      const s = Math.sin(r / 2), c = Math.cos(r / 2);
+      const r = (degrees * Math.PI) / 180;
+      const s = Math.sin(r / 2),
+        c = Math.cos(r / 2);
       return this._leftMultiply(s, 0, 0, c);
     }
 
     /** Rotate by `degrees` around the world Y axis. Chainable. */
     rotateY(degrees: number): this {
-      const r = degrees * Math.PI / 180;
-      const s = Math.sin(r / 2), c = Math.cos(r / 2);
+      const r = (degrees * Math.PI) / 180;
+      const s = Math.sin(r / 2),
+        c = Math.cos(r / 2);
       return this._leftMultiply(0, s, 0, c);
     }
 
     /** Rotate by `degrees` around the world Z axis. Chainable. */
     rotateZ(degrees: number): this {
-      const r = degrees * Math.PI / 180;
-      const s = Math.sin(r / 2), c = Math.cos(r / 2);
+      const r = (degrees * Math.PI) / 180;
+      const s = Math.sin(r / 2),
+        c = Math.cos(r / 2);
       return this._leftMultiply(0, 0, s, c);
     }
 
@@ -198,10 +255,20 @@ export namespace BuiltInComponents {
       this.shader = init.shader;
     }
 
-    getTexture(): string { return this.texture; }
-    setTexture(texture: string): this { this.texture = texture; return this; }
-    getShader(): string { return this.shader; }
-    setShader(shader: string): this { this.shader = shader; return this; }
+    getTexture(): string {
+      return this.texture;
+    }
+    setTexture(texture: string): this {
+      this.texture = texture;
+      return this;
+    }
+    getShader(): string {
+      return this.shader;
+    }
+    setShader(shader: string): this {
+      this.shader = shader;
+      return this;
+    }
   }
 
   /**
@@ -227,12 +294,27 @@ export namespace BuiltInComponents {
       this.texture = init.texture ?? null;
     }
 
-    getMesh(): string { return this.mesh; }
-    setMesh(mesh: string): this { this.mesh = mesh; return this; }
-    getShader(): string { return this.shader; }
-    setShader(shader: string): this { this.shader = shader; return this; }
-    getTexture(): string | null { return this.texture; }
-    setTexture(texture: string | null): this { this.texture = texture; return this; }
+    getMesh(): string {
+      return this.mesh;
+    }
+    setMesh(mesh: string): this {
+      this.mesh = mesh;
+      return this;
+    }
+    getShader(): string {
+      return this.shader;
+    }
+    setShader(shader: string): this {
+      this.shader = shader;
+      return this;
+    }
+    getTexture(): string | null {
+      return this.texture;
+    }
+    setTexture(texture: string | null): this {
+      this.texture = texture;
+      return this;
+    }
   }
 
   /**
@@ -258,12 +340,27 @@ export namespace BuiltInComponents {
       this.zfar = init.zfar ?? 1000;
     }
 
-    getFov(): number { return this.fovy_degrees; }
-    setFov(degrees: number): this { this.fovy_degrees = degrees; return this; }
-    getZNear(): number { return this.znear; }
-    setZNear(v: number): this { this.znear = v; return this; }
-    getZFar(): number { return this.zfar; }
-    setZFar(v: number): this { this.zfar = v; return this; }
+    getFov(): number {
+      return this.fovy_degrees;
+    }
+    setFov(degrees: number): this {
+      this.fovy_degrees = degrees;
+      return this;
+    }
+    getZNear(): number {
+      return this.znear;
+    }
+    setZNear(v: number): this {
+      this.znear = v;
+      return this;
+    }
+    getZFar(): number {
+      return this.zfar;
+    }
+    setZFar(v: number): this {
+      this.zfar = v;
+      return this;
+    }
   }
 
   /** TextRenderer component. Renders a string at the entity's world-space Transform position. */
@@ -292,14 +389,34 @@ export namespace BuiltInComponents {
       this.color = init.color ?? [1, 1, 1, 1];
     }
 
-    getText(): string { return this.text; }
-    setText(text: string): this { this.text = text; return this; }
-    getFont(): string { return this.font; }
-    setFont(font: string): this { this.font = font; return this; }
-    getFontSize(): number { return this.font_size; }
-    setFontSize(size: number): this { this.font_size = size; return this; }
-    getColor(): [number, number, number, number] { return [...this.color]; }
-    setColor(r: number, g: number, b: number, a: number): this { this.color = [r, g, b, a]; return this; }
+    getText(): string {
+      return this.text;
+    }
+    setText(text: string): this {
+      this.text = text;
+      return this;
+    }
+    getFont(): string {
+      return this.font;
+    }
+    setFont(font: string): this {
+      this.font = font;
+      return this;
+    }
+    getFontSize(): number {
+      return this.font_size;
+    }
+    setFontSize(size: number): this {
+      this.font_size = size;
+      return this;
+    }
+    getColor(): [number, number, number, number] {
+      return [...this.color];
+    }
+    setColor(r: number, g: number, b: number, a: number): this {
+      this.color = [r, g, b, a];
+      return this;
+    }
   }
 
   /** AmbientLight component. Multiple ambient lights are additive. */
@@ -315,10 +432,20 @@ export namespace BuiltInComponents {
       this.intensity = init.intensity ?? 0.1;
     }
 
-    getColor(): [number, number, number] { return [...this.color]; }
-    setColor(r: number, g: number, b: number): this { this.color = [r, g, b]; return this; }
-    getIntensity(): number { return this.intensity; }
-    setIntensity(v: number): this { this.intensity = v; return this; }
+    getColor(): [number, number, number] {
+      return [...this.color];
+    }
+    setColor(r: number, g: number, b: number): this {
+      this.color = [r, g, b];
+      return this;
+    }
+    getIntensity(): number {
+      return this.intensity;
+    }
+    setIntensity(v: number): this {
+      this.intensity = v;
+      return this;
+    }
   }
 
   /** DirectionalLight component. Simulates an infinitely distant light source (e.g. the sun). */
@@ -331,18 +458,39 @@ export namespace BuiltInComponents {
     /** Multiplier for the colour. Defaults to `1.0`. */
     intensity: number;
 
-    constructor(init: { direction?: [number, number, number]; color?: [number, number, number]; intensity?: number } = {}) {
+    constructor(
+      init: {
+        direction?: [number, number, number];
+        color?: [number, number, number];
+        intensity?: number;
+      } = {},
+    ) {
       this.direction = init.direction ?? [0, -1, 0];
       this.color = init.color ?? [1, 1, 1];
       this.intensity = init.intensity ?? 1.0;
     }
 
-    getDirection(): [number, number, number] { return [...this.direction]; }
-    setDirection(x: number, y: number, z: number): this { this.direction = [x, y, z]; return this; }
-    getColor(): [number, number, number] { return [...this.color]; }
-    setColor(r: number, g: number, b: number): this { this.color = [r, g, b]; return this; }
-    getIntensity(): number { return this.intensity; }
-    setIntensity(v: number): this { this.intensity = v; return this; }
+    getDirection(): [number, number, number] {
+      return [...this.direction];
+    }
+    setDirection(x: number, y: number, z: number): this {
+      this.direction = [x, y, z];
+      return this;
+    }
+    getColor(): [number, number, number] {
+      return [...this.color];
+    }
+    setColor(r: number, g: number, b: number): this {
+      this.color = [r, g, b];
+      return this;
+    }
+    getIntensity(): number {
+      return this.intensity;
+    }
+    setIntensity(v: number): this {
+      this.intensity = v;
+      return this;
+    }
   }
 
   /**
@@ -358,22 +506,41 @@ export namespace BuiltInComponents {
     /** Distance (in world units) at which the light reaches zero. Defaults to `10`. */
     range: number;
 
-    constructor(init: { color?: [number, number, number]; intensity?: number; range?: number } = {}) {
+    constructor(
+      init: { color?: [number, number, number]; intensity?: number; range?: number } = {},
+    ) {
       this.color = init.color ?? [1, 1, 1];
       this.intensity = init.intensity ?? 1.0;
       this.range = init.range ?? 10;
     }
 
-    getColor(): [number, number, number] { return [...this.color]; }
-    setColor(r: number, g: number, b: number): this { this.color = [r, g, b]; return this; }
-    getIntensity(): number { return this.intensity; }
-    setIntensity(v: number): this { this.intensity = v; return this; }
-    getRange(): number { return this.range; }
-    setRange(v: number): this { this.range = v; return this; }
+    getColor(): [number, number, number] {
+      return [...this.color];
+    }
+    setColor(r: number, g: number, b: number): this {
+      this.color = [r, g, b];
+      return this;
+    }
+    getIntensity(): number {
+      return this.intensity;
+    }
+    setIntensity(v: number): this {
+      this.intensity = v;
+      return this;
+    }
+    getRange(): number {
+      return this.range;
+    }
+    setRange(v: number): this {
+      this.range = v;
+      return this;
+    }
   }
 }
 
 export interface ComponentRegistry {
+  "core:world_transform": BuiltInComponents.Transform;
+  "core:entity": { id: "core:entity"; enabled: boolean; active: boolean };
   [BuiltInComponents.TRANSFORM_ID]: BuiltInComponents.Transform;
   [BuiltInComponents.SPRITE_RENDERER_ID]: BuiltInComponents.SpriteRenderer;
   [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
@@ -386,18 +553,37 @@ export interface ComponentRegistry {
 
 // Accepted data shapes for setComponent — plain objects and class instances both satisfy this.
 export interface ComponentSetRegistry {
-  [BuiltInComponents.TRANSFORM_ID]: { position: [number, number, number]; rotation: [number, number, number, number]; scale: [number, number, number] };
+  [BuiltInComponents.TRANSFORM_ID]: {
+    position: [number, number, number];
+    rotation: [number, number, number, number];
+    scale: [number, number, number];
+  };
   [BuiltInComponents.SPRITE_RENDERER_ID]: { texture: string; shader: string };
-  [BuiltInComponents.TEXT_RENDERER_ID]: { text: string; font: string; shader: string; font_size?: number; color?: [number, number, number, number]; };
+  [BuiltInComponents.TEXT_RENDERER_ID]: {
+    text: string;
+    font: string;
+    shader: string;
+    font_size?: number;
+    color?: [number, number, number, number];
+  };
   [BuiltInComponents.CAMERA_ID]: { fovy_degrees?: number; znear?: number; zfar?: number };
   [BuiltInComponents.MESH_RENDERER_ID]: { mesh: string; shader: string; texture?: string | null };
   [BuiltInComponents.AMBIENT_LIGHT_ID]: { color?: [number, number, number]; intensity?: number };
-  [BuiltInComponents.DIRECTIONAL_LIGHT_ID]: { direction?: [number, number, number]; color?: [number, number, number]; intensity?: number };
-  [BuiltInComponents.POINT_LIGHT_ID]: { color?: [number, number, number]; intensity?: number; range?: number };
+  [BuiltInComponents.DIRECTIONAL_LIGHT_ID]: {
+    direction?: [number, number, number];
+    color?: [number, number, number];
+    intensity?: number;
+  };
+  [BuiltInComponents.POINT_LIGHT_ID]: {
+    color?: [number, number, number];
+    intensity?: number;
+    range?: number;
+  };
 }
 
 // Converts raw component JSON into the appropriate class instance for built-in types.
 export const _componentHydrators: Record<string, (data: any) => any> = {
+  "core:world_transform": (data) => new BuiltInComponents.Transform(data),
   "core:transform": (data) => new BuiltInComponents.Transform(data),
   "core:sprite_renderer": (data) => new BuiltInComponents.SpriteRenderer(data),
   "core:text_renderer": (data) => new BuiltInComponents.TextRenderer(data),
@@ -411,52 +597,113 @@ export const _componentHydrators: Record<string, (data: any) => any> = {
 export function hydrateReferences(value: any): any {
   if (Array.isArray(value)) return value.map(hydrateReferences);
   if (value && typeof value === "object") {
-    if (Object.keys(value).length === 1 && typeof value.$entity === "string") return new Entity(value.$entity);
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, hydrateReferences(item)]));
+    if (Object.keys(value).length === 1 && typeof value.$entity === "string")
+      return new Entity(value.$entity);
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, hydrateReferences(item)]),
+    );
   }
   return value;
 }
 
-function _setComponentImpl<K extends keyof ComponentSetRegistry>(entity_id: string, component_type: K, data: ComponentSetRegistry[K]): void;
-function _setComponentImpl<K extends string>(entity_id: string, component_type: K, data: K extends keyof ComponentSetRegistry ? ComponentSetRegistry[K] : K extends keyof ComponentRegistry ? never : ComponentValue): void;
+function _setComponentImpl<K extends keyof ComponentSetRegistry>(
+  entity_id: string,
+  component_type: K,
+  data: ComponentSetRegistry[K],
+): void;
+function _setComponentImpl<K extends string>(
+  entity_id: string,
+  component_type: K,
+  data: K extends keyof ComponentSetRegistry
+    ? ComponentSetRegistry[K]
+    : K extends keyof ComponentRegistry
+      ? never
+      : ComponentValue,
+): void;
 function _setComponentImpl(entity_id: string, component_type: string, data: any): void {
   // Destructure to exclude `id` without mutating the caller's object.
   const { id: _id, ...rest } = data;
   _send({ type: "ComponentSet", entity_id, component_type, data: rest });
 }
 
-function _getComponentImpl<K extends keyof ComponentRegistry>(entity_id: string, component_type: K): Pending<ComponentRegistry[K] | null>;
-function _getComponentImpl<T extends Component = Component>(entity_id: string, component_type: string): Pending<T | null>;
+function _getComponentImpl<K extends keyof ComponentRegistry>(
+  entity_id: string,
+  component_type: K,
+): Pending<ComponentRegistry[K] | null>;
+function _getComponentImpl<T extends Component = Component>(
+  entity_id: string,
+  component_type: string,
+): Pending<T | null>;
 function _getComponentImpl(entity_id: string, component_type: string): Pending<any> {
-  return _pending(new Promise((resolve, reject) => {
-    const request_id = nextReqId();
-    _componentGetCallbacks.set(request_id, { resolve, reject });
-    _send({ type: "ComponentGet", request_id, entity_id, component_type });
-  }).then((data) => {
-    if (data === null) return null;
-    const hydrator = _componentHydrators[component_type];
-    return hydrator ? hydrator(hydrateReferences(data)) : hydrateReferences(data);
-  }));
+  return _pending(
+    new Promise((resolve, reject) => {
+      const request_id = nextReqId();
+      _componentGetCallbacks.set(request_id, { resolve, reject });
+      _send({ type: "ComponentGet", request_id, entity_id, component_type });
+    }).then((data) => {
+      if (data === null) return null;
+      const hydrator = _componentHydrators[component_type];
+      return hydrator ? hydrator(hydrateReferences(data)) : hydrateReferences(data);
+    }),
+  );
 }
 
 /** A live entity in the scene. Wraps an entity ID and provides component access. */
+export interface CloneOptions {
+  enabled?: boolean;
+  recursive?: boolean;
+}
+
 export class Entity {
   constructor(protected _entityId: string) {}
-  get id(): string { return this._entityId; }
-  toJSON(): { $entity: string } { return { $entity: this._entityId }; }
+  get id(): string {
+    return this._entityId;
+  }
+  toJSON(): { $entity: string } {
+    return { $entity: this._entityId };
+  }
 
+  /** Clone components and descendants, remapping references within the clone. */
+  clone(options: CloneOptions = {}): PendingEntity {
+    return new PendingEntity({ entity_id: this._entityId, ...options });
+  }
+  setEnabled(enabled: boolean): this {
+    _send({ type: "EntitySetEnabled", entity_id: this._entityId, enabled });
+    return this;
+  }
+  getEnabled(): Pending<boolean> {
+    return _pending(
+      _getComponentImpl(this._entityId, "core:entity")
+        .get()
+        .then((state) => state?.enabled ?? false),
+    );
+  }
   /** Destroy this entity and all its components. Fire-and-forget. */
   destroy(): void {
     _send({ type: "EntityDestroy", entity_id: this._entityId });
   }
 
   /** Set a component on this entity. Fire-and-forget. */
-  setComponent<K extends keyof ComponentSetRegistry>(component_type: K, data: ComponentSetRegistry[K]): this;
+  setComponent<K extends keyof ComponentSetRegistry>(
+    component_type: K,
+    data: ComponentSetRegistry[K],
+  ): this;
   setComponent(component: Component): this;
-  setComponent<K extends string>(component_type: K, data: K extends keyof ComponentSetRegistry ? ComponentSetRegistry[K] : K extends keyof ComponentRegistry ? never : ComponentValue): this;
+  setComponent<K extends string>(
+    component_type: K,
+    data: K extends keyof ComponentSetRegistry
+      ? ComponentSetRegistry[K]
+      : K extends keyof ComponentRegistry
+        ? never
+        : ComponentValue,
+  ): this;
   setComponent(component_type_or_component: string | Component, data?: any): this {
     if (typeof component_type_or_component === "object") {
-      _setComponentImpl(this._entityId, component_type_or_component.id, component_type_or_component as any);
+      _setComponentImpl(
+        this._entityId,
+        component_type_or_component.id,
+        component_type_or_component as any,
+      );
     } else {
       _setComponentImpl(this._entityId, component_type_or_component, data);
     }
@@ -470,7 +717,9 @@ export class Entity {
   }
 
   /** Get a component's data. Returns `null` if the component is not set. */
-  getComponent<K extends keyof ComponentRegistry>(component_type: K): Pending<ComponentRegistry[K] | null>;
+  getComponent<K extends keyof ComponentRegistry>(
+    component_type: K,
+  ): Pending<ComponentRegistry[K] | null>;
   getComponent<T extends Component = Component>(component_type: string): Pending<T | null>;
   getComponent(component_type: string): Pending<any> {
     return _getComponentImpl(this._entityId, component_type);
@@ -494,33 +743,38 @@ export class Entity {
    * transform equals its world-space transform.
    */
   setParent(parent: EntityReference | string | null): this {
-    const parent_id = parent === null ? null : (typeof parent === "string" ? parent : parent.toJSON().$entity);
+    const parent_id =
+      parent === null ? null : typeof parent === "string" ? parent : parent.toJSON().$entity;
     _send({ type: "EntitySetParent", entity_id: this._entityId, parent_id });
     return this;
   }
 
   /** Return the parent `Entity`, or `null` if this entity has no parent. */
   getParent(): Pending<Entity | null> {
-    return _pending(new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _entityParentCallbacks.set(request_id, {
-        resolve: (id) => resolve(id !== null ? new Entity(id) : null),
-        reject,
-      });
-      _send({ type: "EntityGetParent", request_id, entity_id: this._entityId });
-    }));
+    return _pending(
+      new Promise((resolve, reject) => {
+        const request_id = nextReqId();
+        _entityParentCallbacks.set(request_id, {
+          resolve: (id) => resolve(id !== null ? new Entity(id) : null),
+          reject,
+        });
+        _send({ type: "EntityGetParent", request_id, entity_id: this._entityId });
+      }),
+    );
   }
 
   /** Return all direct children of this entity. */
   getChildren(): Pending<Entity[]> {
-    return _pending(new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _entityChildrenCallbacks.set(request_id, {
-        resolve: (ids) => resolve(ids.map((id) => new Entity(id))),
-        reject,
-      });
-      _send({ type: "EntityGetChildren", request_id, entity_id: this._entityId });
-    }));
+    return _pending(
+      new Promise((resolve, reject) => {
+        const request_id = nextReqId();
+        _entityChildrenCallbacks.set(request_id, {
+          resolve: (ids) => resolve(ids.map((id) => new Entity(id))),
+          reject,
+        });
+        _send({ type: "EntityGetChildren", request_id, entity_id: this._entityId });
+      }),
+    );
   }
 }
 
@@ -528,36 +782,50 @@ export class Entity {
 export class PendingEntity extends Entity {
   private readonly result: Pending<Entity>;
 
-  constructor() {
+  constructor(clone?: CloneOptions & { entity_id: string }) {
     const request_id = nextReqId();
     super("pending:" + request_id);
-    this.result = _pending(new Promise((resolve, reject) => {
-      _entityCallbacks.set(request_id, {
-        resolve: id => { this._entityId = id; resolve(new Entity(id)); }, reject,
-      });
-      _send({ type: "EntityCreate", request_id });
-    }));
+    this.result = _pending(
+      new Promise((resolve, reject) => {
+        _entityCallbacks.set(request_id, {
+          resolve: (id) => {
+            this._entityId = id;
+            resolve(new Entity(id));
+          },
+          reject,
+        });
+        if (clone) _send({ type: "EntityClone", request_id, ...clone });
+        else _send({ type: "EntityCreate", request_id });
+      }),
+    );
   }
 
   override get id(): string {
-    if (this._entityId.startsWith("pending:")) throw new Error("Entity ID is pending; await get() first");
+    if (this._entityId.startsWith("pending:"))
+      throw new Error("Entity ID is pending; await get() first");
     return this._entityId;
   }
 
-  get(): Promise<Entity> { return this.result.get(); }
+  get(): Promise<Entity> {
+    return this.result.get();
+  }
 }
 
 /** Entity and component management. */
 export class LoadedScene {
+  readonly path: string;
   readonly loadTime: number;
   readonly entityCount: number;
   private readonly byName: Map<string, Entity>;
   private readonly all: Entity[];
   constructor(data: LoadedSceneData) {
+    this.path = data.path ?? "";
     this.loadTime = data.load_time;
-    this.all = data.entity_ids.map(id => new Entity(id));
+    this.all = data.entity_ids.map((id) => new Entity(id));
     this.entityCount = this.all.length;
-    this.byName = new Map(Object.entries(data.script_ids).map(([name, id]) => [name, new Entity(id)]));
+    this.byName = new Map(
+      Object.entries(data.script_ids).map(([name, id]) => [name, new Entity(id)]),
+    );
   }
   /** Look up a scene-local script ID. Throws if it was not authored in this scene. */
   get(scriptId: string): Entity {
@@ -565,22 +833,33 @@ export class LoadedScene {
     if (!entity) throw new Error(`Unknown scene script ID '${scriptId}'`);
     return entity;
   }
-  entities(): Entity[] { return [...this.all]; }
+  entities(): Entity[] {
+    return [...this.all];
+  }
 }
 
 export const Scene = {
+  /** The optional core startup scene, already live before init. */
+  initialScene(): LoadedScene | null {
+    return _startupScene.data ? new LoadedScene(_startupScene.data) : null;
+  },
   /** Instantiate an ordinary mod scene in the next command batch. */
   loadScene(path: string): Promise<LoadedScene> {
     const result = new Promise<LoadedScene>((resolve, reject) => {
       const request_id = nextReqId();
-      _sceneCallbacks.set(request_id, {resolve: data => resolve(new LoadedScene(data)), reject});
-      _send({type: "SceneLoad", request_id, path});
+      _sceneCallbacks.set(request_id, {
+        resolve: (data) => resolve(new LoadedScene(data)),
+        reject,
+      });
+      _send({ type: "SceneLoad", request_id, path });
     });
     void result.catch(() => {});
     return result;
   },
   /** Embed an entity or opaque entity ID in any component field. */
-  ref(target: EntityReference | string): EntityRef { return new EntityRef(target); },
+  ref(target: EntityReference | string): EntityRef {
+    return new EntityRef(target);
+  },
   /** Create a new entity and return it. */
   createEntity(): PendingEntity {
     return new PendingEntity();
@@ -593,11 +872,16 @@ export const Scene = {
 
   /** Return all living entities. */
   listEntities(): Pending<Entity[]> {
-    return _pending(new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _entityListCallbacks.set(request_id, { resolve: (ids) => resolve(ids.map((id) => new Entity(id))), reject });
-      _send({ type: "EntityListRequest", request_id });
-    }));
+    return _pending(
+      new Promise((resolve, reject) => {
+        const request_id = nextReqId();
+        _entityListCallbacks.set(request_id, {
+          resolve: (ids) => resolve(ids.map((id) => new Entity(id))),
+          reject,
+        });
+        _send({ type: "EntityListRequest", request_id });
+      }),
+    );
   },
 
   /** Set a component on an entity by ID. Fire-and-forget. */
@@ -613,22 +897,27 @@ export const Scene = {
 
   /** Query all entities that have every listed component type. */
   query(component_types: string[]): Pending<QueryResult<Entity>[]> {
-    return _pending(new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _componentQueryCallbacks.set(request_id, {
-        resolve: (results) => resolve(results.map((r) => ({
-          entity: new Entity(r.entity_id),
-          components: Object.fromEntries(
-            Object.entries(r.components).map(([k, v]) => {
-              const hydrator = _componentHydrators[k];
-              return [k, hydrator ? hydrator(hydrateReferences(v)) : hydrateReferences(v)];
-            })
-          ),
-        }))),
-        reject,
-      });
-      _send({ type: "ComponentQuery", request_id, component_types });
-    }));
+    return _pending(
+      new Promise((resolve, reject) => {
+        const request_id = nextReqId();
+        _componentQueryCallbacks.set(request_id, {
+          resolve: (results) =>
+            resolve(
+              results.map((r) => ({
+                entity: new Entity(r.entity_id),
+                components: Object.fromEntries(
+                  Object.entries(r.components).map(([k, v]) => {
+                    const hydrator = _componentHydrators[k];
+                    return [k, hydrator ? hydrator(hydrateReferences(v)) : hydrateReferences(v)];
+                  }),
+                ),
+              })),
+            ),
+          reject,
+        });
+        _send({ type: "ComponentQuery", request_id, component_types });
+      }),
+    );
   },
 
   /**
@@ -653,7 +942,12 @@ export const Scene = {
   spawnText(
     text: string,
     position: [number, number, number],
-    options: { shader: string; font: string; font_size?: number; color?: [number, number, number, number]; },
+    options: {
+      shader: string;
+      font: string;
+      font_size?: number;
+      color?: [number, number, number, number];
+    },
   ): PendingEntity {
     return Scene.createEntity()
       .setComponent("core:transform", { position, rotation: [0, 0, 0, 1], scale: [1, 1, 1] })
@@ -662,7 +956,7 @@ export const Scene = {
         shader: options.shader,
         font: options.font,
         font_size: options.font_size ?? 24,
-        color: options.color ?? [1, 1, 1, 1]
+        color: options.color ?? [1, 1, 1, 1],
       });
   },
 
@@ -707,20 +1001,24 @@ export const Scene = {
 
   /** Return the parent entity ID, or `null` if the entity has no parent. */
   getParent(entity_id: string): Pending<string | null> {
-    return _pending(new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _entityParentCallbacks.set(request_id, { resolve, reject });
-      _send({ type: "EntityGetParent", request_id, entity_id });
-    }));
+    return _pending(
+      new Promise((resolve, reject) => {
+        const request_id = nextReqId();
+        _entityParentCallbacks.set(request_id, { resolve, reject });
+        _send({ type: "EntityGetParent", request_id, entity_id });
+      }),
+    );
   },
 
   /** Return the IDs of all direct children of the given entity. */
   getChildren(entity_id: string): Pending<string[]> {
-    return _pending(new Promise((resolve, reject) => {
-      const request_id = nextReqId();
-      _entityChildrenCallbacks.set(request_id, { resolve, reject });
-      _send({ type: "EntityGetChildren", request_id, entity_id });
-    }));
+    return _pending(
+      new Promise((resolve, reject) => {
+        const request_id = nextReqId();
+        _entityChildrenCallbacks.set(request_id, { resolve, reject });
+        _send({ type: "EntityGetChildren", request_id, entity_id });
+      }),
+    );
   },
 
   /**
