@@ -22,6 +22,7 @@ use std::{
 };
 const LIMIT: usize = 32 * 1024 * 1024;
 const PROTOCOL: u32 = 1;
+const READ_POLL: Duration = Duration::from_millis(100);
 #[derive(Serialize, Deserialize)]
 struct Hello {
     protocol: u32,
@@ -44,13 +45,43 @@ fn write_frame(stream: &mut TcpStream, value: &impl Serialize) -> anyhow::Result
     stream.write_all(&bytes)?;
     Ok(())
 }
-fn read_frame<T: DeserializeOwned>(stream: &mut TcpStream) -> anyhow::Result<T> {
+fn read_bytes(
+    stream: &mut TcpStream,
+    mut bytes: &mut [u8],
+    stop: Option<&AtomicBool>,
+) -> std::io::Result<()> {
+    while !bytes.is_empty() {
+        if stop.is_some_and(|stop| stop.load(Ordering::Relaxed)) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "editor connection stopped",
+            ));
+        }
+        match stream.read(bytes) {
+            Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => bytes = &mut bytes[count..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error)
+                if stop.is_some()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+fn read_frame<T: DeserializeOwned>(
+    stream: &mut TcpStream,
+    stop: Option<&AtomicBool>,
+) -> anyhow::Result<T> {
     let mut size = [0; 4];
-    stream.read_exact(&mut size)?;
+    read_bytes(stream, &mut size, stop)?;
     let size = u32::from_be_bytes(size) as usize;
     ensure!(size <= LIMIT, "editor message exceeds size limit");
     let mut bytes = vec![0; size];
-    stream.read_exact(&mut bytes)?;
+    read_bytes(stream, &mut bytes, stop)?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 pub type EditorMailbox = Mutex<Option<EditorSnapshot>>;
@@ -73,9 +104,9 @@ struct Life {
 impl Life {
     fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Ok(socket) = self.socket.lock()
-            && let Some(socket) = socket.as_ref()
-        {
+        // Do not hold the lifetime lock while waking another thread's socket I/O.
+        let socket = self.socket.lock().ok().and_then(|mut socket| socket.take());
+        if let Some(socket) = socket {
             let _ = socket.shutdown(Shutdown::Both);
         }
     }
@@ -133,7 +164,7 @@ impl EditorServer {
                                     continue;
                                 }
                                 stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-                                let auth = read_frame::<Hello>(&mut stream);
+                                let auth = read_frame::<Hello>(&mut stream, None);
                                 if !auth
                                     .is_ok_and(|h| h.protocol == PROTOCOL && h.token == expected)
                                 {
@@ -147,7 +178,8 @@ impl EditorServer {
                             Err(e) => return Err(e.into()),
                         }
                     };
-                    socket.set_read_timeout(None)?;
+                    // Observe cancellation without discarding partially received frames.
+                    socket.set_read_timeout(Some(READ_POLL))?;
                     socket.set_write_timeout(Some(Duration::from_secs(2)))?;
                     socket.set_nodelay(true)?;
                     *worker_life
@@ -171,7 +203,7 @@ impl EditorServer {
                         let _ = writer.shutdown(Shutdown::Both);
                     });
                     while !worker_life.stop.load(Ordering::Relaxed) {
-                        match read_frame::<Update>(&mut socket)? {
+                        match read_frame::<Update>(&mut socket, Some(&worker_life.stop))? {
                             Update::Snapshot(world) => {
                                 if let Ok(mut inbox) = input.lock() {
                                     inbox.snapshot = Some(*world);
@@ -289,6 +321,7 @@ impl EditorClient {
             "editor endpoint must be loopback"
         );
         let mut stream = TcpStream::connect_timeout(&endpoint, Duration::from_secs(5))?;
+        stream.set_read_timeout(Some(READ_POLL))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
         stream.set_nodelay(true)?;
         write_frame(
@@ -315,7 +348,7 @@ impl EditorClient {
             .spawn(move || {
                 let result = (|| -> anyhow::Result<()> {
                     while !reading.stop.load(Ordering::Relaxed) {
-                        match read_frame::<Request>(&mut stream)? {
+                        match read_frame::<Request>(&mut stream, Some(&reading.stop))? {
                             Request::Inspect(value) => inspection.store(value, Ordering::Relaxed),
                             Request::Edit { sequence, batch } => {
                                 commands.send(RuntimeCommand::Editor(EditorControl {
@@ -525,6 +558,56 @@ mod tests {
         writer
             .write_all(&((LIMIT + 1) as u32).to_be_bytes())
             .expect("header");
-        assert!(read_frame::<Hello>(&mut reader).is_err());
+        assert!(read_frame::<Hello>(&mut reader, None).is_err());
+    }
+
+    #[test]
+    fn fragmented_frames_survive_read_timeouts_and_cancel_without_peer_shutdown() {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("listen");
+        let mut peer =
+            TcpStream::connect(listener.local_addr().expect("address")).expect("connect");
+        let (mut reader, _) = listener.accept().expect("accept");
+        reader.set_read_timeout(Some(READ_POLL)).expect("timeout");
+        let stopped = Arc::new(AtomicBool::new(false));
+        let reading = Arc::clone(&stopped);
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let result =
+                    read_frame::<Hello>(&mut reader, Some(&reading)).map(|hello| hello.token);
+                if tx.send(result).is_err() {
+                    break;
+                }
+            }
+        });
+        let payload = serde_json::to_vec(&Hello {
+            protocol: PROTOCOL,
+            token: "fragmented session".into(),
+        })
+        .expect("serialize");
+        let header = (payload.len() as u32).to_be_bytes();
+        peer.write_all(&header[..2]).expect("partial header");
+        std::thread::sleep(READ_POLL * 2);
+        peer.write_all(&header[2..]).expect("remaining header");
+        let middle = payload.len() / 2;
+        peer.write_all(&payload[..middle]).expect("partial payload");
+        std::thread::sleep(READ_POLL * 2);
+        peer.write_all(&payload[middle..])
+            .expect("remaining payload");
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2))
+                .expect("frame deadline")
+                .expect("complete frame"),
+            "fragmented session"
+        );
+        peer.write_all(&header[..2]).expect("next partial frame");
+        std::thread::sleep(READ_POLL * 2);
+        stopped.store(true, Ordering::Relaxed);
+        assert!(
+            rx.recv_timeout(Duration::from_secs(2))
+                .expect("cancellation deadline")
+                .is_err()
+        );
+        worker.join().expect("reader exits while peer stays open");
     }
 }
