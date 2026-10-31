@@ -19,10 +19,20 @@ if (!bun) {
   throw new Error("Build the pinned release fork with bun run build:bun. Development-only debug hosts require bun run build:host --debug-runtime.");
 }
 
+const nativeEnvironment = {
+  ...process.env,
+  BUN_OPTIONS: "",
+  BUN_BE_BUN: "",
+  NODE_OPTIONS: "",
+  BUN_DEBUG_QUIET_LOGS: "1",
+  // Match engine/tests: parallel marking can deadlock the pinned Windows JSC.
+  ...(process.platform === "win32" ? { BUN_JSC_numberOfGCMarkers: "1" } : {}),
+};
+
 async function run(args: string[]): Promise<string> {
   const child = Bun.spawn([bun!, ...args], {
     cwd: root,
-    env: { ...process.env, BUN_OPTIONS: "", BUN_BE_BUN: "", NODE_OPTIONS: "", BUN_DEBUG_QUIET_LOGS: "1" },
+    env: nativeEnvironment,
     stdout: "pipe",
     stderr: "inherit",
   });
@@ -49,7 +59,7 @@ try {
     "--outfile", temporary,
   ]);
   const check = Bun.spawn([temporary, "--runtime-info"], {
-    env: { ...process.env, BUN_OPTIONS: "", BUN_BE_BUN: "", NODE_OPTIONS: "", BUN_DEBUG_QUIET_LOGS: "1" },
+    env: nativeEnvironment,
     stdout: "pipe",
     stderr: "inherit",
   });
