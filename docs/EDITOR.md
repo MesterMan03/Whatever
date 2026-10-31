@@ -277,7 +277,10 @@ editor listener or control endpoint.
 
 `.github/workflows/editor.yml` builds, tests and packages native editor
 archives for Windows/Linux x86_64 and macOS arm64. It runs for pull requests, main pushes and
-manual dispatch; version releases reuse it. The pinned native Bun binary is
+manual dispatch. Version releases promote its exact archives only after all three
+platforms pass on the tagged commit on `main`. Missing or expired artifacts block
+publication; the release workflow also supports retrying an existing tag through
+manual dispatch. The pinned native Bun binary is
 cached by fork revision, platform and build configuration. Artifacts include:
 
 - Native editor, wmod and launcher template.

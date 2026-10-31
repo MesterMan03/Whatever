@@ -312,7 +312,8 @@ Lines are written to `logs/latest.log` alongside normal output and appear in the
 Portable editor CI runs on Windows 2025, Ubuntu 24.04 and macOS 15 (Apple Silicon). Each job
 builds and tests the workspace and pinned mod runtime, then assembles a release
 archive and runs a relocated project/build/launcher smoke test. Version tags publish the
-same archives. Run `bun run package:editor` after `cargo build --release --workspace`
+exact archives from successful main-branch CI for the tagged commit; all three platforms
+must pass and their artifacts must still exist. Run `bun run package:editor` after `cargo build --release --workspace`
 to reproduce packaging locally. See [EDITOR.md](docs/EDITOR.md) for distribution
 contents, platform requirements and live Scene/Play editing.
 

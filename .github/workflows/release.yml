@@ -2,40 +2,90 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish
+        required: true
+        type: string
 permissions:
   contents: read
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 jobs:
-  editor:
-    uses: ./.github/workflows/editor.yml
   release:
     name: Publish portable editor archives
-    needs: editor
     runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     permissions:
       contents: write
       actions: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.4"
       - name: Verify release version
-        run: bun run check:versions --tag "$GITHUB_REF_NAME"
+        run: bun run check:versions --tag "$RELEASE_TAG"
+      - name: Find the verified three-platform editor build
+        id: editor
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const { readFileSync } = require('node:fs');
+            const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'editor.yml', head_sha: sha,
+              event: 'push', status: 'completed', per_page: 100
+            });
+            const run = data.workflow_runs.find(run => run.head_sha === sha &&
+              run.head_branch === 'main' && run.conclusion === 'success');
+            if (!run) throw Error(`No successful main-branch editor CI exists for ${sha}`);
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              ...context.repo, run_id: run.id, filter: 'latest', per_page: 100
+            });
+            for (const platform of ['windows', 'linux', 'macos']) {
+              const matches = jobs.filter(job => job.name === `Editor (${platform})`);
+              if (matches.length !== 1 || matches[0].conclusion !== 'success')
+                throw Error(`${platform} editor build has not passed`);
+            }
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: run.id, per_page: 100
+            });
+            for (const name of ['WhateverEditor-windows-x86_64',
+              'WhateverEditor-linux-x86_64', 'WhateverEditor-macos-arm64']) {
+              const matches = artifacts.filter(artifact => artifact.name === name && !artifact.expired);
+              if (matches.length !== 1) throw Error(`Missing or ambiguous CI artifact: ${name}`);
+            }
+            core.setOutput('run-id', run.id);
+            core.setOutput('title', readFileSync(`docs/releases/${process.env.RELEASE_TAG}.md`, 'utf8')
+              .split('\n')[0].replace(/^#+\s*/, '').trim());
+            core.info(`Promoting verified editor archives from ${run.html_url}`);
       - uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.editor.outputs.run-id }}
           pattern: WhateverEditor-*
           merge-multiple: true
+          path: release-assets
       - name: Hash portable archives
+        working-directory: release-assets
         run: sha256sum WhateverEditor-windows-x86_64.zip WhateverEditor-linux-x86_64.tar.gz WhateverEditor-macos-arm64.tar.gz > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
-          name: Whatever ${{ github.ref_name }} - Native editor, physics and multiplayer
-          body_path: docs/releases/${{ github.ref_name }}.md
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ steps.editor.outputs.title }}
+          body_path: docs/releases/${{ env.RELEASE_TAG }}.md
           files: |
-            WhateverEditor-windows-x86_64.zip
-            WhateverEditor-linux-x86_64.tar.gz
-            WhateverEditor-macos-arm64.tar.gz
-            SHA256SUMS
+            release-assets/WhateverEditor-windows-x86_64.zip
+            release-assets/WhateverEditor-linux-x86_64.tar.gz
+            release-assets/WhateverEditor-macos-arm64.tar.gz
+            release-assets/SHA256SUMS
           fail_on_unmatched_files: true
       # Releases created by GITHUB_TOKEN do not emit another workflow run.
       # An explicit workflow dispatch does, and keeps npm on this exact tag.
@@ -46,5 +96,5 @@ jobs:
             await github.rest.actions.createWorkflowDispatch({
               ...context.repo,
               workflow_id: 'publish.yml',
-              ref: context.ref.replace(/^refs\/tags\//, '')
+              ref: process.env.RELEASE_TAG
             });
