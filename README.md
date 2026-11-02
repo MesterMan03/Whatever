@@ -67,10 +67,15 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
       editor_transport.rs  Private authenticated editor/player connection
       performance.rs    Native CPU phase and frame timings
     scene/              Versioned scene documents and atomic instantiation
+      references.rs     Scene asset ownership and direct mod dependency validation
     project/            Mod collections, scaffolding and managed game builds
       build.rs          Installed support discovery and automatic source builds
       branding.rs       Game icons and Windows launcher resources
       paths.rs          Portable paths and native presentation
+      files.rs          Contained file operations, reference updates and local trash
+      sdk.rs            Local TypeScript bindings to the installed editor SDK
+      starter.rs        On-demand imports from the editor starter asset library
+      workflow_tests.rs Project, asset, SDK and dependency regression tests
     renderer/           wgpu, cameras, meshes, sprites, text and shared world rendering
       render.rs         Renderer, pipelines and render passes
       world.rs          Shared ECS-to-render updates for player and editor
@@ -99,6 +104,7 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
     cursor.rs           Embedded player cursor confinement and visibility
     watchdog.rs         Slow-tick diagnostics
   resources/core/       Stock core template packaged with the editor
+  resources/starter/    Editor-owned meshes, shaders and font imported on demand
 player/                 Whatever executable; depends on shared engine crate
   src/main.rs           CLI, game loading, client/server entry point
 editor/                 Separate native editor application (own Cargo.toml)
@@ -108,13 +114,16 @@ editor/                 Separate native editor application (own Cargo.toml)
   src/preferences.rs    Text editor preferences, recent projects and welcome screen
   src/mod_editor.rs     Mod metadata and script creation
   src/component_fields.rs  Schema-generated custom component inspectors
+  src/component_reload.rs  Background metadata inspection and status-bar progress
   src/component_handles.rs  Collider and joint handles in the scene viewer
   src/ui.rs             Workspace panels, browser, viewport and project settings
   src/inspector.rs      Typed core components and custom component editing
   src/entity_picker.rs  Entity references and hierarchy drops
   src/presets.rs        Common entity presets
   src/browser.rs        Folder navigation and typed asset tiles
+  src/asset_actions.rs  Create folder, move, rename and recoverable delete dialogs
   src/viewport.rs       Surface picking and transform handles
+  src/viewport_geometry.rs Clipped overlays, rotated rings and camera frustums
   src/player.rs         Embedded player window hosting
   src/live.rs           Runtime hierarchy, live edits and temporary undo history
   src/hierarchy.rs      Tree, drag reordering and reparenting
@@ -132,6 +141,8 @@ runtime/                @whatever-engine/api TypeScript package
   host/                 Trusted bootstrap bundled with the API into the native host
     components.ts       Read-only class/field metadata extraction
   src/                  Public namespaces, IPC, pending results and typed references
+    input.ts            Current tick input, physical key codes and immutable keyboard snapshots
+    time.ts             Read-only simulation tick number and interval
     schema.ts           Shared Type descriptors and value validation
     component.ts        Custom Component classes and lifecycle scheduling
     scene-store.ts      Revisioned immutable scene data and local command overlays
@@ -293,7 +304,7 @@ bun run build:runtime
 
 ## Debug suite and network API example
 
-The shipped `core` contains metadata, shared shaders and the default font. Diagnostic scripts and sample assets live in [`games/test/mods/debug`](games/test/mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. [Markbench](games/test/mods/markbench/README.md) replaces the Mandelbrot test with deterministic engine workloads, native timings and automatic scores. Run `markbench run quick` or `markbench run standard`.
+New games own their main scripts, scenes and assets in `core`. The editor imports editable starter assets from its separate library when needed. The source checkout's test game keeps its own shaders and font. Diagnostic scripts and sample assets live in [`games/test/mods/debug`](games/test/mods/debug/README.md). Open F2 and enter `help dev`; nested help works too, such as `help dev render light`. Tests that delay ticks, log every tick or exercise the sandbox run only when requested. The client debug suite provides the demonstration camera; the server entry imports only headless tools. [Markbench](games/test/mods/markbench/README.md) replaces the Mandelbrot test with deterministic engine workloads, native timings and automatic scores. Run `markbench run quick` or `markbench run standard`.
 
 [`games/test/mods/network_example`](games/test/mods/network_example/README.md) is a QUIC messenger with separate client/server entries and a shared typed specification. Start a headless server and run `netdemo host 4444`; in each client (F2), run `netdemo connect localhost:4444`. Clients receive increasing player IDs and can use `netdemo tell 2 "hello"`, `netdemo say "hello everyone"`, `netdemo players` and `netdemo ping` (QUIC datagram). The demo defaults to TOFU; add `strict` after the address to require a trusted certificate. See [Network API](docs/SCRIPTING.md#network) for transport, trust and client-data details.
 

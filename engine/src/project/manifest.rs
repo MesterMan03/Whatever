@@ -146,6 +146,7 @@ impl Project {
         }
     }
     pub fn for_build(&self) -> anyhow::Result<Self> {
+        self.validate_build_selection()?;
         let manifests = self.manifests()?;
         for excluded in &self.build.exclude_mods {
             ensure!(excluded != "core", "the core mod cannot be excluded");
@@ -176,6 +177,58 @@ impl Project {
             .collect()
     }
 
+    /// Fast dependency checks for the build-settings UI, without source inspection.
+    pub fn validate_build_selection(&self) -> anyhow::Result<()> {
+        let manifests = self.manifests()?;
+        let excluded = &self.build.exclude_mods;
+        ensure!(
+            !excluded.iter().any(|id| id == "core"),
+            "the core mod cannot be excluded"
+        );
+        for id in excluded {
+            ensure!(
+                manifests.iter().any(|(_, m)| &m.meta.id == id),
+                "unknown excluded mod '{id}'"
+            );
+        }
+        for (_, manifest) in &manifests {
+            if excluded.contains(&manifest.meta.id) {
+                continue;
+            }
+            for dependency in manifest.dependencies.keys() {
+                ensure!(
+                    !excluded.contains(dependency),
+                    "cannot exclude '{dependency}': included mod '{}' depends on it",
+                    manifest.meta.id
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate_scene(
+        &self,
+        path: &Path,
+        scene: &crate::scene::SceneDocument,
+        vfs: &dyn crate::vfs::Vfs,
+        definitions: &std::collections::BTreeMap<String, crate::ecs::ComponentDefinition>,
+    ) -> anyhow::Result<()> {
+        let path = super::portable_path(&std::path::absolute(path)?);
+        let (root, owner) = self
+            .manifests()?
+            .into_iter()
+            .filter(|(root, _)| path.starts_with(super::portable_path(root)))
+            .max_by_key(|(root, _)| root.components().count())
+            .context("scene is outside project mods")?;
+        crate::scene::validate_references(scene, &owner, vfs, definitions).with_context(|| {
+            format!(
+                "scene {} in mod '{}'",
+                path.strip_prefix(root).unwrap_or(&path).display(),
+                owner.meta.id
+            )
+        })
+    }
+
     pub fn registry(&self, mode: RuntimeMode) -> anyhow::Result<(ModRegistry, LayeredVfs)> {
         let roots = self.roots()?;
         let sink = std::fs::OpenOptions::new()
@@ -196,7 +249,7 @@ impl Project {
         )?;
         ensure!(
             registry.get("core").is_some(),
-            "project needs the ordinary core mod for shared engine resources"
+            "project needs a core mod to define the game"
         );
         Ok((registry, vfs))
     }
@@ -212,10 +265,25 @@ impl Project {
             let mut schemas = crate::ecs::World::new();
             crate::script::load_component_types(&mut schemas, &registry)?;
             if let Some(path) = registry.startup_scene()? {
-                crate::scene::SceneDocument::parse(&vfs.read(&crate::scene::scene_path(path)?)?)?
-                    .instantiate(&mut schemas.clone())?;
+                let target = crate::scene::scene_path(path)?;
+                let core = registry.get("core").context("core mod")?;
+                ensure!(
+                    crate::scene::allows_namespace(core, &target.mod_id),
+                    "core must declare a dependency on '{}' for its initial scene",
+                    target.mod_id
+                );
             }
             for item in registry.iter() {
+                if let Some(path) = &item.manifest.initial_scene {
+                    let target = crate::scene::scene_path(path)?;
+                    ensure!(
+                        crate::scene::allows_namespace(&item.manifest, &target.mod_id),
+                        "mod '{}' must depend on '{}' for its initial scene",
+                        item.manifest.meta.id,
+                        target.mod_id
+                    );
+                    ensure!(vfs.exists(&target), "missing initial scene '{path}'");
+                }
                 if let Some(entry) = item
                     .manifest
                     .script
@@ -233,9 +301,15 @@ impl Project {
                             mod_id: item.manifest.meta.id.clone(),
                             path,
                         };
-                        crate::scene::SceneDocument::parse(&vfs.read(&path)?)
-                            .with_context(|| format!("scene {}", path.as_string()))?
-                            .instantiate(&mut schemas.clone())?;
+                        let scene = crate::scene::SceneDocument::parse(&vfs.read(&path)?)?;
+                        crate::scene::validate_references(
+                            &scene,
+                            &item.manifest,
+                            &vfs,
+                            &schemas.component_types,
+                        )
+                        .with_context(|| format!("scene {}", path.as_string()))?;
+                        scene.instantiate(&mut schemas.clone())?;
                     }
                 }
             }

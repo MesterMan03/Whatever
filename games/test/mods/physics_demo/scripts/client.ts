@@ -3,6 +3,7 @@ import {
   BuiltInComponents,
   Console,
   Engine,
+  Input,
   Physics,
   type Entity,
 } from "@whatever-engine/api";
@@ -96,12 +97,12 @@ Console.register({
     },
   ],
 });
-Engine.on("tick", ({ keys_pressed, mouse_delta }) => {
+Engine.on("tick", () => {
   if (!scene || starting) return;
-  yaw -= mouse_delta[0] * 0.002;
-  pitch = Math.max(-1.1, Math.min(-0.08, pitch - mouse_delta[1] * 0.002));
-  const forward = (keys_pressed.includes("KeyW") ? 1 : 0) - (keys_pressed.includes("KeyS") ? 1 : 0);
-  const strafe = (keys_pressed.includes("KeyD") ? 1 : 0) - (keys_pressed.includes("KeyA") ? 1 : 0);
+  yaw -= Input.mouseDelta[0] * 0.002;
+  pitch = Math.max(-1.1, Math.min(-0.08, pitch - Input.mouseDelta[1] * 0.002));
+  const forward = (Input.isPressed("KeyW") ? 1 : 0) - (Input.isPressed("KeyS") ? 1 : 0);
+  const strafe = (Input.isPressed("KeyD") ? 1 : 0) - (Input.isPressed("KeyA") ? 1 : 0);
   let x = -Math.sin(yaw) * forward + Math.cos(yaw) * strafe;
   let z = -Math.cos(yaw) * forward - Math.sin(yaw) * strafe;
   const length = Math.hypot(x, z);
@@ -112,9 +113,9 @@ Engine.on("tick", ({ keys_pressed, mouse_delta }) => {
       new BuiltInComponents.Transform().setEulerRadians(0, Math.atan2(-x, -z), 0),
     );
   }
-  const speed = keys_pressed.includes("ShiftLeft") || keys_pressed.includes("ShiftRight") ? 7 : 4;
+  const speed = Input.isShiftPressed() ? 7 : 4;
   Physics.body(scene.player).setLinearVelocity([x * speed, 0, z * speed], { axes: ["x", "z"] });
-  const reset = keys_pressed.includes("KeyR");
+  const reset = Input.isPressed("KeyR");
   if (reset && !resetHeld)
     Physics.body(scene.player)
       .teleport([0, 1.1, 6])

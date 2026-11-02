@@ -5,7 +5,7 @@ communicates with each script over NDJSON on stdin/stdout. The `@whatever-engine
 package abstracts the wire protocol.
 
 ```ts
-import { Engine, Window, File, Scene, EntityRef, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
+import { Engine, Input, Time, Window, File, Scene, EntityRef, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
 ```
 
 The engine-owned mod host embeds the API and registers `@whatever-engine/api` before
@@ -51,7 +51,8 @@ Engine.on("exit", ({ exit_code }) => {
   Engine.log("info", `shutting down (code ${exit_code})`);
 });
 
-Engine.on("tick", async ({ tick_number, delta_seconds, keys_pressed }) => {
+Engine.on("tick", async () => {
+  // Input and Time are available in any function, including component hooks.
   // Record commands here. Awaiting a result does not stop buffer submission.
 });
 ```
@@ -68,6 +69,52 @@ The engine sends `Init` after this handshake and runtime readiness (including wi
 | `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta, mouse_captured }` | Runs on ticks when this handler is free; no overlapping invocations |
 | `mod_message` | `{ source_mod_id, message, request_id? }` | Message from another mod (see `Message`) |
 | `physics` | `{ event: Physics.Event }` | Native collision/contact-force event after physics |
+
+### Tick keyboard input: `PressedKeys` and `KeyCode`
+
+`Input.keysPressed` (also `tick.keys_pressed`) is an immutable `PressedKeys` snapshot. Its query methods accept
+the exported `KeyCode` string union, so TypeScript suggests supported names and
+rejects typos. The union covers all 194 physical key codes emitted by the engine's
+current winit version: letters (`KeyA`–`KeyZ`), digits (`Digit0`–`Digit9`), arrows,
+punctuation, left/right modifiers, navigation keys, numpad, `F1`–`F35`, international,
+media and system keys. Codes describe physical positions, independent of the
+active keyboard layout; `KeyW` is the key at the QWERTY W position.
+
+```ts
+Engine.on("tick", () => {
+  const forward = Input.isAnyPressed("KeyW", "ArrowUp");
+  const sprinting = forward && Input.isShiftPressed();
+  const controlS = Input.isControlPressed() && Input.isPressed("KeyS");
+  const leftControlS = Input.areAllPressed("ControlLeft", "KeyS");
+});
+```
+
+| Member | Result |
+|---|---|
+| `isPressed(key: KeyCode)` | Whether the key is held |
+| `isAnyPressed(...keys: KeyCode[])` | Whether at least one key is held; false with no arguments |
+| `areAllPressed(...keys: KeyCode[])` | Whether every key is held; true with no arguments |
+| `isShiftPressed()` | Either `ShiftLeft` or `ShiftRight` |
+| `isControlPressed()` | Either `ControlLeft` or `ControlRight` |
+| `isAltPressed()` | Either `AltLeft` or `AltRight`, including the physical AltGr position |
+| `isSuperPressed()` | Either `SuperLeft` or `SuperRight` (Windows / Command) |
+| `includes(key: KeyCode)` | Compatibility alias for `isPressed(key)` |
+| `size` | Number of distinct held keys |
+| `toArray()` | Frozen `readonly KeyCode[]` |
+| `[Symbol.iterator]()` | Iterate held codes with `for...of` or `[...keys]` |
+| `toJSON()` | Serialize as an array of key codes |
+
+These methods report held state, so they stay true on successive ticks while a
+key remains down. They do not detect a new press or release. Each snapshot stays
+unchanged across awaits; a busy async handler receives the latest held keys on
+its next invocation. Server ticks contain an empty snapshot.
+
+Existing `keys_pressed.includes("KeyW")` checks keep working and gain autocomplete.
+The payload is no longer an array: use `keys.size` for its count,
+`keys.toArray()` for read-only array operations, or `[...keys]` for a mutable copy.
+`new PressedKeys(codes)` also creates an independent snapshot from a
+`readonly KeyCode[]` (default: empty). The private NDJSON `Tick` still sends a
+`keys_pressed` array; the API wraps it before delivering public tick handlers.
 
 ### `Engine.log(level, message)`
 
@@ -163,6 +210,69 @@ Engine.clearCamera();
 
 ---
 
+## `Input`
+
+Import `Input` from `@whatever-engine/api` to read the latest tick's keyboard and
+mouse state from any function, including component lifecycle hooks. No
+`Engine.on("tick")` subscription is required. The runtime updates input before
+component synchronization, `onEnable`, `start`, component ticks and public tick
+handlers. The object and all exposed snapshots are read-only at runtime and in
+TypeScript.
+
+| Member | Result |
+|---|---|
+| `Input.keysPressed` | Immutable `PressedKeys` snapshot for the current tick |
+| `Input.isPressed(key: KeyCode)` | Whether the physical key is held |
+| `Input.isAnyPressed(...keys: KeyCode[])` | Whether any supplied key is held |
+| `Input.areAllPressed(...keys: KeyCode[])` | Whether every supplied key is held |
+| `Input.isShiftPressed()` / `Input.isControlPressed()` | Whether either side of the modifier is held |
+| `Input.isAltPressed()` / `Input.isSuperPressed()` | Whether either side of the modifier is held |
+| `Input.mouseDelta` | Frozen `readonly [number, number]` for this tick's relative motion |
+| `Input.mouseCaptured` | Whether the player owns mouse capture |
+
+The key queries share `PressedKeys`' typed key names and held-state semantics.
+Before the first tick, keys are empty, mouse motion is `[0, 0]`, and capture is
+false. Headless server input stays empty and uncaptured. Uncaptured ticks always
+report zero mouse motion.
+
+`Input` is a shared live view. After an `await`, it reports the latest received
+tick. To retain the original input, save `const keys = Input.keysPressed` and
+`const mouse = Input.mouseDelta` before awaiting; those snapshots never change.
+Mouse deltas in this object cover one tick, while a busy tick handler's existing
+`mouse_delta` argument still accumulates motion from skipped ticks.
+
+## `Time`
+
+Import `Time` from `@whatever-engine/api` to read simulation timing anywhere.
+It updates alongside `Input` before component hooks and tick handlers, even
+without a tick listener. Both properties are read-only.
+
+| Member | Result |
+|---|---|
+| `Time.tickNumber` | Latest engine tick number; zero before the first tick |
+| `Time.deltaSeconds` | Simulation interval for this tick in seconds; zero before the first tick |
+
+Timing advances on clients and headless servers. `deltaSeconds` uses the current
+tick's configured interval; a tick-rate change appears with the next tick. It
+does not measure wall-clock time and does not accumulate skipped async ticks.
+Existing `tick.delta_seconds` and `Component.tick(deltaSeconds)` arguments retain
+their accumulated-time behavior. Save timing values before an `await` when they
+must stay associated with that invocation.
+
+```ts
+import { Component, Input, Time } from "@whatever-engine/api";
+
+export class Movement extends Component {
+  override tick() {
+    if (!Input.isPressed("KeyW")) return;
+    const speed = Input.isShiftPressed() ? 6 : 3;
+    this.entity.editComponent("core:transform", (transform) => {
+      transform.position[2] -= speed * Time.deltaSeconds;
+    });
+  }
+}
+```
+
 ## `Window`
 
 ### `Window.setTitle(title)`
@@ -232,7 +342,7 @@ Delete a sandboxed file.
 Each tick has one ordered pipeline:
 
 1. Gather input and queued external work: console invocations, network events and completed audio notifications. Input is sampled once with held keys in stable sorted order; events arriving after collection wait until a later tick.
-2. Send a tick to every initialized mod. The SDK calls available tick handlers in registration order, then flushes its command buffer immediately, without awaiting user promises. This private flush happens even when there are no tick handlers or all handlers are awaiting results.
+2. Send a tick to every initialized mod. The SDK refreshes `Input` and `Time`, synchronizes and ticks components, calls available tick handlers in registration order, then flushes its command buffer immediately, without awaiting user promises. This private flush happens even when there are no tick handlers or all handlers are awaiting results.
 3. Collect exactly one batch per live mod for the current tick. Execute complete batches in dependency/load order, and commands within each batch in recording order. No command executes while other batches are still being collected.
 4. Reconcile physics components, step each native world in stable entity order using this tick's sampled delta, then write poses and derived state back to ECS. World substeps/timeScale affect only that world's integration. Position-based kinematic targets interpolate across its substeps.
 5. Publish the world/render snapshot and buffered command results. Result callbacks and async continuations record new commands for a later tick.
@@ -414,11 +524,17 @@ flushes before awaiting native results. Hook failures log the component and enti
 and stop that instance's ticking. Declared field changes, including nested arrays,
 are validated and collected into one field patch per instance per tick. Private
 state stays local. Component hooks run before global `Engine.on("tick")` handlers.
+`Input` and `Time` already describe the current tick when these hooks run; a
+parameterless `tick()` can use `Input.isPressed("KeyW")` and `Time.deltaSeconds`
+directly. Its optional use of the existing `deltaSeconds` argument remains useful
+when elapsed time should include skipped async ticks.
 Native component instances retain their explicit fetch/mutate/set workflow.
 
 The editor lists registered classes under Add Component, renders schema-based
 fields with defaults/reset controls, ranges, dropdowns and entity/asset selectors,
-and refreshes metadata on regaining focus or Reload component types. Restart Play
+and refreshes metadata in the background on regaining focus or Reload component
+types. The bottom bar reports mod progress and errors; previous types and unsaved
+edits remain available until the new types are ready. Restart Play
 to load source/schema changes; code hot reload is not provided.
 
 ## `Entity`
@@ -547,6 +663,13 @@ Most callers should work with `Entity` objects returned by `Scene.createEntity`,
 component helpers with raw IDs.
 
 ### `Scene.loadScene(path)` → `Promise<LoadedScene>`
+
+The calling mod may load its own scenes or scenes from directly declared dependencies.
+Authored assets and custom component types are validated against the scene-owning
+mod's direct dependencies before anything is instantiated. Native component IDs
+remain available without a mod dependency. Typed asset fields, including nested
+custom component fields, must resolve to existing VFS assets. Ordinary text fields
+are not interpreted as asset references.
 
 Instantiate a versioned JSON `.wscene` from a loaded mod. `my_mod://level` and
 `my_mod://scenes/level.wscene` both load `my_mod/scenes/level.wscene`. Nested
@@ -1520,7 +1643,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `MainCameraResponse` | `request_id`, `entity_id` (string or null) |
 | `NetworkEvent` | `event`, `registration_id`, `client_id`, `event_id` when acknowledged, event-specific data |
 | `Init` | `mod_id`, `engine_version`, `mode` |
-| `Tick` | `tick_number`, `delta_seconds`, `keys_pressed`, `mouse_delta` |
+| `Tick` | `tick_number`, `delta_seconds`, `keys_pressed` (key-code array on the wire), `mouse_delta`, `mouse_captured` |
 | `FileResponse` | `request_id`, `data_base64`, `error` |
 | `ModListResponse` | `request_id`, `mods` |
 | `ModGetResponse` | `request_id`, `manifest`, `error` |

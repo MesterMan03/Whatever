@@ -8,11 +8,13 @@ description: Understand VFS paths, authored hierarchy, startup scenes, and immut
 Assets use `mod_id://relative/path`. The path is relative to the mod's configured asset root, normally `assets/`:
 
 ```text
-hello_mod://textures/player.png  → mods/hello_mod/assets/textures/player.png
-core://meshes/cube.obj           → mods/core/assets/meshes/cube.obj
+core://textures/player.png  → mods/core/assets/textures/player.png
+core://starter/meshes/cube.obj           → mods/core/assets/starter/meshes/cube.obj
 ```
 
-Scenes use their mod's `scenes/` directory. `hello_mod://main`, `hello_mod://main.wscene`, and `hello_mod://scenes/main.wscene` resolve to the same scene file.
+Scenes use their mod's `scenes/` directory. `core://main`, `core://main.wscene`, and `core://scenes/main.wscene` resolve to the same scene file.
+
+The game owns `mods/core`. Creating a Cube in the editor imports its mesh and shader under `assets/starter`; empty projects contain no required starter assets. A scene may reference another mod's assets or custom components only when its owning mod declares a direct dependency on that mod. Missing referenced assets and undeclared dependencies reject saving, loading and game packaging.
 
 ## Load and address a scene
 
@@ -20,7 +22,7 @@ Scenes use their mod's `scenes/` directory. `hello_mod://main`, `hello_mod://mai
 import { Engine, Scene } from "@whatever-engine/api";
 
 Engine.on("init", async () => {
-  const scene = await Scene.loadScene("hello_mod://main");
+  const scene = await Scene.loadScene("core://main");
   const camera = scene.get("camera");
   if (Engine.mode === "client") Engine.setMainCamera(camera);
   Engine.log("info", `Loaded ${scene.entityCount} entities in ${scene.loadTime} ms`);
@@ -36,7 +38,7 @@ Scene loading validates and instantiates atomically. An invalid component or ref
 In `mods/core/mod.toml`, add the property **before** `[mod]`, at the TOML root:
 
 ```toml title="mods/core/mod.toml"
-initial_scene = "hello_mod://main"
+initial_scene = "core://main"
 
 [mod]
 id = "core"
@@ -51,12 +53,12 @@ The engine instantiates it before script Init and selects its first enabled came
 
 ```ts
 Engine.on("init", async () => {
-  const scene = Scene.initialScene() ?? await Scene.loadScene("hello_mod://main");
+  const scene = Scene.initialScene() ?? await Scene.loadScene("core://main");
   if (Engine.mode === "client") Engine.setMainCamera(scene.get("camera"));
 });
 ```
 
-This assumes the project's startup scene is `hello_mod://main`. When writing a reusable mod for arbitrary projects, check `initial.path` before adopting it, as the scaffolded entry does.
+This assumes the project's startup scene is `core://main`. When writing a reusable mod for arbitrary projects, check `initial.path` before adopting it, as the scaffolded entry does.
 
 ## Edit data explicitly
 

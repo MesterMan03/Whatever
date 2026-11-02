@@ -44,8 +44,10 @@ export type EventPayloads = {
    */
   tick: {
     tick_number: number;
+    /** Elapsed time since this handler last ran; Time.deltaSeconds is one current tick. */
     delta_seconds: number;
-    keys_pressed: string[];
+    /** Immutable held-key snapshot, also available globally as Input.keysPressed. */
+    keys_pressed: import("./input.ts").PressedKeys;
     /** Relative mouse motion since the last delivered tick; zero while uncaptured. */
     mouse_delta: [number, number];
     /** False while the console or editor owns the pointer. */

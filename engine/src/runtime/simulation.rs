@@ -128,8 +128,13 @@ impl Simulation {
         crate::script::load_component_types(&mut world, &registry)?;
         let initial_scene = if let Some(path) = registry.startup_scene()? {
             Some(
-                crate::scene::SceneDocument::load(vfs.as_ref(), path, &mut world)
-                    .context("preload core initial_scene")?,
+                crate::scene::SceneDocument::load_checked(
+                    vfs.as_ref(),
+                    path,
+                    &mut world,
+                    &registry,
+                )
+                .context("preload core initial_scene")?,
             )
         } else {
             None
@@ -272,25 +277,29 @@ impl Simulation {
         }
     }
     fn load_scene(&mut self, path: &str, request_id: String) {
-        let (output, error) =
-            match crate::scene::SceneDocument::load(self.vfs.as_ref(), path, &mut self.world) {
-                Ok(scene) => {
-                    self.physics.invalidate();
-                    self.render_cmds.extend(RenderCommand::upsert_hierarchy(
-                        &self.world,
-                        scene.entity_ids.iter().filter_map(|id| EntityId::parse(id)),
-                    ));
-                    (
-                        vec![format!(
-                            "Loaded {} entities in {:.2} ms",
-                            scene.entity_ids.len(),
-                            scene.load_time
-                        )],
-                        None,
-                    )
-                }
-                Err(error) => (vec![], Some(format!("{error:#}"))),
-            };
+        let (output, error) = match crate::scene::SceneDocument::load_checked(
+            self.vfs.as_ref(),
+            path,
+            &mut self.world,
+            &self.registry,
+        ) {
+            Ok(scene) => {
+                self.physics.invalidate();
+                self.render_cmds.extend(RenderCommand::upsert_hierarchy(
+                    &self.world,
+                    scene.entity_ids.iter().filter_map(|id| EntityId::parse(id)),
+                ));
+                (
+                    vec![format!(
+                        "Loaded {} entities in {:.2} ms",
+                        scene.entity_ids.len(),
+                        scene.load_time
+                    )],
+                    None,
+                )
+            }
+            Err(error) => (vec![], Some(format!("{error:#}"))),
+        };
         let response = ScriptMessage::CommandResponse {
             request_id,
             output,

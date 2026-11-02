@@ -42,8 +42,12 @@ pub fn default_core() -> anyhow::Result<PathBuf> {
 }
 
 pub fn create_mod(directory: &Path, options: &ModOptions) -> anyhow::Result<PathBuf> {
+    create_mod_inner(directory, options, false)
+}
+
+fn create_mod_inner(directory: &Path, options: &ModOptions, game: bool) -> anyhow::Result<PathBuf> {
     ensure!(
-        crate::sandbox::valid_storage_id(&options.id) && options.id != "core",
+        crate::sandbox::valid_storage_id(&options.id) && (options.id != "core" || game),
         "invalid mod ID or reserved core ID"
     );
     semver::Version::parse(&options.version).context("invalid mod version")?;
@@ -55,7 +59,11 @@ pub fn create_mod(directory: &Path, options: &ModOptions) -> anyhow::Result<Path
     std::fs::create_dir_all(directory.join("scenes"))?;
     let mut manifest = serde_json::json!({"mod":{"id":options.id,"name":options.name,"version":options.version,
         "description":options.description,"authors":options.authors,"license":options.license},
-        "assets":{"root":"assets"},"dependencies":{"core":"*"}});
+        "assets":{"root":"assets"}});
+    manifest["dependencies"] = serde_json::json!({});
+    if game {
+        manifest["initial_scene"] = serde_json::json!("core://main");
+    }
     if options.scripts {
         manifest["script"] = serde_json::json!({"entry":"scripts/index.ts"});
     }
@@ -76,41 +84,21 @@ pub fn create_mod(directory: &Path, options: &ModOptions) -> anyhow::Result<Path
         std::fs::create_dir_all(directory.join("scripts"))?;
         std::fs::write(
             directory.join("scripts/index.ts"),
-            format!(
-                "import {{ Engine, Scene }} from \"@whatever-engine/api\";\n\nEngine.on(\"init\", async () => {{\n  const initial = Scene.initialScene();\n  const paths = [\"{id}://main\", \"{id}://main.wscene\", \"{id}://scenes/main.wscene\"];\n  const scene = initial && paths.includes(initial.path) ? initial : await Scene.loadScene(\"{id}://main\");\n  if (Engine.mode === \"client\") Engine.setMainCamera(scene.get(\"camera\").id);\n}});\n",
-                id = options.id
-            ),
+            if game {
+                "import { Engine, Scene } from \"@whatever-engine/api\";\n\nEngine.on(\"init\", () => {\n  const scene = Scene.initialScene();\n  if (scene && Engine.mode === \"client\") Engine.setMainCamera(scene.get(\"camera\"));\n});\n"
+            } else {
+                "import { Engine } from \"@whatever-engine/api\";\n\nEngine.on(\"init\", () => {\n  // Add your mod behavior here.\n});\n"
+            },
         )?;
-        let executable = std::env::current_exe()?;
-        let mut candidates = vec![
-            executable
-                .parent()
-                .context("executable directory")?
-                .join("sdk/index.d.ts"),
-        ];
-        if cfg!(debug_assertions) {
-            candidates.push(crate::development_root().join("runtime/dist/index.d.ts"));
-        }
-        let types = candidates.into_iter().find(|path| path.is_file());
-        let mut config = serde_json::json!({"compilerOptions":{"target":"ESNext","module":"ESNext","moduleResolution":"bundler","strict":true,"noEmit":true,"skipLibCheck":true},"include":["scripts/**/*.ts"]});
-        let mut package = serde_json::json!({"name":options.id,"private":true,"type":"module"});
-        if let Some(types) = types {
-            std::fs::create_dir_all(directory.join("types"))?;
-            std::fs::copy(types, directory.join("types/whatever-engine.d.ts"))?;
-            config["compilerOptions"]["paths"] =
-                serde_json::json!({"@whatever-engine/api":["./types/whatever-engine.d.ts"]});
-        } else {
-            package["devDependencies"] =
-                serde_json::json!({"@whatever-engine/api":env!("CARGO_PKG_VERSION")});
-        }
         std::fs::write(
             directory.join("package.json"),
-            serde_json::to_vec_pretty(&package)?,
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"name":options.id,"private":true,"type":"module"}),
+            )?,
         )?;
-        std::fs::write(
-            directory.join("tsconfig.json"),
-            serde_json::to_vec_pretty(&config)?,
-        )?;
+        if !game {
+            super::configure_types(directory)?;
+        }
     }
     Ok(directory.canonicalize()?)
 }
@@ -132,19 +120,41 @@ pub fn create_project(
         manifest.meta.id == "core",
         "template must be the ordinary core mod"
     );
-    copy_tree(core, &directory.join("mods/core"))?;
+    let core_root = directory.join("mods/core");
+    create_mod_inner(&core_root, &ModOptions::new("core", name), true)?;
+    // An explicit template may contribute assets and metadata; core remains the game mod.
+    let generated = std::fs::read_to_string(core_root.join("mod.toml"))?;
+    copy_tree(core, &core_root)?;
+    let mut template: toml::Value =
+        toml::from_str(&std::fs::read_to_string(core_root.join("mod.toml"))?)?;
+    let generated: toml::Value = toml::from_str(&generated)?;
+    template["mod"]["name"] = toml::Value::String(name.into());
+    let table = template.as_table_mut().context("core template manifest")?;
+    if !table.contains_key("script") {
+        table.insert("script".into(), generated["script"].clone());
+    }
+    if !table.contains_key("initial_scene") {
+        table.insert("initial_scene".into(), generated["initial_scene"].clone());
+    }
+    table
+        .entry("dependencies")
+        .or_insert_with(|| toml::Value::Table(Default::default()));
+    std::fs::write(
+        core_root.join("mod.toml"),
+        toml::to_string_pretty(&template)?,
+    )?;
     let metadata =
         serde_json::json!({"game":{"id":id,"name":name,"default_mode":"client","tick_rate":60}});
     std::fs::write(
         directory.join("mods/core/meta.toml"),
         toml::to_string_pretty(&metadata)?,
     )?;
-    create_mod(&directory.join("mods").join(id), &ModOptions::new(id, name))?;
+    super::configure_types(directory)?;
     let project = Project {
         version: 1,
         id: id.into(),
         name: name.into(),
-        mods: vec!["mods/core".into(), format!("mods/{id}")],
+        mods: vec!["mods/core".into()],
         build: super::BuildSettings::default(),
         path: directory.canonicalize()?.join("whatever.wproject"),
     };

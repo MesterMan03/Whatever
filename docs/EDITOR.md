@@ -44,10 +44,11 @@ the workspace omit Windows' internal verbatim prefix. Drop a project or scene
 file onto the window to open it.
 
 The workspace has a Hierarchy, central scene preview, Inspector and resizable
-Project/Assets/Build Log browser. Select a mod in the browser and double-click a
-scene to open it. Drag in the viewport to orbit, middle-drag to pan, scroll to
-zoom, and press F over the viewport to frame the selected entity. The grid and
-selection axes are editor overlays, not authored game entities.
+Assets/Log browser. Opening a project selects the core mod's initial scene when
+configured. Select a mod in Assets and double-click a scene to open it. Use
+**Refresh** to update files and component types after external changes; returning
+focus to the editor also refreshes both. Drag in the viewport to orbit, middle-drag to pan, scroll to
+zoom, and press F over the viewport to frame the selected entity. The scene has no default grid. Transform handles and camera frustums are clipped editor overlays, not authored game entities.
 
 Drag hierarchy rows to reorder or reparent entities. Dropping near a row's top or
 bottom inserts a sibling; dropping in its middle makes a child. Blank hierarchy
@@ -59,7 +60,7 @@ Redo include hierarchy changes.
 The Inspector provides forms for Transform (including Euler rotation), cameras,
 mesh/sprite/text rendering, all lights, physics worlds, rigid bodies, colliders
 and joints. Asset fields offer VFS choices and a Browse dialog; selecting an asset
-outside the collection imports it into the active mod. Adding a rigid body uses
+outside the collection imports it into the scene-owning mod. Adding a rigid body uses
 an authored physics world, creating one if necessary. Exported custom Component classes appear in Add Component with schema-generated fields, class defaults, ranges, enum choices and entity/asset selectors. Metadata refreshes when the editor regains focus or through Reload component types; restart Play after source changes. The editor inspects sources without evaluating mod code. Each entity has an editable set of up to 32 tags, including live edits and undo/redo. Missing component data is preserved for repair; unknown or invalid components block saving and execution. Advanced native fields retain explicit JSON editing.
 
 Scene drafts validate before applying. Invalid drafts stay editable and block
@@ -68,7 +69,20 @@ offers Save, Discard or Cancel. Ctrl+S saves, Ctrl+Z/Ctrl+Y undo/redo, Ctrl+O op
 a project, and Ctrl+B builds. Play saves the scene and project before launching
 the player. Scripts remain ordinary files for a code editor.
 
+Component metadata reloads run on a background worker so the editor keeps
+responding after script changes. The bottom status bar shows a spinner, the
+current mod and overall mod progress. Repeated reload requests are coalesced;
+results from a closed or replaced project are discarded. Existing component
+types and unsaved edits stay available until a complete reload succeeds. Failures
+keep the previous types and offer **View log** for details. Saving, Play and Build
+wait for component types to finish loading successfully; scene saves reuse those
+loaded types instead of launching another inspection. Play, Build and Mod Settings
+validation also run in background jobs with status-bar progress. A host self-check
+times out after 10 seconds, and an individual mod's source inspection times out
+after 30 seconds, terminating and reaping a stalled host.
+
 The viewport supports mesh-surface picking and Move/Rotate/Scale handles (Q/W/E/R).
+All three tools follow the selected object's world rotation, including parents. Rotate uses three rings perpendicular to the local axes and applies signed, snapped rotation. Cameras show their oriented frustums; Look through camera previews a selected camera without changing the game's active camera. Every overlay is clipped to the scene rectangle.
 Right-drag or Alt-left-drag orbits, and middle-drag pans. Drag colored handles to
 transform a selected entity; the white center moves in the view plane or scales
 uniformly. Each gesture is one undo step. Docking, prefabs and live script reload
@@ -143,9 +157,9 @@ wmod package ./my-game --output ./My-Game-build
 `project create` uses the installed core template; `--core <directory>` overrides
 it. `mod create` accepts `--name` and `--no-scripts`. `wmod create <directory>`
 retains interactive mod creation. Scripted templates include a scene, entry
-script, `package.json` and `tsconfig.json`. Local SDK declarations are copied when
-available; otherwise the package pins `@whatever-engine/api` as a development
-dependency. Installed npm packages do not confer runtime permissions.
+script, `package.json` and `tsconfig.json`. New games contain one scripted `mods/core` with their main scene and game assets. Additional mods do not automatically depend on core; declare dependencies when referencing its assets or custom components. Existing multi-mod projects remain supported and are not merged automatically.
+
+Autocomplete references the editor's `sdk/index.d.ts` through a small git-ignored `.whatever/tsconfig.sdk.json`. Opening a project repairs this local binding after relocating the editor. `wmod project bind-sdk <project>` provides terminal setup. No declaration copy or npm install is needed. Legacy copied types are preserved until explicitly migrated. Local bindings and trash are excluded from game builds; the native host still embeds its own matching API metadata and runtime permissions are unchanged.
 
 Release maintainers use `wmod runtime-kit` to assemble the support payload from
 built player/host/launcher binaries. CI adds the editor and CLI to that same
@@ -162,7 +176,7 @@ through the same scene API tested on the headless server.
 
 The project owns `id` and `name`. Play uses them for game identity and window title;
 packaging writes the same identity into the exported core/meta.toml and project
-manifest. The core mod ID remains `core`, since it is the shared asset namespace.
+manifest. The game mod ID remains `core`; custom `core:ClassName` components are supported while exact native IDs such as `core:transform` remain reserved.
 Older manifests derive an ID from the project name when opened. New projects use
 the ID entered at creation. Project Settings exposes a stable editable Game ID.
 
@@ -181,7 +195,7 @@ Play keeps it in a separate window. Other platforms currently use separate-windo
 Play. The player retains its console (F2), input, audio and sandboxed hosts.
 
 The creation menu offers Empty Entity, Cube, Sphere, Bean, cameras and lights;
-mesh presets use shared core meshes. The asset browser has folder navigation,
+mesh presets import editable mesh/shader files from the editor library into the scene-owning mod's `assets/starter` folder. Matching imports are reused and edited files are preserved under distinct names. Deleted references produce missing-asset diagnostics; creating another primitive can import the needed files again. The asset browser has folder navigation,
 breadcrumbs, search, compact tiles and portable type icons for meshes, shaders,
 fonts, text, JSON, images and scenes. It does not depend on platform icon fonts.
 
@@ -199,8 +213,8 @@ still opens it directly.
 
 Edit â†’ Editor Settings selects Visual Studio Code, Notepad, Notepad++, VSCodium,
 Sublime Text or a custom text-editor executable. Preferences and ten recent
-projects persist in the user's Whatever/editor.json configuration. Scripts opens
-mod source folders; double-click opens a source in that editor. Project â†’ New
+projects persist in the user's Whatever/editor.json configuration. The Assets browser lists
+mod source files; double-click opens a source in that editor. Project â†’ New
 Script creates a source file inside the active mod. Project â†’ Edit Active Mod
 edits its manifest and script entry points, with full TOML available for advanced
 settings. The mod namespace remains stable because references use that ID.
@@ -287,6 +301,7 @@ release build, before packaging starts. Artifacts include:
 - Native editor, wmod and launcher template.
 - `engine/Whatever`, the separate `engine/runtime` mod host, required libraries.
 - `mods/core` stock template, `sdk/index.d.ts`, licenses and usage instructions.
+- `resources/starter` editor-owned assets imported into games on demand.
 
 macOS wraps these files in `Whatever Editor.app/Contents/MacOS`; the other
 platforms put them at the archive root. Archives preserve executable permissions.
@@ -305,7 +320,11 @@ folder>` is useful for a local smoke test, while CI always packages release.
 
 The repository's test project lives in `games/test`; `cargo run` selects it by
 default in source builds. Open it with `cargo run -p whatever-editor -- games/test`.
-The engine's project-independent template lives in `engine/resources/core`.
+The engine's project-independent minimal core template lives in `engine/resources/core`; its editor starter asset library lives in `engine/resources/starter`.
+
+Assets and Log share one resizable panel height and padded headers. Assets displays scenes, scripts, ordinary assets and mod configuration in one folder browser, including empty folders. Create adds folders/scripts/scenes; the context menu moves, renames or deletes files and folders. Operations stay within their owning mod and run in the background. Moves update authored scene VFS references and manifest script/initial-scene entry points, preserve edited files and reject collisions; JS/TS imports and string literals need manual updates. Deletion moves items into ignored local `.whatever/trash`; managed root folders and mod configuration are protected.
+
+Mod Settings exposes sides, direct dependencies and semver requirements, initial scene, script entries, asset root and load order. Asset/custom-component selectors respect the scene-owning mod's dependencies. Shared validation checks authored scene references on save, runtime load and packaging, including schema-defined nested asset fields. Build exclusions cannot remove a dependency of any included mod; the settings UI explains which mods require it. Raw TOML remains available for advanced configuration.
 
 Embedded Play avoids synchronizing or drawing a second scene behind the native player
 window. Returning to Scene rebuilds the deferred GPU scene from the latest world.

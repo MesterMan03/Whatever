@@ -57,7 +57,7 @@ pub(super) fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()>
         let mut entries = std::fs::read_dir(source)?.collect::<Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
-            if [".git", "node_modules", "logs", ".DS_Store"]
+            if [".git", ".whatever", "node_modules", "logs", ".DS_Store"]
                 .iter()
                 .any(|skip| entry.file_name() == *skip)
             {

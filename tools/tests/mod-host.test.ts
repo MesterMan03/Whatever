@@ -160,6 +160,101 @@ test("uncaptured ticks clear async subscribers' pending mouse motion", async()=>
   expect(result.messages.some((m:any)=>m.type==="Log"&&m.message==='{"capture":false,"mouse":[0,0]}')).toBe(true);
 });
 
+test("tick keyboard helpers retain snapshots across async waits and deliver the latest held keys", async () => {
+  const input = { keys_pressed: ["KeyW", "ShiftRight"], mouse_delta: [7, 3] as [number, number], mouse_captured: true };
+  let pendingRead: { request_id: string; reply: (message: object) => void } | undefined;
+  const result = await runHost(`
+    import { Engine, File, Input, Time, PressedKeys } from "@whatever-engine/api";
+    let calls = 0;
+    Engine.on("tick", async ({ keys_pressed, delta_seconds }) => {
+      if (Input.keysPressed !== keys_pressed) throw new Error("mismatched input snapshots");
+      if (++calls === 1) {
+        if (!(keys_pressed instanceof PressedKeys)) throw new Error("missing keyboard snapshot");
+        if (!keys_pressed.isPressed("KeyW") || !keys_pressed.isShiftPressed()) throw new Error("missing initial input");
+        const firstTick = Time.tickNumber;
+        const motion = Input.mouseDelta;
+        await File.read("fixture://hold.txt");
+        if (!keys_pressed.isPressed("KeyW") || !keys_pressed.isShiftPressed() || keys_pressed.isPressed("KeyS")) {
+          throw new Error("retained input changed while awaiting");
+        }
+        if (Time.tickNumber <= firstTick || Time.deltaSeconds !== 0.01 || !Input.isPressed("KeyS")) {
+          throw new Error("shared tick state stopped updating while awaiting");
+        }
+        if (motion[0] !== 7 || motion[1] !== 3 || Input.mouseCaptured || Input.mouseDelta.some(value => value !== 0)) {
+          throw new Error("mouse snapshot or capture is stale");
+        }
+        Engine.log("info", "retained-input-ok");
+      } else {
+        if (!keys_pressed.includes("KeyS") || keys_pressed.isAnyPressed("KeyW", "ShiftRight")) {
+          throw new Error("input is stale after async wait");
+        }
+        if (delta_seconds <= Time.deltaSeconds) throw new Error("lost accumulated handler time");
+        Engine.log("info", "fixture-done");
+      }
+    });
+    Engine.on("tick", ({ keys_pressed }) => {
+      if (keys_pressed.isPressed("KeyS")) Engine.log("info", "input-changed");
+    });
+  `, {}, {}, "index.ts", "client", (message, reply) => {
+    if (message.type === "FileRead") {
+      input.keys_pressed = ["KeyS"];
+      input.mouse_captured = false;
+      input.mouse_delta = [99, 88];
+      pendingRead = { request_id: message.request_id, reply };
+      return true;
+    }
+    if (message.type === "Log" && message.message === "input-changed" && pendingRead) {
+      pendingRead.reply({ type: "FileResponse", request_id: pendingRead.request_id, data_base64: "", error: null });
+      pendingRead = undefined;
+    }
+    return false;
+  }, input);
+  expect(result.exitCode).toBe(0);
+  expect(result.messages.some(message => message.type === "Log" && message.message === "retained-input-ok")).toBe(true);
+});
+
+test("current tick input and timing are ready before component hooks without a tick listener", async () => {
+  const result = await runHost(`
+    import { Component, Engine, Input, Time } from "@whatever-engine/api";
+    if (Time.tickNumber !== 0 || Time.deltaSeconds !== 0 || Input.keysPressed.size !== 0 || Input.mouseCaptured) {
+      throw new Error("invalid pre-tick defaults");
+    }
+    export class InputProbe extends Component {
+      static readonly type = "fixture:input_probe";
+      private calls = 0;
+      private previousTick = 0;
+      private readTick() {
+        if (Time.tickNumber <= 0 || Time.deltaSeconds !== 0.01) throw new Error("timing not ready");
+        if (!Input.isPressed("KeyW") || !Input.isShiftPressed()) throw new Error("input not ready");
+        if (!Input.mouseCaptured || Input.mouseDelta[0] !== 3 || Input.mouseDelta[1] !== -2) {
+          throw new Error("mouse not ready");
+        }
+      }
+      override onEnable() { this.readTick(); Engine.log("info", "input-enabled"); }
+      override start() { this.readTick(); Engine.log("info", "input-started"); }
+      override tick() {
+        this.readTick();
+        if (Time.tickNumber <= this.previousTick) throw new Error("tick state stopped advancing");
+        this.previousTick = Time.tickNumber;
+        if (++this.calls === 2) Engine.log("info", "fixture-done");
+      }
+    }
+  `, {}, {}, "index.ts", "client", (message, reply) => {
+    if (message.type !== "RuntimeReady") return false;
+    reply({ type: "SceneDelta", delta: {
+      revision: 1, base_revision: 0, tick_number: 0, reset: true, camera: null,
+      created: [{ id: "0:0", metadata: { name: "", enabled: true, active: true, parent: null, children: [], tags: [] },
+        components: { "fixture:input_probe": {} }, instances: { "fixture:input_probe": "1" } }],
+      changed: [], removed: [],
+    } });
+    return false;
+  }, { keys_pressed: ["KeyW", "ShiftRight"], mouse_delta: [3, -2], mouse_captured: true });
+  expect(result.exitCode).toBe(0);
+  expect(result.messages.filter(message => message.type === "Log").map(message => message.message))
+    .toEqual(["input-enabled", "input-started", "fixture-done"]);
+  expect(result.messages.some(message => message.type === "Subscribe" && message.events.includes("Tick"))).toBe(false);
+});
+
 describe("bundled mod host", () => {
   test("debug free camera is invisible and consumes input only while its camera is active", async () => {
     const cameraSource=readFileSync(join(repository,"games/test/mods/debug/scripts/camera.ts"),"utf8");

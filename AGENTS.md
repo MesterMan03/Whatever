@@ -36,7 +36,7 @@ Every `mod.rs` is a thin re-export file only. Logic lives in named sibling files
 
 ## Mod System
 
-Each game owns its `mods/` and optional `mods_user/` (git-ignored). The source checkout defaults to `games/test`; the editor ships a stock core template from `engine/resources/core`. Each mod directory must contain `mod.toml`. Mods are loaded in toposorted dependency order. The `core` mod always loads first.
+Each game owns its `mods/` and optional `mods_user/` (git-ignored). The source checkout defaults to `games/test`; new projects own their game scripts, scenes and assets in `mods/core`. The editor ships a minimal core template from `engine/resources/core` and an on-demand asset library from `engine/resources/starter`. Each mod directory must contain `mod.toml`. Mods are loaded in toposorted dependency order with core preferred first. Scene references to another mod's assets or custom components require a direct dependency in `mod.toml`.
 
 ## IPC Protocol
 
@@ -71,7 +71,7 @@ bun run format:check
 bun run build:runtime
 ```
 
-The shipped core is metadata/assets only. Put engine diagnostic/demo tools in `games/test/mods/debug`; keep protocols/examples in `games/test/mods/network_example`. Headless stdin uses the same command registry as the client console.
+The shipped core template is metadata only; project scaffolding adds its game entry script and initial scene. Editor primitive creation imports editable assets into the scene-owning mod. Put engine diagnostic/demo tools in `games/test/mods/debug`; keep protocols/examples in `games/test/mods/network_example`. Headless stdin uses the same command registry as the client console. Project autocomplete references the installed SDK through an ignored `.whatever/tsconfig.sdk.json`; never copy API declarations into new projects.
 
 ## Versioning
 

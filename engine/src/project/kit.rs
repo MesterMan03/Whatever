@@ -71,6 +71,10 @@ pub fn create_runtime_kit(
         &source.join("engine/resources/core"),
         &output.join("mods/core"),
     )?;
+    copy_tree(
+        &source.join("engine/resources/starter"),
+        &output.join("resources/starter"),
+    )?;
     copy_tree(&source.join("LICENSE"), &output.join("LICENSE"))?;
     copy_tree(
         &source.join("vendor/bun/LICENSE.md"),

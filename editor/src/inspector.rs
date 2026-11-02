@@ -66,10 +66,10 @@ pub(super) fn default_component(kind: &str) -> Value {
     match kind {
         "core:transform" => json!({"position":[0,0,0],"rotation":[0,0,0,1],"scale":[1,1,1]}),
         "core:camera" => json!({"fovy_degrees":60,"znear":0.05,"zfar":1000}),
-        "core:mesh_renderer" => json!({"mesh":"","shader":"core://shaders/mesh_lit.wgsl"}),
-        "core:sprite_renderer" => json!({"texture":"","shader":"core://shaders/sprite.wgsl"}),
+        "core:mesh_renderer" => json!({"mesh":"","shader":""}),
+        "core:sprite_renderer" => json!({"texture":"","shader":""}),
         "core:text_renderer" => {
-            json!({"text":"Text","font":"core://fonts/default.ttf","shader":"core://shaders/sprite.wgsl","font_size":24,"color":[1,1,1,1]})
+            json!({"text":"Text","font":"","shader":"","font_size":24,"color":[1,1,1,1]})
         }
         "core:ambient_light" => json!({"color":[1,1,1],"intensity":0.2}),
         "core:directional_light" => json!({"color":[1,1,1],"intensity":1,"direction":[0.4,1,0.6]}),
@@ -336,6 +336,10 @@ impl Editor {
                     }
                     for resource in &self.resources {
                         if !resource.scene
+                            && !resource.source
+                            && !resource.directory
+                            && !resource.uri.is_empty()
+                            && self.reference_allowed(&resource.mod_id)
                             && resource.path.extension().is_some_and(|ext| {
                                 extensions.iter().any(|kind| ext.eq_ignore_ascii_case(kind))
                             })
@@ -361,6 +365,18 @@ impl Editor {
                 }
             }
         });
+        if !value.is_empty()
+            && let Some(path) = engine::vfs::VfsPath::parse(&value)
+        {
+            if !self.reference_allowed(&path.mod_id) {
+                ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    "Declare this mod dependency in Mod Settings first",
+                );
+            } else if !self.vfs.exists(&path) {
+                ui.colored_label(egui::Color32::LIGHT_RED, format!("Missing asset: {value}"));
+            }
+        }
         if value != old {
             if value.is_empty() && optional {
                 data.as_object_mut().map(|fields| fields.remove(key));
@@ -885,7 +901,13 @@ impl Editor {
         ui.menu_button("+  Add Component", |ui| {
             for (kind, title) in COMPONENTS {
                 if !entity.components.contains_key(*kind) && ui.button(*title).clicked() {
-                    let mut component = default_component(kind);
+                    let mut component = match self.new_component(kind) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            self.inspector_error = Some(format!("{error:#}"));
+                            continue;
+                        }
+                    };
                     if *kind == "core:rigid_body" {
                         match self.scene_physics_world(true) {
                             Ok(world) => {
@@ -924,7 +946,11 @@ impl Editor {
             ui.separator();
             let definitions: Vec<_> = self.world.component_types.values().cloned().collect();
             for definition in definitions {
-                if !entity.components.contains_key(&definition.id)
+                if definition
+                    .id
+                    .split_once(':')
+                    .is_some_and(|(owner, _)| self.reference_allowed(owner))
+                    && !entity.components.contains_key(&definition.id)
                     && ui
                         .button(&definition.export)
                         .on_hover_text(&definition.id)
@@ -944,7 +970,7 @@ impl Editor {
                 )
                 .clicked()
             {
-                let result = self.refresh_component_types();
+                let result = self.refresh_resources();
                 self.report(result);
                 ui.close_menu();
             }

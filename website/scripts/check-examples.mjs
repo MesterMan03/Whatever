@@ -9,7 +9,7 @@ await mkdir(output, { recursive: true });
 const docs = ["getting-started/first-mod", "guides/components", "guides/scenes-and-assets", "guides/client-and-server", "guides/debugging"];
 // Import shared context only for snippets that continue an earlier example.
 // Complete examples keep their own imports unchanged.
-const context = 'import { Engine, Window, Scene, BuiltInComponents, Component, Type, field, Console } from "@whatever-engine/api";\n';
+const context = 'import { Engine, Input, Time, Window, Scene, BuiltInComponents, Component, Type, field, Console } from "@whatever-engine/api";\n';
 const entries = [];
 for (const doc of docs) {
   const text = await readFile(path.join(root, `website/src/content/docs/${doc}.md`), "utf8");

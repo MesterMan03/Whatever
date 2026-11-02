@@ -1,4 +1,4 @@
-import { BuiltInComponents, Engine, Entity, Scene } from "@whatever-engine/api";
+import { BuiltInComponents, Engine, Entity, Input, Scene, Time } from "@whatever-engine/api";
 import Camera = BuiltInComponents.Camera;
 
 // --- Camera controller state -------------------------------------------------
@@ -29,7 +29,7 @@ Engine.on("init", async () => {
 
 // --- Tick: camera controller -------------------------------------------------
 
-Engine.on("tick", ({ mouse_delta, keys_pressed, delta_seconds }) => {
+Engine.on("tick", () => {
   // Entities aren't ready until after init resolves.
   if (!cameraRig || !cameraEntity) return;
 
@@ -42,7 +42,7 @@ Engine.on("tick", ({ mouse_delta, keys_pressed, delta_seconds }) => {
   // must not also move this inactive camera or change the view restored later.
   if (activeCamera?.id !== cameraEntity.id || !rigTransform || !camTransform) return;
 
-  const [dx, dy] = mouse_delta;
+  const [dx, dy] = Input.mouseDelta;
 
   // Update look angles from mouse delta.
   // dx > 0 = mouse moved right → camera turns right → yaw decreases
@@ -66,26 +66,26 @@ Engine.on("tick", ({ mouse_delta, keys_pressed, delta_seconds }) => {
     moveY = 0,
     moveZ = 0;
 
-  if (keys_pressed.includes("KeyW")) {
+  if (Input.isPressed("KeyW")) {
     moveX += fwdX;
     moveZ += fwdZ;
   }
-  if (keys_pressed.includes("KeyS")) {
+  if (Input.isPressed("KeyS")) {
     moveX -= fwdX;
     moveZ -= fwdZ;
   }
-  if (keys_pressed.includes("KeyD")) {
+  if (Input.isPressed("KeyD")) {
     moveX += rgtX;
     moveZ += rgtZ;
   }
-  if (keys_pressed.includes("KeyA")) {
+  if (Input.isPressed("KeyA")) {
     moveX -= rgtX;
     moveZ -= rgtZ;
   }
-  if (keys_pressed.includes("Space")) {
+  if (Input.isPressed("Space")) {
     moveY += 1;
   }
-  if (keys_pressed.includes("ShiftLeft") || keys_pressed.includes("ShiftRight")) {
+  if (Input.isShiftPressed()) {
     moveY -= 1;
   }
 
@@ -97,9 +97,9 @@ Engine.on("tick", ({ mouse_delta, keys_pressed, delta_seconds }) => {
   }
 
   cameraRig.editComponent("core:transform", (draft) => {
-    draft.position[0] += moveX * MOVE_SPEED * delta_seconds;
-    draft.position[1] += moveY * MOVE_SPEED * delta_seconds;
-    draft.position[2] += moveZ * MOVE_SPEED * delta_seconds;
+    draft.position[0] += moveX * MOVE_SPEED * Time.deltaSeconds;
+    draft.position[1] += moveY * MOVE_SPEED * Time.deltaSeconds;
+    draft.position[2] += moveZ * MOVE_SPEED * Time.deltaSeconds;
 
     // Rig yaw is the horizontal rotation; the camera inherits this
     // through the parent-child relationship.

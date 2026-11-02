@@ -80,10 +80,14 @@ impl Editor {
         };
         let mut close = false;
         let mut save = false;
+        let validating = self.job.is_some();
         egui::Modal::new(egui::Id::new("mod_settings")).show(ctx, |ui| {
             ui.set_width(530.0);
             ui.heading("Mod Settings");
             ui.label(display_path(&draft.path));
+            if validating {
+                ui.disable();
+            }
             egui::ScrollArea::vertical()
                 .max_height(570.0)
                 .drag_to_scroll(false)
@@ -128,6 +132,143 @@ impl Editor {
                                     ),
                                 );
                                 changed = true;
+                            }
+                        }
+                        if let Some(root) = value.as_table_mut() {
+                            ui.separator();
+                            ui.strong("Runtime sides");
+                            if let Some(meta) = root.get_mut("mod").and_then(toml::Value::as_table_mut) {
+                                let mut sides = meta
+                                    .get("sides")
+                                    .and_then(toml::Value::as_array)
+                                    .cloned()
+                                    .unwrap_or_else(|| vec![
+                                        toml::Value::String("client".into()),
+                                        toml::Value::String("server".into()),
+                                    ]);
+                                for side in ["client", "server"] {
+                                    let mut enabled = sides.iter().any(|v| v.as_str() == Some(side));
+                                    if ui.checkbox(&mut enabled, side).changed() {
+                                        sides.retain(|v| v.as_str() != Some(side));
+                                        if enabled {
+                                            sides.push(toml::Value::String(side.into()));
+                                        }
+                                        changed = true;
+                                    }
+                                }
+                                meta.insert("sides".into(), toml::Value::Array(sides));
+                            }
+                            let owner = root.get("mod")
+                                .and_then(|m| m.get("id"))
+                                .and_then(toml::Value::as_str)
+                                .unwrap_or("")
+                                .to_owned();
+                            ui.separator();
+                            ui.strong("Dependencies");
+                            let dependencies = root.entry("dependencies")
+                                .or_insert_with(|| toml::Value::Table(Default::default()));
+                            if let Some(table) = dependencies.as_table_mut() {
+                                for (id, _) in &self.mod_roots {
+                                    if id == &owner {
+                                        continue;
+                                    }
+                                    ui.push_id(id, |ui| {
+                                        ui.horizontal(|ui| {
+                                            let mut enabled = table.contains_key(id);
+                                            if ui.checkbox(&mut enabled, id).changed() {
+                                                if enabled {
+                                                    table.insert(id.clone(), toml::Value::String("*".into()));
+                                                } else {
+                                                    table.remove(id);
+                                                }
+                                                changed = true;
+                                            }
+                                            if enabled {
+                                                let mut version = table.get(id)
+                                                    .and_then(toml::Value::as_str)
+                                                    .unwrap_or("*")
+                                                    .to_owned();
+                                                if ui.add(egui::TextEdit::singleline(&mut version)
+                                                    .desired_width(130.0)
+                                                    .hint_text("Version requirement")).changed() {
+                                                    table.insert(id.clone(), toml::Value::String(version));
+                                                    changed = true;
+                                                }
+                                            }
+                                        });
+                                    });
+                                }
+                                let missing: Vec<_> = table.keys()
+                                    .filter(|id| !self.mod_roots.iter().any(|(known, _)| known == *id))
+                                    .cloned()
+                                    .collect();
+                                for id in missing {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(egui::Color32::LIGHT_RED, format!("Missing dependency: {id}"));
+                                        if ui.small_button("Remove").clicked() {
+                                            table.remove(&id);
+                                            changed = true;
+                                        }
+                                    });
+                                }
+                            }
+                            ui.weak("Scene assets and custom components require a direct dependency. Version requirements use semver.");
+                            let allowed: Vec<String> = root.get("dependencies")
+                                .and_then(toml::Value::as_table)
+                                .map(|t| t.keys().cloned().collect())
+                                .unwrap_or_default();
+                            ui.separator();
+                            ui.strong("Initial scene");
+                            let old = root.get("initial_scene")
+                                .and_then(toml::Value::as_str)
+                                .unwrap_or("")
+                                .to_owned();
+                            let mut initial = old.clone();
+                            egui::ComboBox::from_id_salt("mod_initial_scene")
+                                .selected_text(if initial.is_empty() { "None" } else { &initial })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut initial, String::new(), "None");
+                                    for resource in &self.resources {
+                                        if resource.scene && (resource.mod_id == owner || allowed.contains(&resource.mod_id)) {
+                                            ui.selectable_value(&mut initial, resource.uri.clone(), &resource.uri);
+                                        }
+                                    }
+                                });
+                            if initial != old {
+                                if initial.is_empty() {
+                                    root.remove("initial_scene");
+                                } else {
+                                    root.insert("initial_scene".into(), toml::Value::String(initial));
+                                }
+                                changed = true;
+                            }
+                            ui.weak("The core mod's initial scene starts the game. Other mods may declare a scene for tooling.");
+                            ui.separator();
+                            ui.strong("Asset folder");
+                            if let Some(table) = root.entry("assets")
+                                .or_insert_with(|| toml::Value::Table(Default::default()))
+                                .as_table_mut() {
+                                changed |= field(ui, table, "root", "Path relative to this mod");
+                            }
+                            ui.strong("Load order");
+                            if let Some(table) = root.entry("load_order")
+                                .or_insert_with(|| toml::Value::Table(Default::default()))
+                                .as_table_mut() {
+                                for key in ["after", "before"] {
+                                    let mut text = table.get(key)
+                                        .and_then(toml::Value::as_array)
+                                        .map(|a| a.iter().filter_map(toml::Value::as_str).collect::<Vec<_>>().join(", "))
+                                        .unwrap_or_default();
+                                    ui.label(format!("{key} (comma separated mod IDs)"));
+                                    if ui.text_edit_singleline(&mut text).changed() {
+                                        table.insert(key.into(), toml::Value::Array(text.split(',')
+                                            .map(str::trim)
+                                            .filter(|s| !s.is_empty())
+                                            .map(|s| toml::Value::String(s.into()))
+                                            .collect()));
+                                        changed = true;
+                                    }
+                                }
                             }
                         }
                         ui.separator();
@@ -205,7 +346,7 @@ impl Editor {
                 close = ui.button("Cancel").clicked();
             });
         });
-        close |= ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        close |= !validating && ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if save {
             let result = (|| -> anyhow::Result<()> {
                 let original: engine::mods::ModManifest = toml::from_str(&draft.original)?;
@@ -218,32 +359,62 @@ impl Editor {
                     std::fs::read_to_string(&draft.path)? == draft.original,
                     "mod.toml changed outside the editor; reopen Mod Settings"
                 );
+                let project = self.project.clone().context("project")?;
                 std::fs::write(&draft.path, &draft.text)?;
-                let validation = self.project.as_ref().context("project")?.validate();
-                if let Err(error) = validation {
-                    if std::fs::read_to_string(&draft.path)? == draft.text {
-                        std::fs::write(&draft.path, &draft.original)?;
-                    }
-                    return Err(error);
-                }
-                self.vfs = self
-                    .project
-                    .as_ref()
-                    .context("project")?
-                    .registry(engine::runtime::RuntimeMode::Client)?
-                    .1;
-                self.refresh_resources()?;
-                self.preview_dirty = true;
-                self.status = "Mod metadata saved".into();
+                let path = draft.path.clone();
+                let text = draft.text.clone();
+                let original = draft.original.clone();
+                let (sender, receiver) = mpsc::channel();
+                self.job = Some(receiver);
+                self.job_label = "Validating mod settings and component types…".into();
+                std::thread::spawn(move || {
+                    let result = (|| -> anyhow::Result<()> {
+                        if let Err(error) = project.validate() {
+                            if std::fs::read_to_string(&path)? == text {
+                                std::fs::write(&path, original)
+                                    .context("restore mod.toml after validation failed")?;
+                            }
+                            return Err(error);
+                        }
+                        Ok(())
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    let _ = sender.send(JobEvent::ModValidated(result));
+                });
                 Ok(())
             })();
             match result {
-                Ok(()) => close = true,
+                Ok(()) => draft.error = None,
                 Err(error) => draft.error = Some(format!("{error:#}")),
             }
         }
         if !close {
             self.mod_draft = Some(draft);
         }
+    }
+
+    pub(super) fn finish_mod_validation(&mut self, result: Result<(), String>) {
+        if let Err(error) = result {
+            self.status = "Mod settings validation failed".into();
+            self.logs.push(error.clone());
+            if let Some(draft) = &mut self.mod_draft {
+                draft.error = Some(error);
+            }
+            return;
+        }
+        let result = (|| -> anyhow::Result<()> {
+            self.vfs = self
+                .project
+                .as_ref()
+                .context("project")?
+                .registry(engine::runtime::RuntimeMode::Client)?
+                .1;
+            self.refresh_resources()?;
+            self.preview_dirty = true;
+            self.status = "Mod metadata saved".into();
+            self.mod_draft = None;
+            Ok(())
+        })();
+        self.report(result);
     }
 }

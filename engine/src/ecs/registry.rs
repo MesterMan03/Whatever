@@ -29,6 +29,29 @@ pub struct ComponentDefinition {
     pub fields: Vec<ComponentField>,
 }
 
+/// Exact native IDs are reserved; the game's core mod may define other components.
+pub fn is_native_component(id: &str) -> bool {
+    matches!(
+        id,
+        "core:entity"
+            | "core:transform"
+            | "core:world_transform"
+            | "core:camera"
+            | "core:sprite_renderer"
+            | "core:mesh_renderer"
+            | "core:text_renderer"
+            | "core:ambient_light"
+            | "core:directional_light"
+            | "core:point_light"
+            | "core:physics_world"
+            | "core:rigid_body"
+            | "core:rigid_body_state"
+            | "core:collider"
+            | "core:joint"
+            | "core:physics_status"
+    )
+}
+
 impl ComponentDefinition {
     pub fn validate(&self, owner: &str) -> Result<()> {
         let (namespace, name) = self
@@ -36,8 +59,13 @@ impl ComponentDefinition {
             .split_once(':')
             .context("component ID must be mod_id:name")?;
         ensure!(
-            namespace == owner && namespace != "core" && !name.is_empty() && name.len() <= 128,
+            namespace == owner && !name.is_empty() && name.len() <= 128,
             "component must use its owning mod's namespace"
+        );
+        ensure!(
+            !is_native_component(&self.id),
+            "component '{}' is reserved for the native engine",
+            self.id
         );
         ensure!(
             !self.source.is_empty() && !self.export.is_empty(),

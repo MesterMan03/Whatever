@@ -320,7 +320,6 @@ export function inspectComponents(directory: string, owner: string): ComponentDe
       if (
         typeof id !== "string" ||
         !id.startsWith(owner + ":") ||
-        owner === "core" ||
         !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(id.slice(owner.length + 1))
       )
         return fail(node, "component type must be mod_id:name");

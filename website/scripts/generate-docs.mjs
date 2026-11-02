@@ -37,8 +37,8 @@ const documentedProtocol = (await read("docs/IPC.md")).match(/current host proto
 if (!hostProtocol || hostProtocol !== documentedProtocol) throw new Error("docs/IPC.md must document the current native HOST_PROTOCOL before building.");
 const groups = [
   ["overview", "Scripting overview", ["Introduction"]],
-  ["engine", "Engine and window", ["`Engine`", "`Window`"]],
-  ["timing", "Ticks, snapshots, and pending results", ["Tick order and command batches", "Scene revisions and synchronous reads", "`Pending<T>` and explicit ordered requests", "`Profiler`"]],
+  ["engine", "Engine, input, and window", ["`Engine`", "`Input`", "`Window`"]],
+  ["timing", "Ticks, snapshots, and pending results", ["`Time`", "Tick order and command batches", "Scene revisions and synchronous reads", "`Pending<T>` and explicit ordered requests", "`Profiler`"]],
   ["components", "Schemas and custom components", ["`Type`, `Struct`, and custom `Component` classes"]],
   ["entities", "Entities and references", ["`Entity`", "Entity lifecycle and startup scenes"]],
   ["scenes", "Scenes and built-in components", ["`Scene`"]],

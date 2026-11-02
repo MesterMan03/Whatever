@@ -104,6 +104,26 @@ impl SceneDocument {
         Ok(loaded)
     }
 
+    pub fn load_checked(
+        vfs: &dyn Vfs,
+        path: &str,
+        world: &mut World,
+        registry: &crate::mods::ModRegistry,
+    ) -> anyhow::Result<LoadedScene> {
+        let start = std::time::Instant::now();
+        let target = scene_path(path)?;
+        let owner = registry
+            .get(&target.mod_id)
+            .context("scene-owning mod is unavailable")?;
+        let document = Self::parse(&vfs.read(&target)?)?;
+        super::validate_references(&document, owner, vfs, &world.component_types)
+            .with_context(|| format!("scene '{path}'"))?;
+        let mut loaded = document.instantiate(world)?;
+        loaded.path = path.into();
+        loaded.load_time = start.elapsed().as_secs_f64() * 1000.0;
+        Ok(loaded)
+    }
+
     /// Allocate fresh IDs per instance. Roll back the whole instance on failure.
     pub fn instantiate(&self, world: &mut World) -> anyhow::Result<LoadedScene> {
         ensure!(

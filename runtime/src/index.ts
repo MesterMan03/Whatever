@@ -14,6 +14,9 @@ export type { ComponentClass, ComponentData, FieldEditor } from "./component.ts"
 export { Type, DataType, defineStruct as Struct } from "./schema.ts";
 export type { Schema, SchemaValue as Infer } from "./schema.ts";
 export { Engine } from "./components/engine.ts";
+export { Input, PressedKeys } from "./input.ts";
+export type { KeyCode } from "./input.ts";
+export { Time } from "./time.ts";
 export { Window } from "./components/window.ts";
 export { File } from "./components/file.ts";
 export { BuiltInComponents, Entity, PendingEntity, LoadedScene, Scene } from "./components/ecs.ts";

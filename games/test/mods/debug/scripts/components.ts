@@ -1,4 +1,4 @@
-import { Component, Type, field } from "@whatever-engine/api";
+import { Component, Time, Type, field } from "@whatever-engine/api";
 
 /** Attach in the editor or spawn with `dev render component`. */
 export class Spinner extends Component {
@@ -11,8 +11,8 @@ export class Spinner extends Component {
 
   private angle = 0;
 
-  override tick(deltaSeconds: number): void {
-    this.angle += this.speed * deltaSeconds;
+  override tick(): void {
+    this.angle += this.speed * Time.deltaSeconds;
     const entity = this.entity;
     if (entity.hasComponent("core:transform")) entity.setEulerDegrees(0, this.angle, 0);
   }

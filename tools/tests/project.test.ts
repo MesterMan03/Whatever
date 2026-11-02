@@ -25,12 +25,15 @@ test("CLI scaffolding, editor validation, branded deployment and relocated scene
     await wmod(["project", "create", project, "--id", "packaged_fixture", "--name", "Branded Fixture", "--core", join(repository, "engine/resources/core")]);
     await wmod(["mod","create",join(project,"mods/dev_tools"),"--id","dev_tools","--project",project,"--no-scripts"]);
     writeFileSync(join(project,"whatever.wproject"),readFileSync(join(project,"whatever.wproject"),"utf8").replace("exclude_mods = []",'exclude_mods = ["dev_tools"]'));
-    const mod = join(project, "mods/packaged_fixture");
+    const mod = join(project, "mods/core");
     expect(existsSync(join(mod, "scenes/main.wscene"))).toBe(true);
-    expect(existsSync(join(mod, "tsconfig.json"))).toBe(true);
-    const source = `import { Engine, Scene } from "@whatever-engine/api";
+    expect(existsSync(join(project, "tsconfig.json"))).toBe(true);
+    expect(existsSync(join(project, ".whatever/tsconfig.sdk.json"))).toBe(true);
+    expect(existsSync(join(mod, "types/whatever-engine.d.ts"))).toBe(false);
+    const source = `import { Component, Engine, Scene } from "@whatever-engine/api";
+export class GameCounter extends Component { static readonly type = "core:GameCounter"; value = 0; }
 Engine.on("init", async () => {
-  const scene = await Scene.loadScene("packaged_fixture://main");
+  const scene = await Scene.loadScene("core://main");
   if (Engine.mode !== "server" || scene.entityCount !== 2 || !scene.get("camera").id) throw Error("packaged scene mismatch");
   Engine.log("info", "PACKAGED_SCENE_READY");
 });`;

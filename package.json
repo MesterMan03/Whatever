@@ -22,7 +22,7 @@
     "test:snapshots": "bun test tools/tests/snapshots.test.ts",
     "test:markbench": "bun test tools/tests/markbench.test.ts --timeout 60000",
     "test:components": "bun test tools/tests/components.test.ts",
-    "test:runtime": "bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.runtime.json",
+    "test:runtime": "bun test tools/tests/input.test.ts && bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.runtime.json",
     "test:server": "bun test tools/tests/server.test.ts --timeout 30000",
     "test:project": "bun test tools/tests/project.test.ts --timeout 60000",
     "test:host": "bun test tools/tests/mod-host.test.ts --timeout 30000",

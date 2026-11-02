@@ -60,13 +60,11 @@ hello-game/
       mod.toml
       meta.toml
       assets/
-    hello_mod/
-      mod.toml
       package.json
-      tsconfig.json
       scripts/index.ts
       scenes/main.wscene
-      assets/
+  tsconfig.json
+  .whatever/tsconfig.sdk.json  (local, git-ignored)
 ```
 
-The scaffold includes a camera, ambient light, scene-loading entry script, and TypeScript configuration. SDK declarations are copied when available; otherwise the scaffold pins an API development dependency. Continue with [your first mod](/getting-started/first-mod/).
+The game lives in `mods/core`, including its entry script, camera, ambient light and initial scene. Assets start empty. Creating a primitive imports the needed editable resources from the editor's library. TypeScript configuration references the installed SDK without copying declarations. Opening the project repairs its local SDK binding after relocation; terminal users can run `wmod project bind-sdk ./hello-game`. Continue with [your first mod](/getting-started/first-mod/).

@@ -26,6 +26,7 @@ impl Editor {
         self.dialogs(ctx);
         self.preferences_ui(ctx);
         self.mod_editor_ui(ctx);
+        self.asset_actions_ui(ctx);
         if self.input_blocked() {
             ctx.data_mut(|state| {
                 state.remove::<hierarchy::DroppedEntity>(egui::Id::new("entity_drop"))
@@ -105,7 +106,10 @@ impl Editor {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_enabled(
-                                self.project.is_some() && self.job.is_none(),
+                                self.project.is_some()
+                                    && self.job.is_none()
+                                    && !self.component_reload.is_busy()
+                                    && self.component_reload.error.is_none(),
                                 egui::Button::new("Build Game"),
                             )
                             .on_hover_text(
@@ -123,7 +127,10 @@ impl Editor {
                             }
                         } else if ui
                             .add_enabled(
-                                self.project.is_some() && self.job.is_none(),
+                                self.project.is_some()
+                                    && self.job.is_none()
+                                    && !self.component_reload.is_busy()
+                                    && self.component_reload.error.is_none(),
                                 egui::Button::new("▶  Play"),
                             )
                             .on_hover_text(
@@ -143,7 +150,21 @@ impl Editor {
                 ui.horizontal(|ui| {
                     if self.job.is_some() {
                         ui.spinner();
-                        ui.add(egui::Label::new(&self.job_label).truncate());
+                        ui.add(egui::Label::new(&self.job_label).truncate())
+                            .on_hover_text(&self.job_label);
+                    } else if self.component_reload.is_busy() {
+                        ui.spinner();
+                        if let Some(progress) = self.component_reload.progress {
+                            ui.add(egui::ProgressBar::new(progress).desired_width(90.0));
+                        }
+                        ui.add(egui::Label::new(&self.component_reload.label).truncate())
+                            .on_hover_text(&self.component_reload.label);
+                    } else if let Some(error) = &self.component_reload.error {
+                        ui.colored_label(egui::Color32::LIGHT_RED, "Component reload failed")
+                            .on_hover_text(error);
+                        if ui.small_button("View log").clicked() {
+                            self.browser_tab = browser::BrowserTab::Log;
+                        }
                     } else {
                         ui.add(egui::Label::new(&self.status).truncate());
                     }
@@ -156,6 +177,10 @@ impl Editor {
                 });
             });
         egui::TopBottomPanel::bottom("project_browser")
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style())
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0)),
+            )
             .resizable(true)
             .default_height(220.0)
             .min_height(130.0)
@@ -165,7 +190,9 @@ impl Editor {
             .default_width(260.0)
             .width_range(210.0..=450.0)
             .show(ctx, |ui| {
+                ui.add_space(7.0);
                 ui.horizontal(|ui| {
+                    ui.set_min_height(28.0);
                     ui.strong("Hierarchy");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.menu_button("+", |ui| {
@@ -191,7 +218,11 @@ impl Editor {
             .default_width(345.0)
             .width_range(290.0..=550.0)
             .show(ctx, |ui| {
-                ui.strong("Inspector");
+                ui.add_space(7.0);
+                ui.horizontal(|ui| {
+                    ui.set_min_height(28.0);
+                    ui.strong("Inspector");
+                });
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt("inspector_scroll")
@@ -208,48 +239,10 @@ impl Editor {
             });
     }
     pub(super) fn viewport_overlay(&self, ui: &mut egui::Ui) {
-        let painter = ui.painter();
         let rect = self.viewport;
-        let position = self.camera_position();
-        let vp = Mat4::perspective_rh(
-            45_f32.to_radians(),
-            rect.width() / rect.height().max(1.0),
-            0.01,
-            100000.0,
-        ) * Mat4::look_at_rh(position, self.target, Vec3::Y);
-        let project = |point: Vec3| -> Option<egui::Pos2> {
-            let clip = vp * point.extend(1.0);
-            if clip.w < 0.01 {
-                return None;
-            }
-            let ndc = clip.truncate() / clip.w;
-            Some(egui::pos2(
-                rect.left() + (ndc.x + 1.0) * 0.5 * rect.width(),
-                rect.top() + (1.0 - ndc.y) * 0.5 * rect.height(),
-            ))
-        };
-        for index in -20..=20 {
-            for (start, end) in [
-                (
-                    Vec3::new(index as f32, 0.0, -20.0),
-                    Vec3::new(index as f32, 0.0, 20.0),
-                ),
-                (
-                    Vec3::new(-20.0, 0.0, index as f32),
-                    Vec3::new(20.0, 0.0, index as f32),
-                ),
-            ] {
-                if let (Some(a), Some(b)) = (project(start), project(end)) {
-                    painter.line_segment(
-                        [a, b],
-                        egui::Stroke::new(
-                            1.0_f32,
-                            egui::Color32::from_white_alpha(if index == 0 { 45 } else { 15 }),
-                        ),
-                    );
-                }
-            }
-        }
+        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        let project = |point: Vec3| self.screen_point(point);
+        self.draw_cameras(ui);
         if let Some(doc) = &self.document {
             let mut paths = Vec::new();
             hierarchy::entity_paths(&doc.scene.entities, &mut Vec::new(), &mut paths);
@@ -274,7 +267,10 @@ impl Editor {
                             (Vec3::Y, egui::Color32::from_rgb(113, 211, 135)),
                             (Vec3::Z, egui::Color32::from_rgb(99, 158, 245)),
                         ] {
-                            if let Some(end) = project(Vec3::from(transform.position) + axis) {
+                            if let Some(end) = project(
+                                Vec3::from(transform.position)
+                                    + glam::Quat::from_array(transform.rotation) * axis,
+                            ) {
                                 painter
                                     .line_segment([point, end], egui::Stroke::new(2.0_f32, color));
                             }
@@ -327,7 +323,26 @@ impl Editor {
                 });
                 ui.weak("PNG or ICO. Build embeds multiple icon sizes and game metadata into the launcher.");
                 ui.separator();ui.heading("Build");ui.label("Exclude mods from the final build");
-                for (id,_) in &self.mod_roots { if id=="core" {continue;} let mut excluded=project.build.exclude_mods.contains(id);if ui.checkbox(&mut excluded,id).changed(){project.build.exclude_mods.retain(|item|item!=id);if excluded{project.build.exclude_mods.push(id.clone());}changed=true;} }
+                for (id,_) in &self.mod_roots {
+                    if id=="core" {continue;}
+                    let mut excluded=project.build.exclude_mods.contains(id);
+                    let required_by=self.mod_dependencies.iter().filter(|(owner,deps)|!project.build.exclude_mods.contains(owner)&&deps.contains(id)).map(|(owner,_)|owner.as_str()).collect::<Vec<_>>();
+                    let response=ui.horizontal(|ui| {
+                        let response=ui.add_enabled(excluded||required_by.is_empty(),egui::Checkbox::new(&mut excluded,id));
+                        if required_by.is_empty() {
+                            response
+                        } else {
+                            ui.weak(format!("Required by: {}", required_by.join(", ")));
+                            let reason=format!("Required by: {}. Exclude the dependent mods first.",required_by.join(", "));
+                            response.on_hover_text(&reason).on_disabled_hover_text(reason)
+                        }
+                    }).inner;
+                    if response.changed(){
+                        let previous=project.build.exclude_mods.clone();project.build.exclude_mods.retain(|item|item!=id);if excluded{project.build.exclude_mods.push(id.clone());}
+                        match project.validate_build_selection(){Ok(())=>changed=true,Err(error)=>{project.build.exclude_mods=previous;self.status=format!("{error:#}");}}
+                    }
+                }
+                if let Err(error)=project.validate_build_selection(){ui.colored_label(egui::Color32::LIGHT_RED,format!("{error:#}"));}
                 ui.weak("Player and mod runtime are included automatically.");
                 ui.horizontal(|ui|{ui.add(egui::Label::new(self.build_destination.as_ref().map(|path|display_path(path)).unwrap_or("Choose a destination on first Build".into())).truncate());
                     if ui.button("Browse…").clicked(){self.build_destination=self.file_dialog("Choose game build folder").pick_folder();}});

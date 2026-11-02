@@ -137,6 +137,12 @@ The engine sends every ready host a `Tick`:
 `delta_seconds` is the configured simulation interval, not the duration of a
 window redraw. Input is sampled by the engine. Use `mouse_captured` when deciding
 whether to apply mouse motion. A headless server has no client window input.
+`keys_pressed` stays an array of physical key-code strings on the wire; the API
+converts it into an immutable `PressedKeys` snapshot for public tick handlers.
+Before component hooks and public tick handlers run, it also updates the shared
+read-only `Input` and `Time` API objects, even without a public tick listener.
+These objects describe one current tick; existing handler arguments still
+accumulate elapsed time and mouse motion when async handlers skip ticks.
 
 Each host must answer with **exactly one** batch with the same tick number:
 

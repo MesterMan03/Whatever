@@ -96,7 +96,14 @@ fn line_distance(point: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
     point.distance(a + d * fraction)
 }
 impl Editor {
-    fn view_projection(&self) -> Mat4 {
+    pub(super) fn view_projection(&self) -> Mat4 {
+        if let Some((pose, camera)) = self.scene_camera() {
+            return engine::renderer::view_proj_from_entity(
+                &pose,
+                &camera,
+                self.viewport.width() / self.viewport.height().max(1.0),
+            );
+        }
         Mat4::perspective_rh(
             45_f32.to_radians(),
             self.viewport.width() / self.viewport.height().max(1.0),
@@ -136,11 +143,7 @@ impl Editor {
         let origin = Vec3::from(transform.position);
         let center = self.screen_point(origin)?;
         let size = (self.camera_position().distance(origin) * 0.13).max(0.1);
-        let rotation = if self.tool == Tool::Scale {
-            Quat::from_array(transform.rotation)
-        } else {
-            Quat::IDENTITY
-        };
+        let rotation = Quat::from_array(transform.rotation);
         let mut axes = [(center, Vec3::ZERO); 3];
         for (index, axis) in [Vec3::X, Vec3::Y, Vec3::Z].into_iter().enumerate() {
             let direction = rotation * axis;
@@ -155,6 +158,19 @@ impl Editor {
     fn handle_at(&self, point: egui::Pos2) -> Option<usize> {
         if self.tool == Tool::Select {
             return None;
+        }
+        if self.tool == Tool::Rotate {
+            return (0..3)
+                .filter_map(|axis| {
+                    let distance = self
+                        .ring_segments(axis)
+                        .iter()
+                        .map(|points| line_distance(point, points[0], points[1]))
+                        .fold(f32::INFINITY, f32::min);
+                    (distance < 8.0).then_some((axis, distance))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(axis, _)| axis);
         }
         let (center, axes) = self.axes()?;
         if point.distance(center) < 8.0 {
@@ -272,6 +288,29 @@ impl Editor {
         } else {
             (baseline, parent)
         };
+        let normal = Quat::from_array(world.rotation) * [Vec3::X, Vec3::Y, Vec3::Z][axis.min(2)];
+        let origin = Vec3::from(world.position);
+        let plane_vector = self.rotation_vector(start, origin, normal);
+        let start_vector = plane_vector
+            .or_else(|| {
+                self.ring_world(axis.min(2))?
+                    .into_iter()
+                    .filter_map(|p| {
+                        self.screen_point(p)
+                            .map(|screen| (p, screen.distance(start)))
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
+                    .and_then(|(p, _)| (p - origin).try_normalize())
+            })
+            .unwrap_or(Vec3::Y);
+        let radius = (self.camera_position().distance(origin) * 0.13).max(0.1);
+        let tangent = self
+            .screen_point(
+                origin + start_vector * radius + normal.cross(start_vector) * radius * 0.01,
+            )
+            .zip(self.screen_point(origin + start_vector * radius))
+            .map(|(a, b)| (a - b) * 100.0)
+            .unwrap_or(egui::vec2(50.0, -50.0));
         self.gizmo_drag = Some(Drag {
             start,
             axis,
@@ -279,16 +318,21 @@ impl Editor {
             world,
             parent,
             checkpointed: false,
+            start_vector,
+            plane_rotation: plane_vector.is_some(),
+            tangent,
+            angle: 0.0,
+            last_angle: 0.0,
         });
         Ok(())
     }
     fn update_drag(&mut self, position: egui::Pos2) -> anyhow::Result<()> {
-        let Some(drag) = self.gizmo_drag.as_ref() else {
+        let Some(drag) = self.gizmo_drag.clone() else {
             return Ok(());
         };
         let step = self.snap.step(self.tool, self.ctx.input(|i| i.modifiers));
         let delta = position - drag.start;
-        if delta.length() < 1.0 {
+        if delta.length() < 1.0 && !drag.checkpointed {
             return Ok(());
         }
         let mut value = drag.baseline.clone();
@@ -296,7 +340,7 @@ impl Editor {
         let pixels_per_unit = self.viewport.height()
             / (self.camera_position().distance(baseline_world).max(0.1) * 0.83);
         let axis = if drag.axis < 3 {
-            [Vec3::X, Vec3::Y, Vec3::Z][drag.axis]
+            Quat::from_array(drag.world.rotation) * [Vec3::X, Vec3::Y, Vec3::Z][drag.axis]
         } else {
             (self.camera_position() - self.target).normalize()
         };
@@ -310,31 +354,52 @@ impl Editor {
                         .screen_point(baseline_world + axis)
                         .context("axis behind camera")?;
                     let screen = end - center;
-                    axis * (delta.dot(screen) / screen.length_sq().max(1.0))
+                    axis * quantize(delta.dot(screen) / screen.length_sq().max(1.0), step)
                 } else {
                     let forward = (self.target - self.camera_position()).normalize();
                     let right = forward.cross(Vec3::Y).normalize();
                     let up = right.cross(forward);
-                    (right * delta.x - up * delta.y) / pixels_per_unit
+                    right * quantize(delta.x / pixels_per_unit, step)
+                        - up * quantize(delta.y / pixels_per_unit, step)
                 };
                 anyhow::ensure!(
                     Vec3::from(drag.parent.scale).abs().min_element() > 1e-6,
                     "parent scale must be nonzero"
                 );
-                let movement = movement.map(|v| quantize(v, step));
                 value.position = matrix(&drag.parent)
                     .inverse()
                     .transform_point3(baseline_world + movement)
                     .to_array();
             }
             Tool::Rotate => {
-                let rotation = Quat::from_axis_angle(
-                    axis,
-                    quantize(((delta.x - delta.y) * 0.012).to_degrees(), step).to_radians(),
-                ) * Quat::from_array(drag.world.rotation);
+                let raw = if drag.plane_rotation {
+                    self.rotation_vector(position, baseline_world, axis)
+                        .map(|vector| {
+                            axis.dot(drag.start_vector.cross(vector))
+                                .atan2(drag.start_vector.dot(vector))
+                        })
+                        .unwrap_or(drag.last_angle)
+                } else {
+                    delta.dot(drag.tangent) / drag.tangent.length_sq().max(1.0)
+                };
+                let angle = if drag.plane_rotation {
+                    drag.angle
+                        + (raw - drag.last_angle + std::f32::consts::PI)
+                            .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI
+                } else {
+                    raw
+                };
+                let rotation =
+                    Quat::from_axis_angle(axis, quantize(angle.to_degrees(), step).to_radians())
+                        * Quat::from_array(drag.world.rotation);
                 value.rotation = (Quat::from_array(drag.parent.rotation).inverse() * rotation)
                     .normalize()
                     .to_array();
+                if let Some(drag) = self.gizmo_drag.as_mut() {
+                    drag.angle = angle;
+                    drag.last_angle = raw;
+                }
             }
             Tool::Scale => {
                 let factor = (1.0 + quantize(((delta.x - delta.y) * 0.01).exp() - 1.0, step))
@@ -375,7 +440,18 @@ impl Editor {
             ui.disable();
         }
         ui.horizontal(|ui| {
+            ui.add_space(7.0);
             ui.selectable_value(&mut self.view, live::View::Scene, "Scene");
+            if self.preview_camera.is_some() {
+                if ui.small_button("Exit camera view").clicked() {
+                    self.preview_camera = None;
+                }
+            } else if let Some(id) = self.selected_id()
+                && self.world.camera_components.contains_key(&id.index)
+                && ui.small_button("Look through camera").clicked()
+            {
+                self.preview_camera = Some(id);
+            }
             if ui
                 .add_enabled(
                     self.player.is_some(),
@@ -439,6 +515,7 @@ impl Editor {
         ui.separator();
         self.viewport = ui.available_rect_before_wrap();
         let response = ui.allocate_rect(self.viewport, egui::Sense::click_and_drag());
+        ui.set_clip_rect(ui.clip_rect().intersect(self.viewport));
         let ctx = ui.ctx().clone();
         if self.input_blocked() || self.live_waiting() {
             self.viewport_overlay(ui);
@@ -540,6 +617,7 @@ impl Editor {
             self.gizmo_drag = None;
             self.viewport_press = None;
         }
+        ui.set_clip_rect(ui.clip_rect().intersect(self.viewport));
         self.viewport_overlay(ui);
         self.draw_component_handle(ui);
         let hovered = self.gizmo_drag.as_ref().map(|d| d.axis).or_else(|| {
@@ -547,6 +625,32 @@ impl Editor {
                 .filter(|p| self.viewport.contains(*p))
                 .and_then(|p| self.handle_at(p))
         });
+        if self.tool == Tool::Rotate {
+            let painter = ui
+                .painter()
+                .with_clip_rect(self.viewport.intersect(ui.clip_rect()));
+            for axis in 0..3 {
+                let color = [
+                    egui::Color32::from_rgb(238, 96, 100),
+                    egui::Color32::from_rgb(108, 222, 137),
+                    egui::Color32::from_rgb(103, 158, 255),
+                ][axis];
+                for points in self.ring_segments(axis) {
+                    painter.line_segment(
+                        points,
+                        egui::Stroke::new(
+                            if hovered == Some(axis) {
+                                4.0_f32
+                            } else {
+                                2.5_f32
+                            },
+                            color,
+                        ),
+                    );
+                }
+            }
+            return;
+        }
         if self.tool != Tool::Select
             && let Some((center, axes)) = self.axes()
         {
@@ -596,6 +700,7 @@ impl Editor {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct Drag {
     start: egui::Pos2,
     pub(super) axis: usize,
@@ -603,6 +708,11 @@ pub(super) struct Drag {
     world: Transform,
     parent: Transform,
     checkpointed: bool,
+    start_vector: Vec3,
+    plane_rotation: bool,
+    tangent: egui::Vec2,
+    angle: f32,
+    last_angle: f32,
 }
 fn triangle(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
     let e1 = b - a;
@@ -630,6 +740,68 @@ fn triangle(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn rotated_editor() -> Editor {
+        let mut editor = Editor::new(None, None);
+        let parent = Transform {
+            position: [0.0, 0.0, 0.0],
+            rotation: Quat::from_rotation_y(0.7).to_array(),
+            scale: [1.0, 1.0, 1.0],
+        };
+        let child = Transform {
+            position: [0.0, 0.0, 0.0],
+            rotation: Quat::from_rotation_z(0.9).to_array(),
+            scale: [1.0, 1.0, 1.0],
+        };
+        let scene=SceneDocument::parse(&serde_json::to_vec(&serde_json::json!({"version":1,"entities":[{"components":{"core:transform":parent},"children":[{"components":{"core:transform":child}}]}]})).expect("JSON")).expect("scene");
+        scene.instantiate(&mut editor.world).expect("world");
+        editor.document = Some(Document::live(scene));
+        editor.document.as_mut().expect("doc").selected = vec![0, 0];
+        editor.viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        editor
+    }
+    #[test]
+    fn every_transform_tool_uses_the_objects_rotated_world_axes() {
+        let mut editor = rotated_editor();
+        let rotation = Quat::from_rotation_y(0.7) * Quat::from_rotation_z(0.9);
+        for tool in [Tool::Move, Tool::Rotate, Tool::Scale] {
+            editor.tool = tool;
+            let (_, axes) = editor.axes().expect("axes");
+            for (index, (_, direction)) in axes.iter().enumerate() {
+                assert!(direction.distance(rotation * [Vec3::X, Vec3::Y, Vec3::Z][index]) < 1e-5);
+            }
+        }
+    }
+    #[test]
+    fn rotated_move_drag_changes_position_along_the_displayed_axis() {
+        let mut editor = rotated_editor();
+        editor.tool = Tool::Move;
+        let (center, axes) = editor.axes().expect("axes");
+        let axis = 1;
+        let start = center + (axes[axis].0 - center) * 0.8;
+        editor.begin_drag(start).expect("start");
+        assert_eq!(editor.gizmo_drag.as_ref().expect("drag").axis, axis);
+        let before = Vec3::from(editor.edit_pose().expect("pose").position);
+        editor
+            .update_drag(start + (axes[axis].0 - center).normalized() * 40.0)
+            .expect("drag");
+        let movement = Vec3::from(editor.edit_pose().expect("pose").position) - before;
+        assert!(movement.length() > 0.01);
+        assert!(movement.normalize().dot(axes[axis].1) > 0.999);
+    }
+    #[test]
+    fn rotation_ring_samples_lie_in_the_plane_of_the_rotated_axis() {
+        let mut editor = rotated_editor();
+        editor.tool = Tool::Rotate;
+        let transform = editor.edit_pose().expect("pose");
+        let q = Quat::from_array(transform.rotation);
+        let origin = Vec3::from(transform.position);
+        for axis in 0..3 {
+            let normal = q * [Vec3::X, Vec3::Y, Vec3::Z][axis];
+            for point in editor.ring_world(axis).expect("ring") {
+                assert!((point - origin).dot(normal).abs() < 1e-4);
+            }
+        }
+    }
     #[test]
     fn welcome_and_returning_home_have_no_scene_viewport() {
         let mut editor = Editor::new(None, None);

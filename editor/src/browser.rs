@@ -1,5 +1,4 @@
 use super::*;
-use std::collections::BTreeSet;
 
 fn kind(name: &str) -> (&'static str, egui::Color32) {
     let (label, color) = match name
@@ -126,36 +125,62 @@ fn file_icon(ui: &egui::Ui, rect: egui::Rect, badge: &str, color: egui::Color32)
         );
     }
 }
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum BrowserTab {
+    #[default]
+    Assets,
+    Log,
+}
+
 impl Editor {
+    pub(super) fn reference_allowed(&self, namespace: &str) -> bool {
+        let owner = self
+            .document
+            .as_ref()
+            .and_then(|doc| {
+                let path = engine::project::portable_path(&doc.path);
+                self.mod_roots
+                    .iter()
+                    .filter(|(_, root)| path.starts_with(engine::project::portable_path(root)))
+                    .max_by_key(|(_, root)| root.components().count())
+                    .map(|(id, _)| id)
+            })
+            .or_else(|| self.mod_roots.get(self.active_mod).map(|(id, _)| id));
+        owner.is_some_and(|id| {
+            id == namespace
+                || self
+                    .mod_dependencies
+                    .get(id)
+                    .is_some_and(|deps| deps.iter().any(|dep| dep == namespace))
+        })
+    }
+
     pub(super) fn browser_ui(&mut self, ui: &mut egui::Ui) {
         if self.has_dialog() {
             ui.disable();
         }
+        ui.set_min_height(ui.available_height());
         ui.horizontal(|ui| {
-            for (index, label) in ["Project", "Assets", "Scripts", "Build Log"]
-                .iter()
-                .enumerate()
-            {
-                if ui
-                    .selectable_value(&mut self.browser_tab, index, *label)
-                    .clicked()
-                {
-                    self.browser_path.clear();
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.browser_tab != 3 {
+            ui.selectable_value(&mut self.browser_tab, BrowserTab::Assets, "Assets");
+            ui.selectable_value(&mut self.browser_tab, BrowserTab::Log, "Log");
+            if self.browser_tab == BrowserTab::Assets {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.asset_search)
                             .hint_text("Search files")
                             .desired_width(190.0),
                     );
-                }
-            });
+                });
+            } else if ui.small_button("Clear").clicked() {
+                self.logs.clear();
+            }
         });
+        ui.add_space(4.0);
         ui.separator();
-        if self.browser_tab == 3 {
+        if self.browser_tab == BrowserTab::Log {
             egui::ScrollArea::vertical()
+                .id_salt("editor_log")
+                .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     for line in &self.logs {
@@ -171,6 +196,7 @@ impl Editor {
                 |ui| {
                     egui::ScrollArea::vertical()
                         .id_salt("mod_browser")
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
                             for (index, (id, _)) in self.mod_roots.iter().enumerate() {
                                 if ui
@@ -199,8 +225,32 @@ impl Editor {
                         let result = self.edit_mod();
                         self.report(result);
                     }
-                    if self.browser_tab == 2 && ui.small_button("New Script").clicked() {
-                        let result = self.new_script();
+                    ui.menu_button("Create", |ui| {
+                        if ui.button("Folder").clicked() {
+                            self.begin_asset_action(
+                                &active,
+                                &self.browser_path.clone(),
+                                super::asset_actions::AssetOperation::Folder,
+                            );
+                            ui.close_menu();
+                        }
+                        if ui.button("Script").clicked() {
+                            let result = self.new_script();
+                            self.report(result);
+                            ui.close_menu();
+                        }
+                        if ui.button("Scene").clicked() {
+                            let result = self.action(Action::NewScene);
+                            self.report(result);
+                            ui.close_menu();
+                        }
+                    });
+                    if ui
+                        .small_button("Refresh")
+                        .on_hover_text("Refresh files and component types")
+                        .clicked()
+                    {
+                        let result = self.refresh_resources();
                         self.report(result);
                     }
                     if ui.small_button(&active).clicked() {
@@ -211,7 +261,7 @@ impl Editor {
                         .browser_path
                         .clone()
                         .split('/')
-                        .filter(|part| !part.is_empty())
+                        .filter(|v| !v.is_empty())
                     {
                         ui.label("/");
                         if !path.is_empty() {
@@ -228,94 +278,49 @@ impl Editor {
                 } else {
                     format!("{}/", self.browser_path)
                 };
-                let mut folders = BTreeSet::new();
-                let mut files = Vec::new();
-                for resource in &self.resources {
-                    if resource.mod_id != active
-                        || (self.browser_tab == 0 && !resource.scene)
-                        || (self.browser_tab == 1 && (resource.scene || resource.source))
-                        || (self.browser_tab == 2 && !resource.source)
-                    {
-                        continue;
-                    }
-                    let relative = resource
-                        .uri
-                        .split_once("://")
-                        .map(|(_, path)| path)
-                        .unwrap_or("");
-                    if !self.asset_search.is_empty() {
-                        if relative
-                            .to_lowercase()
-                            .contains(&self.asset_search.to_lowercase())
-                        {
-                            files.push((
-                                relative.to_owned(),
-                                resource.uri.clone(),
-                                resource.path.clone(),
-                                resource.scene,
-                            ));
-                        }
-                    } else if let Some(tail) = relative.strip_prefix(&prefix) {
-                        if let Some((folder, _)) = tail.split_once('/') {
-                            folders.insert(folder.to_owned());
+                let query = self.asset_search.to_lowercase();
+                let items: Vec<_> = self
+                    .resources
+                    .iter()
+                    .filter(|r| r.mod_id == active)
+                    .filter_map(|r| {
+                        let name = if query.is_empty() {
+                            let tail = r.relative.strip_prefix(&prefix)?;
+                            if tail.contains('/') {
+                                return None;
+                            }
+                            tail.to_owned()
                         } else {
-                            files.push((
-                                tail.to_owned(),
-                                resource.uri.clone(),
-                                resource.path.clone(),
-                                resource.scene,
-                            ));
-                        }
-                    }
-                }
-                if folders.is_empty() && files.is_empty() {
-                    ui.add(
-                        egui::Label::new(if self.browser_tab == 0 {
-                            "No scenes here. Use File > New Scene to create one."
-                        } else {
-                            "No matching assets in this folder."
-                        })
-                        .wrap(),
-                    );
-                }
+                            if !r.relative.to_lowercase().contains(&query) {
+                                return None;
+                            }
+                            r.relative.clone()
+                        };
+                        Some((
+                            name,
+                            r.relative.clone(),
+                            r.path.clone(),
+                            r.uri.clone(),
+                            r.directory,
+                            r.scene,
+                        ))
+                    })
+                    .collect();
                 egui::ScrollArea::vertical()
                     .id_salt("folder_contents")
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        if items.is_empty() {
+                            ui.weak(
+                                "No matching files. Use Create to add a folder, script, or scene.",
+                            );
+                        }
                         ui.horizontal_wrapped(|ui| {
-                            for folder in folders {
-                                let (rect, response) = ui.allocate_exact_size(
-                                    egui::vec2(120.0, 75.0),
-                                    egui::Sense::click(),
-                                );
-                                if response.hovered() {
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        4.0,
-                                        egui::Color32::from_rgb(44, 51, 64),
-                                    );
-                                }
-                                folder_icon(
-                                    ui,
-                                    egui::Rect::from_min_size(rect.min, egui::vec2(120.0, 43.0)),
-                                );
-                                ui.painter().text(
-                                    rect.center_bottom() - egui::vec2(0.0, 12.0),
-                                    egui::Align2::CENTER_CENTER,
-                                    &folder,
-                                    egui::FontId::proportional(12.0),
-                                    ui.visuals().text_color(),
-                                );
-                                if response.double_clicked() {
-                                    self.browser_path = format!("{prefix}{folder}");
-                                }
-                            }
-                            for (name, uri, path, scene) in files {
-                                let (badge, color) = kind(&name);
+                            for (name, relative, path, uri, directory, scene) in items {
                                 let (rect, response) = ui.allocate_exact_size(
                                     egui::vec2(120.0, 75.0),
                                     egui::Sense::click_and_drag(),
                                 );
-                                let response = response.on_hover_text(&uri);
                                 if response.hovered() {
                                     ui.painter().rect_filled(
                                         rect,
@@ -323,44 +328,95 @@ impl Editor {
                                         egui::Color32::from_rgb(44, 51, 64),
                                     );
                                 }
-                                file_icon(
-                                    ui,
-                                    egui::Rect::from_min_size(rect.min, egui::vec2(120.0, 48.0)),
-                                    badge,
-                                    color,
-                                );
+                                if directory {
+                                    folder_icon(
+                                        ui,
+                                        egui::Rect::from_min_size(
+                                            rect.min,
+                                            egui::vec2(120.0, 43.0),
+                                        ),
+                                    );
+                                } else {
+                                    let (badge, color) = kind(&name);
+                                    file_icon(
+                                        ui,
+                                        egui::Rect::from_min_size(
+                                            rect.min,
+                                            egui::vec2(120.0, 48.0),
+                                        ),
+                                        badge,
+                                        color,
+                                    );
+                                }
                                 tile_label(ui, rect, name.rsplit('/').next().unwrap_or(&name));
-                                response.dnd_set_drag_payload(uri.clone());
+                                let response = response.on_hover_text(if uri.is_empty() {
+                                    display_path(&path)
+                                } else {
+                                    uri.clone()
+                                });
+                                if !directory && !uri.is_empty() {
+                                    response.dnd_set_drag_payload(uri.clone());
+                                }
                                 response.context_menu(|ui| {
-                                    if ui.button("Copy VFS path").clicked() {
+                                    for (label, operation) in [
+                                        ("Rename…", super::asset_actions::AssetOperation::Rename),
+                                        ("Move…", super::asset_actions::AssetOperation::Move),
+                                        ("Delete…", super::asset_actions::AssetOperation::Delete),
+                                    ] {
+                                        if ui
+                                            .add_enabled(
+                                                self.live.is_none() && self.job.is_none(),
+                                                egui::Button::new(label),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.begin_asset_action(&active, &relative, operation);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                    if !uri.is_empty() && ui.button("Copy VFS path").clicked() {
                                         ui.ctx().copy_text(uri.clone());
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("Copy file path").clicked() {
+                                        ui.ctx().copy_text(display_path(&path));
                                         ui.close_menu();
                                     }
                                 });
                                 if response.double_clicked() {
-                                    let result = if scene {
-                                        self.request_scene(&path)
-                                    } else if self.browser_tab == 2
-                                        || matches!(
-                                            path.extension().and_then(|e| e.to_str()),
-                                            Some(
-                                                "json"
-                                                    | "txt"
-                                                    | "wgsl"
-                                                    | "glsl"
-                                                    | "toml"
-                                                    | "md"
-                                                    | "ts"
-                                                    | "js"
-                                            )
-                                        )
-                                    {
-                                        self.open_script(&path)
+                                    if directory {
+                                        self.browser_path = relative;
                                     } else {
-                                        self.status = format!("Selected {}", display_path(&path));
-                                        Ok(())
-                                    };
-                                    self.report(result);
+                                        let result = if scene {
+                                            self.request_scene(&path)
+                                        } else {
+                                            if matches!(
+                                                path.extension().and_then(|v| v.to_str()),
+                                                Some(
+                                                    "ts" | "js"
+                                                        | "tsx"
+                                                        | "jsx"
+                                                        | "mts"
+                                                        | "cts"
+                                                        | "mjs"
+                                                        | "cjs"
+                                                        | "json"
+                                                        | "toml"
+                                                        | "wgsl"
+                                                        | "glsl"
+                                                        | "txt"
+                                                        | "md"
+                                                )
+                                            ) {
+                                                self.open_script(&path)
+                                            } else {
+                                                self.status =
+                                                    format!("Selected {}", display_path(&path));
+                                                Ok(())
+                                            }
+                                        };
+                                        self.report(result);
+                                    }
                                 }
                             }
                         });
@@ -368,56 +424,64 @@ impl Editor {
             });
         });
     }
-}
 
-impl Editor {
-    pub(super) fn collect_sources(&mut self, root: &Path, id: &str) -> anyhow::Result<()> {
-        fn visit(root: &Path, at: &Path, out: &mut Vec<Resource>, id: &str) -> anyhow::Result<()> {
+    pub(super) fn collect_mod_files(
+        &mut self,
+        root: &Path,
+        manifest: &engine::mods::ModManifest,
+    ) -> anyhow::Result<()> {
+        fn visit(
+            root: &Path,
+            at: &Path,
+            manifest: &engine::mods::ModManifest,
+            out: &mut Vec<Resource>,
+        ) -> anyhow::Result<()> {
             for entry in std::fs::read_dir(at)? {
                 let entry = entry?;
                 let kind = entry.file_type()?;
                 let path = entry.path();
-                if kind.is_symlink() {
-                    continue;
-                }
-                if kind.is_dir() {
-                    if ![
-                        "assets",
-                        "scenes",
-                        "node_modules",
+                if kind.is_symlink()
+                    || [
                         ".git",
+                        ".whatever",
+                        "node_modules",
                         "logs",
-                        "types",
                         "target",
+                        "dist",
+                        "types",
+                        ".gitkeep",
+                        ".gitignore",
                     ]
                     .contains(&entry.file_name().to_string_lossy().as_ref())
-                    {
-                        visit(root, &path, out, id)?;
-                    }
-                } else if path.extension().is_some_and(|s| {
-                    ["ts", "js", "tsx", "jsx", "json"]
-                        .iter()
-                        .any(|e| s.eq_ignore_ascii_case(e))
-                }) {
-                    let relative = path
-                        .strip_prefix(root)?
-                        .to_string_lossy()
-                        .replace('\\', "/");
-                    out.push(Resource {
-                        uri: format!("{id}://{relative}"),
-                        path,
-                        scene: false,
-                        source: true,
-                        mod_id: id.into(),
-                    });
+                {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(root)?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let extension = path.extension().and_then(|v| v.to_str()).unwrap_or("");
+                out.push(Resource {
+                    uri: engine::project::resource_uri(manifest, &relative).unwrap_or_default(),
+                    path: path.clone(),
+                    scene: extension == "wscene",
+                    source: matches!(
+                        extension,
+                        "ts" | "js" | "tsx" | "jsx" | "mts" | "cts" | "mjs" | "cjs"
+                    ),
+                    mod_id: manifest.meta.id.clone(),
+                    relative,
+                    directory: kind.is_dir(),
+                });
+                if kind.is_dir() {
+                    visit(root, &path, manifest, out)?;
                 }
             }
             Ok(())
         }
-        visit(root, root, &mut self.resources, id)
+        visit(root, root, manifest, &mut self.resources)
     }
 }
-
 fn tile_label(ui: &egui::Ui, rect: egui::Rect, name: &str) {
     let color = ui.visuals().text_color();
     let mut job = egui::text::LayoutJob::simple_singleline(
@@ -438,6 +502,107 @@ fn tile_label(ui: &egui::Ui, rect: egui::Rect, name: &str) {
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+    #[test]
+    fn browser_splitter_resizes_in_the_full_workspace_for_both_tabs() {
+        let mut editor = Editor::new(None, None);
+        editor.project = Some(Project {
+            version: 1,
+            name: "Layout test".into(),
+            id: "layout_test".into(),
+            mods: vec![],
+            build: Default::default(),
+            path: PathBuf::from("layout-test/whatever.wproject"),
+        });
+        let ctx = editor.ctx.clone();
+        let frame = |editor: &mut Editor, events| {
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| editor.ui(ctx),
+            );
+        };
+        for tab in [BrowserTab::Assets, BrowserTab::Log] {
+            editor.browser_tab = tab;
+            frame(&mut editor, vec![]);
+            let before = editor.viewport.bottom();
+            let start = egui::pos2(600.0, before + 1.0);
+            let end = start - egui::vec2(0.0, 100.0);
+            frame(&mut editor, vec![egui::Event::PointerMoved(start)]);
+            frame(
+                &mut editor,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }],
+            );
+            frame(&mut editor, vec![egui::Event::PointerMoved(end)]);
+            frame(
+                &mut editor,
+                vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            frame(&mut editor, vec![]);
+            assert!(
+                editor.viewport.bottom() < before - 80.0,
+                "browser splitter did not move: {before} -> {}",
+                editor.viewport.bottom()
+            );
+        }
+    }
+    #[test]
+    fn switching_assets_and_empty_or_populated_log_preserves_panel_height() {
+        let mut editor = Editor::new(None, None);
+        let ctx = editor.ctx.clone();
+        let mut sizes = Vec::new();
+        for tab in [
+            BrowserTab::Assets,
+            BrowserTab::Log,
+            BrowserTab::Assets,
+            BrowserTab::Log,
+            BrowserTab::Assets,
+        ] {
+            editor.browser_tab = tab;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 700.0),
+                    )),
+                    ..Default::default()
+                },
+                |ctx| {
+                    let response = egui::TopBottomPanel::bottom("test_browser")
+                        .resizable(true)
+                        .default_height(280.0)
+                        .min_height(130.0)
+                        .show(ctx, |ui| editor.browser_ui(ui));
+                    sizes.push(response.response.rect.height());
+                    egui::CentralPanel::default().show(ctx, |_| {});
+                },
+            );
+            if tab == BrowserTab::Log {
+                editor.logs = vec!["Log line".into(); 40];
+            }
+        }
+        for height in sizes {
+            assert!(
+                (height - 280.0).abs() < 1.0,
+                "panel height changed to {height}"
+            );
+        }
+    }
     #[test]
     fn tile_captions_do_not_advance_wrapped_rows() {
         let ctx = egui::Context::default();

@@ -71,7 +71,7 @@ fn folder_mounts_preserve_legacy_assets_and_validate_scene_files() {
         &crate::development_root().join("engine/resources/core"),
     )
     .expect("project");
-    let root = fixture.0.join("game/mods/sample");
+    let root = fixture.0.join("game/mods/core");
     std::fs::write(root.join("assets/original.txt"), "asset").expect("asset");
     std::fs::create_dir(root.join("data")).expect("data");
     std::fs::write(root.join("data/value.json"), "{}").expect("data");
@@ -80,16 +80,16 @@ fn folder_mounts_preserve_legacy_assets_and_validate_scene_files() {
     std::fs::write(root.join("mod.toml"), manifest).expect("mount");
     let (_, vfs) = project.registry(RuntimeMode::Server).expect("registry");
     for path in [
-        "sample://original.txt",
-        "sample://scenes/main.wscene",
-        "sample://data/value.json",
+        "core://original.txt",
+        "core://scenes/main.wscene",
+        "core://data/value.json",
     ] {
         assert!(vfs.exists(&VfsPath::parse(path).expect("path")), "{path}");
     }
-    let listed = vfs.list("sample", "").expect("list");
+    let listed = vfs.list("core", "").expect("list");
     assert!(listed.contains(&"scenes/main.wscene".to_owned()));
     assert!(listed.contains(&"data/value.json".to_owned()));
-    assert!(!vfs.exists(&VfsPath::parse("sample://scenes/../mod.toml").expect("path")));
+    assert!(!vfs.exists(&VfsPath::parse("core://scenes/../mod.toml").expect("path")));
     std::fs::write(
         root.join("scenes/bad.wscene"),
         "{\"version\":2,\"entities\":[]}",
@@ -116,14 +116,14 @@ fn build_exclusions_preserve_development_and_reject_broken_dependencies() {
     project.add_mod(&tools).expect("add tools");
     project.build.exclude_mods = vec!["dev_tools".into()];
     let built = project.for_build().expect("filtered build");
-    assert_eq!(project.mods.len(), 3);
-    assert_eq!(built.mods.len(), 2);
+    assert_eq!(project.mods.len(), 2);
+    assert_eq!(built.mods.len(), 1);
     assert!(built.build.exclude_mods.is_empty());
     project.build.exclude_mods = vec!["core".into()];
     assert!(project.for_build().is_err());
     project.build.exclude_mods = vec!["unknown".into()];
     assert!(project.for_build().is_err());
-    let path = fixture.0.join("game/mods/sample/mod.toml");
+    let path = fixture.0.join("game/mods/core/mod.toml");
     let mut manifest: toml::Value =
         toml::from_str(&std::fs::read_to_string(&path).expect("manifest")).expect("parse");
     manifest["dependencies"]
@@ -136,7 +136,7 @@ fn build_exclusions_preserve_development_and_reject_broken_dependencies() {
 }
 
 #[test]
-fn project_identity_overrides_core_metadata_and_startup_respects_mod_sides() {
+fn project_identity_mod_sides_and_startup_dependencies_are_explicit() {
     let fixture = Fixture::new();
     let mut project = create_project(
         &fixture.0.join("game"),
@@ -145,28 +145,26 @@ fn project_identity_overrides_core_metadata_and_startup_respects_mod_sides() {
         &crate::development_root().join("engine/resources/core"),
     )
     .expect("project");
-    let sample = fixture.0.join("game/mods/sample/mod.toml");
-    let manifest = std::fs::read_to_string(&sample).expect("manifest");
+    let extra = create_mod(
+        &fixture.0.join("client_mod"),
+        &ModOptions::new("client_mod", "Client mod"),
+    )
+    .expect("mod");
+    project.add_mod(&extra).expect("add");
+    let manifest = std::fs::read_to_string(extra.join("mod.toml")).expect("manifest");
     std::fs::write(
-        &sample,
+        extra.join("mod.toml"),
         manifest.replace("[mod]", "[mod]\nsides = ['client']"),
     )
     .expect("sides");
-    let core = fixture.0.join("game/mods/core/mod.toml");
-    let manifest = std::fs::read_to_string(&core).expect("core");
-    std::fs::write(
-        &core,
-        format!("initial_scene = 'sample://main'\n{manifest}"),
-    )
-    .expect("startup");
     project
         .validate()
-        .expect("client-only startup does not break server");
+        .expect("unused client mod is optional on servers");
     std::fs::write(
         fixture.0.join("game/mods/core/meta.toml"),
-        "[game]\nid='stale_game'\nname='Stale game name'\ntick_rate=60\n",
+        "[game]\nid='stale_game'\nname='Stale name'\ntick_rate=60\n",
     )
-    .expect("stale metadata");
+    .expect("metadata");
     let options = crate::runtime::LaunchOptions {
         project: Some(project.path.clone()),
         mode: Some(RuntimeMode::Server),
@@ -184,11 +182,30 @@ fn project_identity_overrides_core_metadata_and_startup_respects_mod_sides() {
     .expect("load");
     assert_eq!(loaded.meta.game.id, "sample");
     assert_eq!(loaded.meta.game.name, "Sample");
-    assert!(loaded.registry.get("sample").is_none());
-    assert!(loaded.registry.startup_scene().expect("startup").is_none());
-    project.build.exclude_mods = vec!["sample".into()];
+    assert!(loaded.registry.get("client_mod").is_none());
+    assert_eq!(
+        loaded.registry.startup_scene().expect("startup"),
+        Some("core://main")
+    );
+    project.build.exclude_mods = vec!["client_mod".into()];
+    project
+        .for_build()
+        .expect("independent client mod may be excluded");
+    let path = fixture.0.join("game/mods/core/mod.toml");
+    let mut manifest: toml::Value =
+        toml::from_str(&std::fs::read_to_string(&path).expect("manifest")).expect("parse");
+    manifest["initial_scene"] = toml::Value::String("client_mod://main".into());
+    manifest["dependencies"]
+        .as_table_mut()
+        .expect("dependencies")
+        .insert("client_mod".into(), toml::Value::String("*".into()));
+    std::fs::write(path, toml::to_string(&manifest).expect("serialize")).expect("write");
     assert!(
         project.for_build().is_err(),
-        "cannot exclude the startup scene's mod"
+        "startup dependency cannot be excluded"
+    );
+    assert!(
+        project.validate().is_err(),
+        "a shared mod cannot require a client-only dependency on servers"
     );
 }

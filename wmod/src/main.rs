@@ -14,6 +14,7 @@ Usage:\n\
   wmod mod create <directory> --id <id> [--name <name>] [--project <project>] [--no-scripts]\n\
   wmod project create <directory> --id <id> [--name <name>] [--core <core-mod>]\n\
   wmod project check <project-or-directory>\n\
+  wmod project bind-sdk <project-or-directory>\n\
   wmod project add <project-or-directory> <mod-directory>\n\
   wmod package <project-or-directory> --output <build-directory>\n\
   wmod runtime-kit --player <binary> --host <binary> --launcher <binary> --source <checkout> --output <new-directory>\n";
@@ -125,6 +126,18 @@ fn main() -> anyhow::Result<()> {
             let project =
                 project::create_project(Path::new(args.at(0, "directory")?), id, name, &core)?;
             tracing::info!(path=%whatever_engine::project::display_path(&project.path), "created project");
+        }
+        ("project", "bind-sdk") => {
+            let args = Arguments::parse(tail, &[])?;
+            args.count(1)?;
+            let project = Project::open(Path::new(args.at(0, "project")?))?;
+            project::bind_sdk(project.path.parent().context("project directory")?)?;
+            for root in project.roots()? {
+                if root.join("tsconfig.json").exists() {
+                    project::bind_sdk(&root)?;
+                }
+            }
+            tracing::info!("SDK binding updated");
         }
         ("project", "check") => {
             let args = Arguments::parse(tail, &[])?;

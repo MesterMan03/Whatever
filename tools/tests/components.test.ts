@@ -5,16 +5,21 @@ import { join } from "node:path";
 import { inspectComponents } from "../../runtime/host/components.ts";
 import { Type, toWire, fromWire, assertNetworkSchema } from "../../runtime/src/schema.ts";
 
-function inspect(source: string) {
+function inspect(source: string, owner = "fixture") {
   const root = mkdtempSync(join(tmpdir(), "whatever-components-"));
   try {
     mkdirSync(join(root, "scripts"));
     writeFileSync(join(root, "scripts/components.ts"), source);
-    return inspectComponents(root, "fixture");
+    return inspectComponents(root, owner);
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
 describe("component source metadata", () => {
+  test("the game core can export custom component classes", () => {
+    const [definition] = inspect('import { Component } from "@whatever-engine/api"; export class Player extends Component { speed = 3; }', "core");
+    expect(definition?.id).toBe("core:Player");
+    expect(definition?.fields[0]?.name).toBe("speed");
+  });
   test("extracts inherited fields and shared types without evaluating mod code", () => {
     const [definition] = inspect(`
       import { Component as C, Entity, Struct, Type as T, field as f } from "@whatever-engine/api";

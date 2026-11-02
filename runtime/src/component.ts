@@ -41,6 +41,10 @@ export abstract class Component {
     return binding.entity;
   }
   start(): void | Promise<void> {}
+  /**
+   * Called with elapsed simulation time since this instance last ticked.
+   * `Input` and `Time` are also available here and describe the latest engine tick.
+   */
   tick(deltaSeconds: number): void | Promise<void> {}
   onEnable(): void {}
   onDisable(): void {}

@@ -1,7 +1,8 @@
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 pub const HOST_PROTOCOL: u32 = 10;
 
@@ -16,6 +17,11 @@ struct HostInfo {
 
 pub fn host_command(path: &std::path::Path) -> Command {
     let mut command = Command::new(path);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
     command.env_clear();
     command.env("BUN_DEBUG_QUIET_LOGS", "1");
     // The pinned Windows JSC collector can deadlock when parallel markers stop
@@ -91,10 +97,11 @@ pub fn validate_release_host(path: &std::path::Path) -> anyhow::Result<()> {
     check_host(path, true)
 }
 fn check_host(path: &std::path::Path, release: bool) -> anyhow::Result<()> {
-    let output = host_command(path)
-        .arg("--runtime-info")
-        .output()
-        .context("check bundled mod host")?;
+    let output = host_output(
+        host_command(path).arg("--runtime-info"),
+        "check bundled mod host",
+        Duration::from_secs(10),
+    )?;
     if !output.status.success() {
         bail!(
             "Bundled mod host self check failed: {} {}",
@@ -146,12 +153,11 @@ pub fn inspect_components(
 ) -> anyhow::Result<Vec<crate::ecs::ComponentDefinition>> {
     let mut command = host_command(path);
     command.args(["--component-metadata"]).arg(root).arg(owner);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    let output = command.output().context("inspect mod component sources")?;
+    let output = host_output(
+        &mut command,
+        &format!("inspect component sources for {owner}"),
+        Duration::from_secs(30),
+    )?;
     if !output.status.success() {
         anyhow::bail!(
             "Component inspection for {owner} failed: {} {}",
@@ -165,6 +171,62 @@ pub fn inspect_components(
         definition.validate(owner)?;
     }
     Ok(definitions)
+}
+
+/// Drain both pipes while waiting, and reap a stalled host instead of waiting indefinitely.
+fn host_output(
+    command: &mut Command,
+    operation: &str,
+    timeout: Duration,
+) -> anyhow::Result<Output> {
+    use std::io::Read;
+
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| operation.to_owned())?;
+    let stdout = child.stdout.take().context("host stdout pipe")?;
+    let stderr = child.stderr.take().context("host stderr pipe")?;
+    std::thread::scope(|scope| {
+        let read = |mut pipe: Box<dyn Read + Send>| -> std::io::Result<Vec<u8>> {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        };
+        let stdout = scope.spawn(move || read(Box::new(stdout)));
+        let stderr = scope.spawn(move || read(Box::new(stderr)));
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if started.elapsed() >= timeout => {
+                    break Err(anyhow::anyhow!(
+                        "{operation} timed out after {:.0} seconds",
+                        timeout.as_secs_f64()
+                    ));
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(error) => break Err(anyhow::Error::new(error).context(operation.to_owned())),
+            }
+        };
+        if status.is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let stdout = stdout
+            .join()
+            .map_err(|_| anyhow::anyhow!("host stdout reader stopped"))??;
+        let stderr = stderr
+            .join()
+            .map_err(|_| anyhow::anyhow!("host stderr reader stopped"))??;
+        Ok(Output {
+            status: status?,
+            stdout,
+            stderr,
+        })
+    })
 }
 
 pub fn load_component_types(
@@ -191,6 +253,70 @@ pub fn load_component_types(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "subprocess fixture for host pipe and timeout tests"]
+    fn host_output_fixture() {
+        use std::io::Write;
+        if std::env::var("WHATEVER_HOST_OUTPUT_FIXTURE").as_deref() == Ok("hang") {
+            std::thread::sleep(Duration::from_secs(60));
+        } else {
+            std::io::stdout()
+                .write_all(&vec![b'o'; 128 * 1024])
+                .expect("stdout");
+            std::io::stderr()
+                .write_all(&vec![b'e'; 128 * 1024])
+                .expect("stderr");
+        }
+    }
+
+    fn fixture_command(mode: &str) -> Command {
+        let mut command = Command::new(std::env::current_exe().expect("test executable"));
+        command.args([
+            "--ignored",
+            "--exact",
+            "script::runtime::tests::host_output_fixture",
+            "--nocapture",
+        ]);
+        command.env("WHATEVER_HOST_OUTPUT_FIXTURE", mode);
+        command
+    }
+
+    #[test]
+    fn host_output_drains_large_stdout_and_stderr_without_blocking() {
+        let output = host_output(
+            &mut fixture_command("pipes"),
+            "fixture",
+            Duration::from_secs(10),
+        )
+        .expect("capture both pipes");
+        assert!(output.status.success());
+        assert!(
+            output
+                .stdout
+                .windows(128 * 1024)
+                .any(|bytes| bytes.iter().all(|byte| *byte == b'o'))
+        );
+        assert!(
+            output
+                .stderr
+                .windows(128 * 1024)
+                .any(|bytes| bytes.iter().all(|byte| *byte == b'e'))
+        );
+    }
+
+    #[test]
+    fn host_output_terminates_and_reaps_a_stalled_process() {
+        let started = Instant::now();
+        let error = host_output(
+            &mut fixture_command("hang"),
+            "fixture",
+            Duration::from_millis(200),
+        )
+        .expect_err("host must time out");
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 
     fn info(protocol: u32) -> HostInfo {
         HostInfo {

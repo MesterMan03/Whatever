@@ -83,6 +83,7 @@ impl Editor {
             Action::Home => {
                 if self.confirm_leave()? {
                     self.stop();
+                    self.component_reload.reset();
                     self.project = None;
                     self.document = None;
                     self.inspector_entity = None;
@@ -206,6 +207,7 @@ impl Editor {
             }
             Action::Save => self.save_scene()?,
             Action::SaveAs => {
+                self.component_reload.ensure_ready()?;
                 let directory = self.scene_directory()?;
                 std::fs::create_dir_all(&directory)?;
                 if let Some(path) = self
@@ -216,6 +218,18 @@ impl Editor {
                 {
                     self.scene_owner(&path)?;
                     self.commit_inspector()?;
+                    let doc = self.document.as_ref().context("open a scene")?;
+                    let mut world = World::new();
+                    world.component_types = self.world.component_types.clone();
+                    if let Some(project) = &self.project {
+                        project.validate_scene(
+                            &path,
+                            &doc.scene,
+                            &self.vfs,
+                            &world.component_types,
+                        )?;
+                    }
+                    doc.scene.instantiate(&mut world)?;
                     let doc = self.document.as_mut().context("open a scene")?;
                     let old = doc.path.clone();
                     doc.path = path;
@@ -278,11 +292,28 @@ impl Editor {
         Ok(())
     }
     pub(super) fn set_project(&mut self, project: Project) -> anyhow::Result<()> {
+        self.preview_camera = None;
+        self.component_reload.reset();
+        if project.path.parent().is_some_and(|root| {
+            root.join(".whatever").exists() || root.join("tsconfig.json").exists()
+        }) {
+            engine::project::bind_sdk(project.path.parent().context("project directory")?)?;
+        }
+        for root in project.roots()? {
+            if root.join("tsconfig.json").exists() {
+                engine::project::bind_sdk(&root)?;
+            }
+        }
         self.preferences.remember(&project.path);
         self.component_handle = None;
         self.mesh_cache.clear();
         self.browser_path.clear();
-        let (_, vfs) = project.registry(engine::runtime::RuntimeMode::Client)?;
+        let (registry, vfs) = project.registry(engine::runtime::RuntimeMode::Client)?;
+        let initial_scene = registry
+            .get("core")
+            .and_then(|manifest| manifest.initial_scene.as_deref())
+            .and_then(|path| engine::scene::scene_path(path).ok())
+            .map(|path| path.as_string());
         self.mod_roots = project
             .manifests()?
             .into_iter()
@@ -312,12 +343,15 @@ impl Editor {
         let first = self
             .resources
             .iter()
-            .find(|resource| {
-                resource.scene
-                    && self
-                        .mod_roots
-                        .get(self.active_mod)
-                        .is_some_and(|(id, _)| *id == resource.mod_id)
+            .find(|resource| resource.scene && initial_scene.as_deref() == Some(&resource.uri))
+            .or_else(|| {
+                self.resources.iter().find(|resource| {
+                    resource.scene
+                        && self
+                            .mod_roots
+                            .get(self.active_mod)
+                            .is_some_and(|(id, _)| *id == resource.mod_id)
+                })
             })
             .map(|resource| resource.path.clone());
         if let Some(path) = first {
@@ -326,88 +360,36 @@ impl Editor {
         Ok(())
     }
     pub(super) fn change_project(&mut self, project: Project) -> anyhow::Result<()> {
+        ensure!(
+            self.job.is_none(),
+            "Wait for the background operation before changing projects"
+        );
         if self.confirm_leave()? {
             self.stop();
             self.set_project(project)?;
         }
         Ok(())
     }
-    pub(super) fn refresh_component_types(&mut self) -> anyhow::Result<()> {
-        let Some(project) = &self.project else {
-            return Ok(());
-        };
-        let manifests = project.manifests()?;
-        let scripted: Vec<_> = manifests
-            .iter()
-            .filter(|(_, manifest)| manifest.script.is_some())
-            .collect();
-        let mut world = World::new();
-        if !scripted.is_empty() {
-            let host = engine::script::find_host()?;
-            for (root, manifest) in scripted {
-                for definition in
-                    engine::script::inspect_components(&host, root, &manifest.meta.id)?
-                {
-                    world.register_component(&manifest.meta.id, definition)?;
-                }
-            }
-        }
-        self.world.component_types = world.component_types;
-        self.preview_dirty = true;
-        Ok(())
-    }
     pub(super) fn refresh_resources(&mut self) -> anyhow::Result<()> {
         self.refresh_component_types()?;
+        self.refresh_file_inventory()
+    }
+    pub(super) fn refresh_file_inventory(&mut self) -> anyhow::Result<()> {
         self.resources.clear();
-        for (root, manifest) in self
+        self.mod_dependencies.clear();
+        let manifests = self
             .project
             .as_ref()
             .context("open a project")?
-            .manifests()?
-        {
-            let scenes = engine::sandbox::resolve_contained(
-                &root,
-                manifest
-                    .mounts
-                    .get("scenes")
-                    .map(String::as_str)
-                    .unwrap_or("scenes"),
-            )?;
-            for path in engine::vfs::DiskLayer::new(&manifest.meta.id, &scenes)
-                .list(&manifest.meta.id, "")?
-            {
-                if path.ends_with(".wscene") {
-                    self.resources.push(Resource {
-                        uri: format!("{}://scenes/{path}", manifest.meta.id),
-                        path: scenes.join(&path),
-                        scene: true,
-                        source: false,
-                        mod_id: manifest.meta.id.clone(),
-                    });
-                }
-            }
-            for path in self.vfs.list(&manifest.meta.id, "")? {
-                if path.starts_with("scenes/") {
-                    continue;
-                }
-                let asset_root = if manifest.assets.root == "." {
-                    root.clone()
-                } else {
-                    engine::sandbox::resolve_contained(&root, &manifest.assets.root)?
-                };
-                self.resources.push(Resource {
-                    uri: format!("{}://{path}", manifest.meta.id),
-                    path: asset_root.join(&path),
-                    scene: false,
-                    source: false,
-                    mod_id: manifest.meta.id.clone(),
-                });
-            }
+            .manifests()?;
+        for (root, manifest) in manifests {
+            self.mod_dependencies.insert(
+                manifest.meta.id.clone(),
+                manifest.dependencies.keys().cloned().collect(),
+            );
+            self.collect_mod_files(&root, &manifest)?;
         }
-        for (id, root) in self.mod_roots.clone() {
-            self.collect_sources(&root, &id)?;
-        }
-        self.resources.sort_by(|a, b| a.uri.cmp(&b.uri));
+        self.resources.sort_by(|a, b| a.relative.cmp(&b.relative));
         Ok(())
     }
     pub(super) fn scene_directory(&self) -> anyhow::Result<PathBuf> {
@@ -458,6 +440,10 @@ impl Editor {
         anyhow::bail!("choose a scene inside a mod's scenes folder in this project")
     }
     pub(super) fn request_scene(&mut self, path: &Path) -> anyhow::Result<()> {
+        ensure!(
+            self.job.is_none(),
+            "Wait for the background operation before opening a scene"
+        );
         ensure!(self.live.is_none(), "Stop Play before opening a scene file");
         self.scene_owner(path)?;
         if self.confirm_leave()? {
@@ -466,6 +452,7 @@ impl Editor {
         Ok(())
     }
     pub(super) fn open_scene(&mut self, path: &Path) -> anyhow::Result<()> {
+        self.preview_camera = None;
         let owner = self.scene_owner(path)?;
         let doc = Document::open(path)?;
         self.document = Some(doc);
@@ -549,6 +536,9 @@ impl Editor {
             && let Err(error) = (|| -> anyhow::Result<()> {
                 candidate.validate()?;
                 let mut world = World::new();
+                if let Some(project) = &self.project {
+                    project.validate_scene(&doc.path, &candidate, &self.vfs, &component_types)?;
+                }
                 world.component_types = component_types;
                 candidate.instantiate(&mut world)?;
                 Ok(())
@@ -569,10 +559,13 @@ impl Editor {
             self.live.is_none(),
             "Play edits are temporary; stop Play before saving a scene"
         );
-        self.refresh_component_types()?;
+        self.component_reload.ensure_ready()?;
         self.commit_inspector()?;
         let mut world = World::new();
         world.component_types = self.world.component_types.clone();
+        if let (Some(project), Some(doc)) = (&self.project, &self.document) {
+            project.validate_scene(&doc.path, &doc.scene, &self.vfs, &world.component_types)?;
+        }
         self.document
             .as_ref()
             .context("open a scene")?
@@ -620,9 +613,9 @@ impl Editor {
         }
     }
     pub(super) fn start_build(&mut self) -> anyhow::Result<()> {
+        self.component_reload.ensure_ready()?;
         self.save_if_dirty()?;
         let project = self.project.clone().context("open a project")?;
-        project.validate()?;
         project.save()?;
         if self.build_destination.is_none() {
             self.build_destination = self.file_dialog("Choose game build folder").pick_folder();
@@ -635,11 +628,17 @@ impl Editor {
         self.job = Some(receiver);
         self.job_label = "Preparing game build…".into();
         self.logs.clear();
-        self.browser_tab = 3;
+        self.browser_tab = browser::BrowserTab::Log;
         std::thread::spawn(move || {
-            let result = engine::project::build_game(&project, &destination, |line| {
-                let _ = sender.send(JobEvent::Line(line));
-            })
+            let result = (|| {
+                let _ = sender.send(JobEvent::Line(
+                    "Validating project and component types…".into(),
+                ));
+                project.validate()?;
+                engine::project::build_game(&project, &destination, |line| {
+                    let _ = sender.send(JobEvent::Line(line));
+                })
+            })()
             .map_err(|error| format!("{error:#}"));
             let _ = sender.send(JobEvent::Built(result));
         });
@@ -649,6 +648,7 @@ impl Editor {
         if self.job.is_some() || self.player.is_some() {
             return Ok(());
         }
+        self.component_reload.ensure_ready()?;
         self.save_if_dirty()?;
         self.player_detached = self.ctx.input(|input| {
             input
@@ -672,16 +672,21 @@ impl Editor {
                 })
                 .unwrap_or(input.modifiers.shift)
         }) || !cfg!(windows);
-        let project = self.project.as_ref().context("open a project")?;
-        project.validate()?;
+        let project = self.project.clone().context("open a project")?;
         project.save()?;
         let (sender, receiver) = mpsc::channel();
         self.job = Some(receiver);
         self.job_label = "Preparing Play…".into();
         std::thread::spawn(move || {
-            let result = engine::project::prepare_player(|line| {
-                let _ = sender.send(JobEvent::Line(line));
-            })
+            let result = (|| {
+                let _ = sender.send(JobEvent::Line(
+                    "Validating project and component types…".into(),
+                ));
+                project.validate()?;
+                engine::project::prepare_player(|line| {
+                    let _ = sender.send(JobEvent::Line(line));
+                })
+            })()
             .map_err(|e| format!("{e:#}"));
             let _ = sender.send(JobEvent::Player(result));
         });
@@ -743,6 +748,9 @@ impl Editor {
         let canonical = path.canonicalize()?;
         if let Some(resource) = self.resources.iter().find(|resource| {
             !resource.scene
+                && !resource.directory
+                && !resource.uri.is_empty()
+                && self.reference_allowed(&resource.mod_id)
                 && resource
                     .path
                     .canonicalize()
@@ -750,13 +758,22 @@ impl Editor {
         }) {
             return Ok(resource.uri.clone());
         }
+        let owner = self
+            .document
+            .as_ref()
+            .and_then(|doc| self.scene_owner(&doc.path).ok())
+            .unwrap_or(self.active_mod);
         let (id, root) = self
             .mod_roots
-            .get(self.active_mod)
+            .get(owner)
             .context("choose a destination mod")?;
         let manifest: engine::mods::ModManifest =
             toml::from_str(&std::fs::read_to_string(root.join("mod.toml"))?)?;
-        let assets = engine::sandbox::resolve_contained(root, &manifest.assets.root)?;
+        let assets = if manifest.assets.root == "." {
+            root.clone()
+        } else {
+            engine::sandbox::resolve_contained(root, &manifest.assets.root)?
+        };
         std::fs::create_dir_all(&assets)?;
         let filename = path.file_name().context("asset filename")?;
         let mut destination = assets.join(filename);

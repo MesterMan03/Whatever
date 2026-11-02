@@ -1,4 +1,65 @@
 import { Component, Type, field, BuiltInComponents, Engine, Entity, EntityRef, PendingEntity, Physics, Scene, type Pending, type ComponentSnapshot } from "@whatever-engine/api";
+import { Input, Time, PressedKeys, type KeyCode } from "@whatever-engine/api";
+
+function readCurrentTick(): void {
+  const delta: number = Time.deltaSeconds;
+  const tick: number = Time.tickNumber;
+  const held: boolean = Input.isPressed("KeyW");
+  const alternative: boolean = Input.isAnyPressed("KeyW", "ArrowUp");
+  const chord: boolean = Input.areAllPressed("ControlLeft", "KeyS");
+  const modifiers: boolean[] = [Input.isShiftPressed(), Input.isControlPressed(), Input.isAltPressed(), Input.isSuperPressed()];
+  const snapshot: PressedKeys = Input.keysPressed;
+  const mouse: readonly [number, number] = Input.mouseDelta;
+  const capture: boolean = Input.mouseCaptured;
+  // @ts-expect-error Shared input queries reject misspelled key codes.
+  Input.isPressed("ArrowUP");
+  // @ts-expect-error Timing belongs to the engine.
+  Time.deltaSeconds = 1;
+  // @ts-expect-error The tick number is read-only.
+  Time.tickNumber = 1;
+  // @ts-expect-error Held key snapshots are read-only.
+  Input.keysPressed = new PressedKeys();
+  // @ts-expect-error Capture state is read-only.
+  Input.mouseCaptured = true;
+  // @ts-expect-error Mouse data is read-only, including tuple elements.
+  Input.mouseDelta[0] = 1;
+  // @ts-expect-error Shared helpers cannot be replaced.
+  Input.isShiftPressed = () => true;
+  void [delta, tick, held, alternative, chord, modifiers, snapshot, mouse, capture];
+}
+
+export class InputReader extends Component {
+  override tick(): void { readCurrentTick(); }
+}
+
+Engine.on("tick", ({ keys_pressed }) => {
+  const snapshot: PressedKeys = keys_pressed;
+  const binding: KeyCode = "KeyW";
+  const held: boolean = keys_pressed.isPressed(binding);
+  const alternative: boolean = keys_pressed.isAnyPressed("KeyW", "ArrowUp");
+  const chord: boolean = keys_pressed.areAllPressed("ControlLeft", "KeyS");
+  const shift: boolean = keys_pressed.isShiftPressed();
+  const control: boolean = keys_pressed.isControlPressed();
+  const alt: boolean = keys_pressed.isAltPressed();
+  const superKey: boolean = keys_pressed.isSuperPressed();
+  const legacy: boolean = keys_pressed.includes("Space");
+  const codes: readonly KeyCode[] = keys_pressed.toArray();
+  const iterated: KeyCode[] = [...keys_pressed];
+  const supported: KeyCode[] = ["Digit9", "NumpadEnter", "F12", "IntlBackslash", "AudioVolumeUp"];
+  // @ts-expect-error Key names use physical codes, not character strings.
+  keys_pressed.isPressed("W");
+  // @ts-expect-error Typos are rejected in every query helper.
+  keys_pressed.isAnyPressed("KeyW", "ArrowUP");
+  // @ts-expect-error Chords also require valid physical codes.
+  keys_pressed.areAllPressed("Ctrl", "KeyS");
+  // @ts-expect-error Existing includes checks also get typed key names.
+  keys_pressed.includes("shift");
+  // @ts-expect-error Snapshots cannot be mutated as arrays.
+  keys_pressed.push("KeyW");
+  // @ts-expect-error Exposed arrays are read-only too.
+  keys_pressed.toArray().push("KeyW");
+  void [snapshot, held, alternative, chord, shift, control, alt, superKey, legacy, codes, iterated, supported];
+});
 
 const loadedScene: Promise<import("@whatever-engine/api").LoadedScene> = Scene.loadScene("fixture://main");
 void loadedScene.then(scene => {

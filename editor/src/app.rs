@@ -23,12 +23,16 @@ use winit::{
 
 #[path = "actions.rs"]
 mod actions;
+#[path = "asset_actions.rs"]
+mod asset_actions;
 #[path = "browser.rs"]
 mod browser;
 #[path = "component_fields.rs"]
 mod component_fields;
 #[path = "component_handles.rs"]
 mod component_handles;
+#[path = "component_reload.rs"]
+mod component_reload;
 #[path = "entity_picker.rs"]
 mod entity_picker;
 #[path = "hierarchy.rs"]
@@ -51,6 +55,8 @@ mod presets;
 mod ui;
 #[path = "viewport.rs"]
 mod viewport;
+#[path = "viewport_geometry.rs"]
+mod viewport_geometry;
 use menus::{Action, Menus};
 
 pub fn run() -> anyhow::Result<()> {
@@ -113,11 +119,15 @@ struct Resource {
     scene: bool,
     source: bool,
     mod_id: String,
+    relative: String,
+    directory: bool,
 }
 enum JobEvent {
     Line(String),
     Built(Result<PathBuf, String>),
     Player(Result<PathBuf, String>),
+    ModValidated(Result<(), String>),
+    AssetChanged(asset_actions::AssetAction, Result<PathBuf, String>),
 }
 struct Editor {
     live: Option<live::LiveSession>,
@@ -129,6 +139,7 @@ struct Editor {
     rename_requested: bool,
     hierarchy_focused: bool,
     component_handle: Option<component_handles::ComponentHandle>,
+    component_reload: component_reload::ComponentReload,
     snap: viewport::Snap,
     project: Option<Project>,
     document: Option<Document>,
@@ -136,6 +147,7 @@ struct Editor {
     world: World,
     resources: Vec<Resource>,
     mod_roots: Vec<(String, PathBuf)>,
+    mod_dependencies: std::collections::BTreeMap<String, Vec<String>>,
     active_mod: usize,
     inspector_entity: Option<SceneEntity>,
     inspector_error: Option<String>,
@@ -160,12 +172,14 @@ struct Editor {
     draft_id: String,
     draft_directory: Option<PathBuf>,
     asset_search: String,
-    browser_tab: usize,
+    browser_tab: browser::BrowserTab,
+    asset_action: Option<asset_actions::AssetAction>,
     browser_path: String,
     orbit: [f32; 2],
     distance: f32,
     target: Vec3,
     viewport: egui::Rect,
+    preview_camera: Option<engine::ecs::EntityId>,
     tool: viewport::Tool,
     gizmo_drag: Option<viewport::Drag>,
     viewport_press: Option<egui::Pos2>,
@@ -190,6 +204,7 @@ impl Editor {
             rename_requested: false,
             hierarchy_focused: false,
             component_handle: None,
+            component_reload: component_reload::ComponentReload::default(),
             snap: viewport::Snap::default(),
             project: None,
             document: None,
@@ -197,6 +212,7 @@ impl Editor {
             world: World::new(),
             resources: Vec::new(),
             mod_roots: Vec::new(),
+            mod_dependencies: Default::default(),
             active_mod: 0,
             inspector_entity: None,
             inspector_error: None,
@@ -221,12 +237,14 @@ impl Editor {
             draft_id: "my_game".into(),
             draft_directory: None,
             asset_search: String::new(),
-            browser_tab: 0,
+            browser_tab: browser::BrowserTab::Assets,
+            asset_action: None,
             browser_path: String::new(),
             orbit: [0.5, 0.35],
             distance: 12.0,
             target: Vec3::ZERO,
             viewport: egui::Rect::NOTHING,
+            preview_camera: None,
             tool: viewport::Tool::default(),
             gizmo_drag: None,
             viewport_press: None,
@@ -252,15 +270,24 @@ impl Editor {
         if let Err(error) = result {
             self.status = format!("{error:#}");
             self.logs.push(self.status.clone());
-            self.browser_tab = 3;
+            self.browser_tab = browser::BrowserTab::Log;
         }
     }
     fn poll_jobs(&mut self) {
-        let events = self
-            .job
-            .as_ref()
-            .map(|receiver| receiver.try_iter().collect::<Vec<_>>())
-            .unwrap_or_default();
+        let mut events = Vec::new();
+        let mut disconnected = false;
+        if let Some(receiver) = &self.job {
+            loop {
+                match receiver.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
         for event in events {
             match event {
                 JobEvent::Line(line) => {
@@ -289,11 +316,31 @@ impl Editor {
                         .and_then(|path| self.launch_player(&path));
                     self.report(result);
                 }
+                JobEvent::ModValidated(result) => {
+                    self.job = None;
+                    self.finish_mod_validation(result);
+                }
+                JobEvent::AssetChanged(action, result) => {
+                    self.job = None;
+                    self.finish_asset_action(action, result);
+                }
+            }
+        }
+        if disconnected && self.job.is_some() {
+            self.job = None;
+            let error = "Background operation stopped unexpectedly. Try the operation again.";
+            if self.mod_draft.is_some() {
+                self.finish_mod_validation(Err(error.into()));
+            } else if let Some(action) = self.asset_action.take() {
+                self.finish_asset_action(action, Err(error.into()));
+            } else {
+                self.report(Err(anyhow::anyhow!(error)));
             }
         }
     }
     fn redraw(&mut self) -> anyhow::Result<()> {
         self.poll_jobs();
+        self.poll_component_types();
         if let Some(child) = &mut self.player
             && let Some(status) = child.try_wait()?
         {
@@ -418,7 +465,7 @@ impl Editor {
                 ))
             })
         } else {
-            None
+            self.scene_camera()
         };
         let position = game_camera
             .as_ref()
@@ -439,14 +486,17 @@ impl Editor {
         let vp = viewport
             .filter(|_| !covered)
             .and_then(|[_, _, width, height]| {
-                if self.view == live::View::Play {
-                    return game_camera.as_ref().map(|(pose, camera)| {
+                if let Some((pose, camera)) = &game_camera {
+                    return Some({
                         engine::renderer::view_proj_from_entity(
                             pose,
                             camera,
                             width as f32 / height as f32,
                         )
                     });
+                }
+                if self.view == live::View::Play {
+                    return None;
                 }
                 Some(
                     Mat4::perspective_rh(
@@ -468,6 +518,9 @@ impl Editor {
         renderer.render_viewport(vp, vp.map(|_| position), Some(&egui), &self.vfs, viewport)
     }
     fn camera_position(&self) -> Vec3 {
+        if let Some((pose, _)) = self.scene_camera() {
+            return Vec3::from(pose.position);
+        }
         self.target
             + Vec3::new(
                 self.orbit[0].sin() * self.orbit[1].cos(),
@@ -541,9 +594,13 @@ impl ApplicationHandler for Editor {
         }
         match event {
             WindowEvent::Focused(true)
-                if self.project.is_some() && self.live.is_none() && !self.has_dialog() =>
+                if self.project.is_some()
+                    && self.live.is_none()
+                    && self.player.is_none()
+                    && self.job.is_none()
+                    && !self.has_dialog() =>
             {
-                let result = self.refresh_component_types();
+                let result = self.refresh_resources();
                 self.report(result);
             }
             WindowEvent::CloseRequested => {
@@ -598,6 +655,7 @@ impl Editor {
             || self.show_new_mod
             || self.show_preferences
             || self.mod_draft.is_some()
+            || self.asset_action.is_some()
     }
     pub(super) fn input_blocked(&self) -> bool {
         self.has_dialog() || self.ctx.memory(|m| m.any_popup_open())

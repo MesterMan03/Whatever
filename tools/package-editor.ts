@@ -251,7 +251,7 @@ if (process.platform === "darwin") {
 }
 writeFileSync(
   join(output, "README.txt"),
-  `Whatever Editor portable distribution\n\n${process.platform === "darwin" ? "Open Whatever Editor.app. CLI tools and support files are inside Contents/MacOS." : "Run whatever-editor" + extension + ". Keep this folder together; engine/, mods/ and sdk/ are required."}\nThe editor supplies all player, launcher and runtime files when building a game.\nNo system Bun, Rust toolchain, node_modules or source checkout is needed.\nLinux targets the build runner's glibc and uses the system graphics/display drivers.\nmacOS builds are ad hoc signed; these archives are not notarized.\n`,
+  `Whatever Editor portable distribution\n\n${process.platform === "darwin" ? "Open Whatever Editor.app. CLI tools and support files are inside Contents/MacOS." : "Run whatever-editor" + extension + ". Keep this folder together; engine/, mods/, resources/ and sdk/ are required."}\nThe editor supplies all player, launcher and runtime files when building a game.\nNo system Bun, Rust toolchain, node_modules or source checkout is needed.\nLinux targets the build runner's glibc and uses the system graphics/display drivers.\nmacOS builds are ad hoc signed; these archives are not notarized.\n`,
 );
 writeFileSync(
   join(output, "distribution.json"),
@@ -292,7 +292,7 @@ try {
   );
   run([join(installed, "whatever-editor" + extension), project, "--check"], temporary);
   writeFileSync(
-    join(project, "mods/portable_smoke/scripts/index.ts"),
+    join(project, "mods/core/scripts/index.ts"),
     'import {Engine} from "@whatever-engine/api"; Engine.on("init",()=>Engine.log("info","PORTABLE_EDITOR_SMOKE_READY"));',
   );
   const game = join(temporary, "build");

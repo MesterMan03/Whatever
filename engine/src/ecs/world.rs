@@ -307,7 +307,7 @@ impl World {
                     return false;
                 }
             }
-        } else if !type_id.starts_with("core:") && !self.allow_missing_components {
+        } else if !super::is_native_component(type_id) && !self.allow_missing_components {
             tracing::warn!(%type_id, "unregistered component rejected");
             return false;
         } else {
@@ -408,7 +408,9 @@ impl World {
                     return false;
                 }
             },
-            _ if !type_id.starts_with("core:")
+            _ if self.component_types.contains_key(type_id)
+                || self.allow_missing_components
+                || !type_id.starts_with("core:")
                 || matches!(
                     type_id,
                     "core:physics_world"

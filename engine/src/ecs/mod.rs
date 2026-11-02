@@ -6,7 +6,7 @@ mod registry;
 mod tags;
 mod world;
 pub use references::{referenced_entity, resolve_references};
-pub use registry::{ComponentDefinition, ComponentField, FieldEditor};
+pub use registry::{ComponentDefinition, ComponentField, FieldEditor, is_native_component};
 pub use tags::{MAX_ENTITY_TAGS, TagQuery, validate_tag, validate_tags};
 
 #[allow(unused_imports)]

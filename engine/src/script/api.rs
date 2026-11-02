@@ -102,7 +102,17 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
     let adding_tag = matches!(&msg, ScriptMessage::EntityTagAdd { .. });
     match msg {
         ScriptMessage::SceneLoad { request_id, path } => {
-            let result = crate::scene::SceneDocument::load(vfs, &path, world);
+            let result = (|| -> anyhow::Result<crate::scene::LoadedScene> {
+                use anyhow::Context;
+                let target = crate::scene::scene_path(&path)?;
+                let caller = registry.get(mod_id).context("calling mod")?;
+                anyhow::ensure!(
+                    crate::scene::allows_namespace(caller, &target.mod_id),
+                    "mod '{mod_id}' must declare a dependency on '{}' to load this scene",
+                    target.mod_id
+                );
+                crate::scene::SceneDocument::load_checked(vfs, &path, world, registry)
+            })();
             let render_cmds = result
                 .as_ref()
                 .map(|scene| {

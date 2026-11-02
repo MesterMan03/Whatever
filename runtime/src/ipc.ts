@@ -50,6 +50,8 @@ import {
 } from "./components/audio.ts";
 
 import { _exit, _stdin } from "./transport.ts";
+import { Input, _updateInput, type KeyCode } from "./input.ts";
+import { _updateTime } from "./time.ts";
 const _decoder = new TextDecoder();
 
 // Internal IPC types — match Rust serde tags exactly, not part of the public API.
@@ -85,12 +87,12 @@ type _EngineMsg =
       mode: import("./types.ts").RuntimeMode;
     }
   | { type: "Frame"; delta_seconds: number; frame_number: number }
-  | { type: "Input"; keys_pressed: string[]; mouse_delta: [number, number] }
+  | { type: "Input"; keys_pressed: KeyCode[]; mouse_delta: [number, number] }
   | {
       type: "Tick";
       tick_number: number;
       delta_seconds: number;
-      keys_pressed: string[];
+      keys_pressed: KeyCode[];
       mouse_delta: [number, number];
       mouse_captured: boolean;
     }
@@ -252,6 +254,8 @@ function _dispatch(msg: _EngineMsg): void {
   if (msg.type === "Tick") {
     const scriptStart = _now();
     lastTick = msg.tick_number;
+    _updateTime(msg.tick_number, msg.delta_seconds);
+    _updateInput(msg.keys_pressed, msg.mouse_delta, msg.mouse_captured);
     const fail = (error: unknown): void => {
       _send({ type: "Log", level: "error", message: "Tick handler failed: " + String(error) });
       failed = true;
@@ -274,7 +278,12 @@ function _dispatch(msg: _EngineMsg): void {
           state.mouse = [0, 0];
         }
         if (state.busy) continue;
-        const payload = { ...msg, delta_seconds: state.delta, mouse_delta: [...state.mouse] };
+        const payload: EventPayloads["tick"] = {
+          ...msg,
+          keys_pressed: Input.keysPressed,
+          delta_seconds: state.delta,
+          mouse_delta: [...state.mouse],
+        };
         state.delta = 0;
         state.mouse = [0, 0];
         try {

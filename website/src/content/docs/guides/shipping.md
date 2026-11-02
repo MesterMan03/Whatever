@@ -15,7 +15,7 @@ The project manifest selects the mod collection and optional build settings:
 version = 1
 id = "hello_mod"
 name = "Hello Game"
-mods = ["mods/core", "mods/hello_mod"]
+mods = ["mods/core"]
 
 [build]
 company = "My Studio"
@@ -26,7 +26,7 @@ Add optional `icon = "branding/icon.png"` only after adding that file. Build set
 
 ## Build in the editor
 
-Set the name, company, version, and optional icon in Project Settings. Choose **Build Game**, select a new or empty output folder, and wait for the Build Log to report completion. Builds run in the background and currently target the editor's host platform.
+Set the name, company, version, and optional icon in Project Settings. Choose **Build Game**, select a new or empty output folder, and wait for Log to report completion. Required mods cannot be excluded while their dependents remain included. Builds run in the background and currently target the editor's host platform.
 
 Installed editor distributions contain their build support payload. Source checkouts prepare the required player, launcher, and pinned host using the normal native development prerequisites.
 

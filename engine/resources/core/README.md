@@ -1,7 +1,7 @@
 # Core
 
-Core is the metadata and shared-asset layer of a Whatever game. It loads first and contains no diagnostic scripts or demonstration gameplay.
+Core is the game developer's main mod. New projects add their entry script, initial scene and editable assets here. Additional mods are optional extensions.
 
-`meta.toml` selects the game's ID, name, tick rate and default runtime mode. Other mods use `core://shaders/sprite.wgsl`, `core://shaders/mesh_lit.wgsl` and `core://fonts/default.ttf`.
+`meta.toml` selects the game's ID, name, tick rate and default runtime mode. The editor's starter meshes, shaders and font live in its separate `resources/starter` library and are imported into the scene-owning mod only when used. Assets are ordinary VFS files and can be changed or deleted.
 
-The first-party tools and demonstration camera are in [the debug suite](../debug/README.md). A game can replace core metadata/assets and omit the debug suite entirely.
+The source checkout's `games/test/mods/debug` contains optional diagnostic tools and demonstrations. New games do not include them.

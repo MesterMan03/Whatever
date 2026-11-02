@@ -1,12 +1,20 @@
 mod branding;
 mod build;
 mod deployment;
+mod files;
+pub use files::resource_uri;
 mod kit;
 mod manifest;
 mod paths;
 mod scaffold;
+mod sdk;
+mod starter;
+pub use sdk::{bind_sdk, configure_types, installed_sdk};
+pub use starter::{import_starter, starter_library};
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod workflow_tests;
 
 pub use branding::default_icon_rgba;
 pub use build::{build_game, prepare_player};

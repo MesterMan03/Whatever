@@ -9,14 +9,16 @@ The bundled host delivers complete UTF-8 batches over ordinary engine pipes; its
 ## Usage
 
 ```ts
-import { Engine, Window, File, Scene, Entity, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
+import { Engine, Input, Time, Window, File, Scene, Entity, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
 
 Engine.on("init", ({ mod_id }) => {
   Engine.log("info", `loaded as ${mod_id}`);
 });
 
-Engine.on("tick", async ({ delta_seconds }) => {
-  // Record commands. Awaiting results does not stop automatic batch submission.
+Engine.on("tick", () => {
+  if (Input.isPressed("KeyW")) {
+    // Use Time.deltaSeconds when recording movement commands.
+  }
 });
 ```
 
@@ -41,6 +43,43 @@ Other package imports, including `node:` and `bun:` modules, are denied initiall
 
 Tick payloads include `mouse_captured`; `mouse_delta` is `[0, 0]` while uncaptured.
 Pending mouse motion is discarded on release, including for busy async handlers.
+
+### `Input`
+
+Read-only input for the current tick, available in component hooks and any other
+function without a tick listener.
+
+- `Input.keysPressed` → `PressedKeys`
+- `Input.isPressed(key: KeyCode)` → `boolean`
+- `Input.isAnyPressed(...keys: KeyCode[])` → `boolean`
+- `Input.areAllPressed(...keys: KeyCode[])` → `boolean`
+- `Input.isShiftPressed()` / `Input.isControlPressed()` → `boolean`
+- `Input.isAltPressed()` / `Input.isSuperPressed()` → `boolean`
+- `Input.mouseDelta` → `readonly [number, number]`
+- `Input.mouseCaptured` → `boolean`
+
+### `Time`
+
+Read-only timing for the current tick, available throughout the mod.
+
+- `Time.tickNumber` → `number`
+- `Time.deltaSeconds` → `number`
+
+### `PressedKeys` / `KeyCode`
+
+`Input.keysPressed` and tick `keys_pressed` expose immutable held-key snapshots. `KeyCode`
+provides autocomplete for supported key names. Existing `.includes()` checks work.
+
+- `keys.isPressed(key: KeyCode)` → `boolean`
+- `keys.isAnyPressed(...keys: KeyCode[])` → `boolean`
+- `keys.areAllPressed(...keys: KeyCode[])` → `boolean`
+- `keys.isShiftPressed()` / `keys.isControlPressed()` → `boolean`
+- `keys.isAltPressed()` / `keys.isSuperPressed()` → `boolean`
+- `keys.includes(key: KeyCode)` → `boolean`
+- `keys.size` → `number`
+- `keys.toArray()` / `keys.toJSON()` → `readonly KeyCode[]`
+- `[...keys]` → `KeyCode[]`
+- `new PressedKeys(codes?: readonly KeyCode[])` → `PressedKeys`
 
 ### `Profiler`
 
@@ -176,18 +215,18 @@ Methods (all setters chainable, return `this`):
 ### `BuiltInComponents.SpriteRenderer`
 
 - `getTexture()`, `setTexture(path)` — VFS texture path
-- `getShader()`, `setShader(path)` — VFS shader path (default: `"core://shaders/sprite.wgsl"`; see `docs/SHADER.md`)
+- `getShader()`, `setShader(path)` — explicit VFS shader path (see `docs/SHADER.md`)
 
 ### `BuiltInComponents.MeshRenderer`
 
 - `getMesh()`, `setMesh(path)` — VFS mesh path (`.json`, `.obj`, `.glb`, `.gltf`)
-- `getShader()`, `setShader(path)` — VFS shader path (default: `"core://shaders/mesh_lit.wgsl"`; see `docs/SHADER.md`)
+- `getShader()`, `setShader(path)` — explicit VFS shader path (see `docs/SHADER.md`)
 - `getTexture()`, `setTexture(path | null)` — VFS texture path; `null` = 1×1 white fallback
 
 ### `BuiltInComponents.TextRenderer`
 
 - `getText()`, `setText(text)` — displayed string
-- `getFont()`, `setFont(path)` — VFS path to TTF/OTF font (default: `"core://fonts/default.ttf"`)
+- `getFont()`, `setFont(path)` — explicit VFS path to a TTF/OTF font
 - `getFontSize()`, `setFontSize(size)` — font size in logical pixels (default: `24`)
 - `getColor()`, `setColor(r, g, b, a)` — RGBA colour, each channel `[0.0, 1.0]` (default: white)
 
