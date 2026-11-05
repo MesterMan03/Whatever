@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Storage Pipe",
+  "description": "Editable storage pipe hierarchy from Whatever Starter.",
+  "category": "Props",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/pipe.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/metal_tile.png"
+      }
+    },
+    "script_id": "storage_pipe"
+  }
+}

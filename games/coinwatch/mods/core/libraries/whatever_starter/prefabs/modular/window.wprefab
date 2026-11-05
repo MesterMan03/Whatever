@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Window",
+  "description": "Editable window hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          0.08
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/cyan.png"
+      }
+    },
+    "script_id": "window"
+  }
+}

@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "name": "House",
+  "description": "Editable house hierarchy from Whatever Starter.",
+  "category": "Buildings",
+  "entity": {
+    "children": [
+      {
+        "name": "Walls",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              4,
+              3,
+              3
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/cream.png"
+          }
+        }
+      },
+      {
+        "name": "Roof",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              3.7,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              4.5,
+              1.6,
+              3.5
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/roof.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/roof_tiles_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Door",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              1.52
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.9,
+              2,
+              0.1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Window",
+        "components": {
+          "core:transform": {
+            "position": [
+              1.2,
+              1.8,
+              1.53
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.8,
+              0.8,
+              0.1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/cyan.png"
+          }
+        }
+      }
+    ],
+    "name": "House",
+    "script_id": "house",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

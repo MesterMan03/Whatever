@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Gold Coin",
+  "description": "Editable gold coin hierarchy from Whatever Starter.",
+  "category": "Props",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/coin.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/gold.png"
+      }
+    },
+    "script_id": "gold_coin"
+  }
+}

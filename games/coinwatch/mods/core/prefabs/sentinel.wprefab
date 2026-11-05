@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "name": "Coinwatch Sentinel",
+  "category": "Coinwatch",
+  "description": "Independent starter-mesh sentinel; Navigation, health, contact damage and appearance are independent configurable components; the spawner binds external entity references.",
+  "entity": {
+    "name": "Sentinel",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          -1000,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ]
+      },
+      "core:EnemyNavigation": {},
+      "core:Health": {},
+      "core:ContactDamage": {}
+    },
+    "script_id": "enemy",
+    "children": [
+      {
+        "name": "Sentinel body",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "scale": [
+              0.8,
+              1.1,
+              0.8
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/capsule_low.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/orange.png"
+          },
+          "core:EnemyAppearance": {
+            "body": {
+              "$entity": "enemy"
+            }
+          }
+        },
+        "script_id": "visual",
+        "children": [
+          {
+            "name": "Left eye",
+            "components": {
+              "core:transform": {
+                "position": [
+                  -0.18,
+                  0.35,
+                  -0.37
+                ],
+                "scale": [
+                  0.11,
+                  0.11,
+                  0.11
+                ],
+                "rotation": [
+                  0,
+                  0.0,
+                  0,
+                  1.0
+                ]
+              },
+              "core:mesh_renderer": {
+                "mesh": "core://libraries/whatever_starter/meshes/low_sphere.obj",
+                "shader": "core://libraries/whatever_starter/shaders/mesh_unlit.wgsl",
+                "texture": "core://libraries/whatever_starter/textures/cyan.png"
+              }
+            }
+          },
+          {
+            "name": "Right eye",
+            "components": {
+              "core:transform": {
+                "position": [
+                  0.18,
+                  0.35,
+                  -0.37
+                ],
+                "scale": [
+                  0.11,
+                  0.11,
+                  0.11
+                ],
+                "rotation": [
+                  0,
+                  0.0,
+                  0,
+                  1.0
+                ]
+              },
+              "core:mesh_renderer": {
+                "mesh": "core://libraries/whatever_starter/meshes/low_sphere.obj",
+                "shader": "core://libraries/whatever_starter/shaders/mesh_unlit.wgsl",
+                "texture": "core://libraries/whatever_starter/textures/cyan.png"
+              }
+            }
+          },
+          {
+            "name": "Halo",
+            "components": {
+              "core:transform": {
+                "position": [
+                  0,
+                  0.7,
+                  0
+                ],
+                "scale": [
+                  0.8,
+                  0.12,
+                  0.8
+                ],
+                "rotation": [
+                  0,
+                  0.0,
+                  0,
+                  1.0
+                ]
+              },
+              "core:mesh_renderer": {
+                "mesh": "core://libraries/whatever_starter/meshes/torus.obj",
+                "shader": "core://libraries/whatever_starter/shaders/mesh_unlit.wgsl",
+                "texture": "core://libraries/whatever_starter/textures/gold.png"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

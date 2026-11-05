@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Snow Surface",
+  "description": "Editable snow surface hierarchy from Whatever Starter.",
+  "category": "Surfaces",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          3,
+          0.15,
+          3
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/snow_tile.png"
+      }
+    },
+    "script_id": "snow_surface"
+  }
+}

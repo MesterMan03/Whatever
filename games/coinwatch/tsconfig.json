@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ESNext"
+  },
+  "exclude": ["**/node_modules", "**/assets"],
+  "extends": "./.whatever/tsconfig.sdk.json",
+  "include": ["scripts/**/*", "libraries/**/*", "mods/**/*"]
+}

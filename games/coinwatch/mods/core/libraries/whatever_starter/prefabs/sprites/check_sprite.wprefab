@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "name": "Check Sprite",
+  "description": "Editable check sprite hierarchy from Whatever Starter.",
+  "category": "Sprites",
+  "entity": {
+    "components": {
+      "core:sprite_renderer": {
+        "texture": "core://libraries/whatever_starter/sprites/ui/check.png",
+        "shader": "core://libraries/whatever_starter/shaders/sprite.wgsl"
+      },
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    "name": "Check Sprite",
+    "script_id": "check_sprite"
+  }
+}

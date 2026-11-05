@@ -17,10 +17,13 @@ pub struct RuntimeInput {
     pub keys: Vec<String>,
     pub mouse: (f32, f32),
     pub mouse_captured: bool,
+    pub mouse_buttons: Vec<String>,
+    pub mouse_buttons_pressed: Vec<String>,
 }
 impl RuntimeInput {
-    pub fn take_tick(&mut self) -> (Vec<String>, (f32, f32), bool) {
+    pub fn take_tick(&mut self) -> (Vec<String>, (f32, f32), bool, Vec<String>, Vec<String>) {
         let mouse = std::mem::take(&mut self.mouse);
+        let pressed = std::mem::take(&mut self.mouse_buttons_pressed);
         (
             self.keys.clone(),
             if self.mouse_captured {
@@ -29,6 +32,12 @@ impl RuntimeInput {
                 (0.0, 0.0)
             },
             self.mouse_captured,
+            if self.mouse_captured {
+                self.mouse_buttons.clone()
+            } else {
+                vec![]
+            },
+            if self.mouse_captured { pressed } else { vec![] },
         )
     }
 }
@@ -148,6 +157,26 @@ mod tests {
             events: vec![],
             client_commands: vec![],
         }
+    }
+    #[test]
+    fn button_edges_are_drained_once_and_capture_loss_discards_them() {
+        let mut input = RuntimeInput {
+            mouse_captured: true,
+            mouse_buttons: vec!["Left".into()],
+            mouse_buttons_pressed: vec!["Left".into()],
+            ..Default::default()
+        };
+        let tick = input.take_tick();
+        assert_eq!(tick.3, vec!["Left"]);
+        assert_eq!(tick.4, vec!["Left"]);
+        assert!(input.take_tick().4.is_empty());
+        input.mouse_buttons_pressed.push("Right".into());
+        input.mouse_captured = false;
+        let tick = input.take_tick();
+        assert!(tick.3.is_empty());
+        assert!(tick.4.is_empty());
+        input.mouse_captured = true;
+        assert!(input.take_tick().4.is_empty());
     }
     #[test]
     fn uncaptured_ticks_discard_queued_mouse_motion() {

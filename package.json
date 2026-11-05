@@ -17,6 +17,7 @@
     "prepare:bun": "bun tools/prepare-bun.ts",
     "build:bun": "bun tools/build-bun.ts",
     "build:host": "bun tools/build-mod-host.ts",
+    "test:coinwatch": "bun test tools/tests/coinwatch.test.ts --timeout 30000",
     "test:mods": "bun test tools/tests/shipped-mods.test.ts --timeout 30000",
     "test:network": "bun test tools/tests/network.test.ts && bun runtime/node_modules/typescript/bin/tsc --project tools/tests/tsconfig.network.json",
     "test:snapshots": "bun test tools/tests/snapshots.test.ts",

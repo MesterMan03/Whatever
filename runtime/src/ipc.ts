@@ -95,6 +95,8 @@ type _EngineMsg =
       keys_pressed: KeyCode[];
       mouse_delta: [number, number];
       mouse_captured: boolean;
+      mouse_buttons?: import("./input.ts").MouseButtonCode[];
+      mouse_buttons_pressed?: import("./input.ts").MouseButtonCode[];
     }
   | {
       type: "AssetResponse";
@@ -255,7 +257,13 @@ function _dispatch(msg: _EngineMsg): void {
     const scriptStart = _now();
     lastTick = msg.tick_number;
     _updateTime(msg.tick_number, msg.delta_seconds);
-    _updateInput(msg.keys_pressed, msg.mouse_delta, msg.mouse_captured);
+    _updateInput(
+      msg.keys_pressed,
+      msg.mouse_delta,
+      msg.mouse_captured,
+      msg.mouse_buttons,
+      msg.mouse_buttons_pressed,
+    );
     const fail = (error: unknown): void => {
       _send({ type: "Log", level: "error", message: "Tick handler failed: " + String(error) });
       failed = true;

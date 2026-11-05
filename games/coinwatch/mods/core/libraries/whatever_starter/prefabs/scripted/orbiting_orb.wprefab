@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "name": "Orbiting Orb",
+  "description": "Editable visual behavior. Requires a script-enabled receiving mod; no gameplay logic is installed into the engine.",
+  "category": "Scripted",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/sphere.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/purple.png"
+      },
+      "core:whatever_starter_StarterOrbit": {}
+    },
+    "script_id": "orbiting_orb"
+  }
+}

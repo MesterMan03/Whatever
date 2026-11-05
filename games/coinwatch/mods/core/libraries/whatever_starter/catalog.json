@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "counts": {
+    "meshes": 33,
+    "textures": 48,
+    "sprites": 30,
+    "shaders": 8,
+    "prefabs": 131,
+    "scripts": 6,
+    "audio": 16,
+    "fonts": 1
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "name": "Shield Sprite",
+  "description": "Editable shield sprite hierarchy from Whatever Starter.",
+  "category": "Sprites",
+  "entity": {
+    "components": {
+      "core:sprite_renderer": {
+        "texture": "core://libraries/whatever_starter/sprites/ui/shield.png",
+        "shader": "core://libraries/whatever_starter/shaders/sprite.wgsl"
+      },
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    "name": "Shield Sprite",
+    "script_id": "shield_sprite"
+  }
+}

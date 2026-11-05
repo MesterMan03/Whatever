@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "name": "Stairs",
+  "description": "Editable stairs hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "children": [
+      {
+        "name": "Step 1",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.15,
+              0.0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              0.3,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 2",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.3,
+              0.4
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              0.6,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 3",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.44999999999999996,
+              0.8
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              0.8999999999999999,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 4",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.6,
+              1.2000000000000002
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              1.2,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 5",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.75,
+              1.6
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              1.5,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 6",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.8999999999999999,
+              2.0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              1.7999999999999998,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 7",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.05,
+              2.4000000000000004
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              2.1,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Step 8",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.2,
+              2.8000000000000003
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              2.4,
+              0.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      }
+    ],
+    "name": "Stairs",
+    "script_id": "stairs",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

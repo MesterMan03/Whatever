@@ -1,0 +1,7 @@
+format_version = 1
+id = "whatever_starter"
+name = "Whatever Starter"
+version = "1.0.0"
+authors = ["Whatever Engine contributors"]
+license = "Apache-2.0 AND OFL-1.1"
+description = "Editable essentials: geometry, modular props, surfaces, sprites, sounds, shaders and scripted prefabs."

@@ -103,3 +103,19 @@ test("shared input and timing expose read-only current-tick values and retain ol
   expect(Input.keysPressed.size).toBe(0);
   expect(Input.mouseDelta).toEqual([1, 2]);
 });
+
+
+test("mouse snapshots preserve quick clicks and clear when capture is lost", () => {
+  _updateInput([], [0, 0], true, [], ["Left"]);
+  expect(Input.isMouseButtonDown("Left")).toBe(false);
+  expect(Input.wasMouseButtonPressed("Left")).toBe(true);
+  const edges = Input.mouseButtonsPressed;
+  expect(Object.isFrozen(edges)).toBe(true);
+  _updateInput([], [0, 0], true, ["Left"], []);
+  expect(Input.isMouseButtonDown("Left")).toBe(true);
+  expect(Input.wasMouseButtonPressed("Left")).toBe(false);
+  expect(edges).toEqual(["Left"]);
+  _updateInput([], [0, 0], false, ["Left"], ["Right"]);
+  expect(Input.mouseButtons).toEqual([]);
+  expect(Input.mouseButtonsPressed).toEqual([]);
+});

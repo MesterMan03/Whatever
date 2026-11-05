@@ -514,11 +514,11 @@ impl Simulation {
                 &mut self.debug,
             );
         }
-        let (keys_pressed, mouse_delta, mouse_captured) =
+        let (keys_pressed, mouse_delta, mouse_captured, mouse_buttons, mouse_buttons_pressed) =
             if let Ok(mut input) = self.shared.input.lock() {
                 input.take_tick()
             } else {
-                (vec![], (0.0, 0.0), false)
+                (vec![], (0.0, 0.0), false, vec![], vec![])
             };
         let tick = EngineMessage::Tick {
             tick_number: self.tick_number,
@@ -526,6 +526,8 @@ impl Simulation {
             keys_pressed,
             mouse_delta: [mouse_delta.0, mouse_delta.1],
             mouse_captured,
+            mouse_buttons,
+            mouse_buttons_pressed,
         };
         // Registry iteration is dependency/load order, independent of pipe scheduling.
         let order: Vec<String> = self

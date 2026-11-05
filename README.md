@@ -142,6 +142,9 @@ games/                  Ordinary game mod collections
     mods/markbench/     Deterministic workloads, scoring and reports
     mods_user/          User-local development mods (gitignored)
   graviton/             Separate game collection
+  coinwatch/            Starter-library FPS survival game with script navigation
+    whatever.wproject   Editable single-core game project
+    mods/core/          Arena, game components and imported Whatever Starter assets
 runtime/                @whatever-engine/api TypeScript package
   host/                 Trusted bootstrap bundled with the API into the native host
     components.ts       Read-only class/field metadata extraction

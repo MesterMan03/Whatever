@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "name": "Bench",
+  "description": "Editable bench hierarchy from Whatever Starter.",
+  "category": "Furniture",
+  "entity": {
+    "children": [
+      {
+        "name": "Seat",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.6,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              0.15,
+              0.7
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Left support",
+        "components": {
+          "core:transform": {
+            "position": [
+              -0.7,
+              0.3,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.2,
+              0.6,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Right support",
+        "components": {
+          "core:transform": {
+            "position": [
+              0.7,
+              0.3,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.2,
+              0.6,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      }
+    ],
+    "name": "Bench",
+    "script_id": "bench",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

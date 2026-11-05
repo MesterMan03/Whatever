@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "name": "Floating Gem",
+  "description": "Editable visual behavior. Requires a script-enabled receiving mod; no gameplay logic is installed into the engine.",
+  "category": "Scripted",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/gem.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/cyan.png"
+      },
+      "core:whatever_starter_StarterSpin": {},
+      "core:whatever_starter_StarterBob": {}
+    },
+    "script_id": "floating_gem"
+  }
+}

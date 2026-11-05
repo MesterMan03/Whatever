@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "name": "Daylight Rig",
+  "description": "Editable daylight rig hierarchy from Whatever Starter.",
+  "category": "Lighting",
+  "entity": {
+    "children": [
+      {
+        "name": "Sky",
+        "components": {
+          "core:ambient_light": {
+            "color": [
+              0.7,
+              0.85,
+              1
+            ],
+            "intensity": 0.3
+          }
+        }
+      },
+      {
+        "name": "Sun",
+        "components": {
+          "core:directional_light": {
+            "color": [
+              1,
+              0.94,
+              0.82
+            ],
+            "direction": [
+              0.4,
+              1,
+              0.6
+            ],
+            "intensity": 1.1
+          }
+        }
+      }
+    ],
+    "name": "Daylight Rig",
+    "script_id": "daylight_rig",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

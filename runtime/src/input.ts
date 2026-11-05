@@ -272,7 +272,11 @@ export class PressedKeys implements Iterable<KeyCode> {
   }
 }
 
+/** Physical mouse buttons, independent of keyboard key codes. */
+export type MouseButtonCode = "Left" | "Right" | "Middle" | "Back" | "Forward" | `Other${number}`;
 let currentKeys = new PressedKeys();
+let currentMouseButtons: readonly MouseButtonCode[] = Object.freeze([]);
+let currentMouseButtonsPressed: readonly MouseButtonCode[] = Object.freeze([]);
 let currentMouseDelta: readonly [number, number] = Object.freeze([0, 0]);
 let currentMouseCaptured = false;
 
@@ -281,14 +285,34 @@ export function _updateInput(
   keys: readonly KeyCode[],
   mouseDelta: readonly [number, number],
   mouseCaptured: boolean,
+  mouseButtons: readonly MouseButtonCode[] = [],
+  mouseButtonsPressed: readonly MouseButtonCode[] = [],
 ): void {
   currentKeys = new PressedKeys(keys);
   currentMouseDelta = Object.freeze(mouseCaptured ? [mouseDelta[0], mouseDelta[1]] : [0, 0]);
   currentMouseCaptured = mouseCaptured;
+  currentMouseButtons = Object.freeze(mouseCaptured ? [...new Set(mouseButtons)] : []);
+  currentMouseButtonsPressed = Object.freeze(
+    mouseCaptured ? [...new Set(mouseButtonsPressed)] : [],
+  );
 }
 
 /** Read-only input for the latest engine tick, available throughout the mod. */
 export const Input = Object.freeze({
+  /** Held physical mouse buttons, empty while uncaptured. */
+  get mouseButtons(): readonly MouseButtonCode[] {
+    return currentMouseButtons;
+  },
+  /** Press edges since the last tick, including clicks released between ticks. */
+  get mouseButtonsPressed(): readonly MouseButtonCode[] {
+    return currentMouseButtonsPressed;
+  },
+  isMouseButtonDown(button: MouseButtonCode): boolean {
+    return currentMouseButtons.includes(button);
+  },
+  wasMouseButtonPressed(button: MouseButtonCode): boolean {
+    return currentMouseButtonsPressed.includes(button);
+  },
   /** Immutable held-key snapshot; retain this value to preserve input across awaits. */
   get keysPressed(): PressedKeys {
     return currentKeys;

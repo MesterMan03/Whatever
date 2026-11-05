@@ -1,0 +1,15 @@
+initial_scene = "core://main"
+
+[assets]
+root = "assets"
+
+[dependencies]
+
+[mod]
+description = "Coinwatch: starter-library FPS survival arena"
+id = "core"
+name = "Coinwatch"
+version = "0.1.0"
+
+[script]
+entry = "scripts/index.ts"

@@ -1,0 +1,9 @@
+version = 1
+name = "Coinwatch"
+id = "coinwatch"
+mods = ["mods/core"]
+
+[build]
+exclude_mods = []
+company = ""
+version = "0.1.0"

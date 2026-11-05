@@ -303,6 +303,9 @@ impl Engine {
     }
 
     fn set_cursor_captured(&mut self, captured: bool) {
+        if !captured {
+            self.input.clear_mouse_buttons();
+        }
         #[cfg(windows)]
         if std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
             && let Some(window) = &self.window
@@ -474,6 +477,27 @@ impl Engine {
             };
             input.keys.sort_unstable();
             input.mouse_captured = self.input.mouse_captured && !self.console.is_open;
+            if input.mouse_captured {
+                input.mouse_buttons = self
+                    .input
+                    .mouse_buttons
+                    .iter()
+                    .map(InputState::button_name)
+                    .collect();
+                input.mouse_buttons_pressed.extend(
+                    self.input
+                        .mouse_buttons_pressed
+                        .drain()
+                        .map(|button| InputState::button_name(&button)),
+                );
+                input.mouse_buttons.sort_unstable();
+                input.mouse_buttons_pressed.sort_unstable();
+                input.mouse_buttons_pressed.dedup();
+            } else {
+                self.input.clear_mouse_buttons();
+                input.mouse_buttons.clear();
+                input.mouse_buttons_pressed.clear();
+            }
             let (dx, dy) = self.input.flush_mouse();
             if !input.mouse_captured {
                 input.mouse = (0.0, 0.0);
@@ -830,11 +854,15 @@ impl ApplicationHandler for Engine {
                 }
                 self.frame_clock.complete(self.last_frame);
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                ..
-            } if !self.console.is_open && !self.input.mouse_captured => {
-                self.set_cursor_captured(true);
+            WindowEvent::MouseInput { state, button, .. } => {
+                if state == ElementState::Pressed
+                    && !self.console.is_open
+                    && !self.input.mouse_captured
+                {
+                    self.set_cursor_captured(true);
+                }
+                self.input
+                    .mouse_button(button, state == ElementState::Pressed);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {

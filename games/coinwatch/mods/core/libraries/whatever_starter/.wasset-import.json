@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "asset_prefix": "core://libraries/whatever_starter/",
+  "component_prefix": "core:whatever_starter_"
+}

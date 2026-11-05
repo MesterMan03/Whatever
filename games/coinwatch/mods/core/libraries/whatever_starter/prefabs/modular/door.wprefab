@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Door",
+  "description": "Editable door hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          1.0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          2,
+          0.12
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/wood_tile.png"
+      }
+    },
+    "script_id": "door"
+  }
+}

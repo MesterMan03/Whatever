@@ -139,7 +139,7 @@ Commands queued during evaluation or `Init` can only execute after the first
 The engine sends every ready host a `Tick`:
 
 ```json
-{"type":"Tick","tick_number":1,"delta_seconds":0.016666666666666666,"keys_pressed":["KeyW"],"mouse_delta":[2,-1],"mouse_captured":true}
+{"type":"Tick","tick_number":1,"delta_seconds":0.016666666666666666,"keys_pressed":["KeyW"],"mouse_delta":[2,-1],"mouse_captured":true,"mouse_buttons":["Left"],"mouse_buttons_pressed":["Left"]}
 ```
 
 `delta_seconds` is the configured simulation interval, not the duration of a
@@ -745,3 +745,5 @@ as protocol requirements: [shared command buffer](../runtime/src/shared.ts),
 [message dispatch](../runtime/src/ipc.ts),
 [private transport](../runtime/src/transport.ts), and
 [scene mirror and prediction](../runtime/src/scene-store.ts).
+
+Tick mouse button arrays contain held physical buttons and latched press edges respectively. Names are `Left`, `Right`, `Middle`, `Back`, `Forward`, or `Other<number>`. Edges survive a release between ticks and are drained once per simulation tick. Uncaptured/server input clears both arrays.

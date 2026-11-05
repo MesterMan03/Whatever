@@ -1,0 +1,5 @@
+[game]
+default_mode = "client"
+id = "coinwatch"
+name = "Coinwatch"
+tick_rate = 60

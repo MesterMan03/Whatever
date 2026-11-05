@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "name": "Well",
+  "description": "Editable well hierarchy from Whatever Starter.",
+  "category": "Buildings",
+  "entity": {
+    "children": [
+      {
+        "name": "Stone rim",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.6,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2,
+              1.2,
+              2
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/pipe.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Post L",
+        "components": {
+          "core:transform": {
+            "position": [
+              -1,
+              1.6,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.15,
+              3.2,
+              0.15
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Post R",
+        "components": {
+          "core:transform": {
+            "position": [
+              1,
+              1.6,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.15,
+              3.2,
+              0.15
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cube.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Roof",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              3.3,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              2.8,
+              1,
+              2
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/roof.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/roof_tiles_tile.png"
+          }
+        }
+      }
+    ],
+    "name": "Well",
+    "script_id": "well",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "Pulse Projectile",
+  "category": "Coinwatch",
+  "entity": {
+    "name": "Pulse",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          -1000,
+          0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "core://libraries/whatever_starter/meshes/low_sphere.obj",
+        "shader": "core://libraries/whatever_starter/shaders/mesh_unlit.wgsl",
+        "texture": "core://libraries/whatever_starter/textures/cyan.png"
+      }
+    }
+  }
+}

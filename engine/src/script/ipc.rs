@@ -129,6 +129,8 @@ pub enum EngineMessage {
         keys_pressed: Vec<String>,
         mouse_delta: [f32; 2],
         mouse_captured: bool,
+        mouse_buttons: Vec<String>,
+        mouse_buttons_pressed: Vec<String>,
     },
     AssetResponse {
         request_id: String,

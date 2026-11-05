@@ -236,6 +236,12 @@ TypeScript.
 | `Input.isAltPressed()` / `Input.isSuperPressed()` | Whether either side of the modifier is held |
 | `Input.mouseDelta` | Frozen `readonly [number, number]` for this tick's relative motion |
 | `Input.mouseCaptured` | Whether the player owns mouse capture |
+| `Input.mouseButtons` | Frozen held `MouseButtonCode[]` (`Left`, `Right`, `Middle`, `Back`, `Forward`, `Other${number}`) |
+| `Input.mouseButtonsPressed` | Frozen press edges collected since the preceding tick, including quick clicks |
+| `Input.isMouseButtonDown(button)` | Whether the button is held |
+| `Input.wasMouseButtonPressed(button)` | Whether a press occurred during this tick |
+
+Mouse buttons are empty while uncaptured, on a headless server, or while the console is open. Capture loss clears held buttons and pending presses. Retain an array snapshot before awaiting; press edges last one tick, so component hooks can consume them synchronously.
 
 The key queries share `PressedKeys`' typed key names and held-state semantics.
 Before the first tick, keys are empty, mouse motion is `[0, 0]`, and capture is
@@ -1652,7 +1658,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `MainCameraResponse` | `request_id`, `entity_id` (string or null) |
 | `NetworkEvent` | `event`, `registration_id`, `client_id`, `event_id` when acknowledged, event-specific data |
 | `Init` | `mod_id`, `engine_version`, `mode` |
-| `Tick` | `tick_number`, `delta_seconds`, `keys_pressed` (key-code array on the wire), `mouse_delta`, `mouse_captured` |
+| `Tick` | `tick_number`, `delta_seconds`, `keys_pressed` (key-code array on the wire), `mouse_delta`, `mouse_captured`, `mouse_buttons`, `mouse_buttons_pressed` |
 | `FileResponse` | `request_id`, `data_base64`, `error` |
 | `ModListResponse` | `request_id`, `mods` |
 | `ModGetResponse` | `request_id`, `manifest`, `error` |

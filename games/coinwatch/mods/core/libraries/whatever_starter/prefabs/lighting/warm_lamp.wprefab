@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "name": "Warm Lamp",
+  "description": "Editable warm lamp hierarchy from Whatever Starter.",
+  "category": "Lighting",
+  "entity": {
+    "children": [
+      {
+        "name": "Post",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.12,
+              2,
+              0.12
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/cylinder.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_lit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/black.png"
+          }
+        }
+      },
+      {
+        "name": "Bulb",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              2.2,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.35,
+              0.35,
+              0.35
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "core://libraries/whatever_starter/meshes/sphere.obj",
+            "shader": "core://libraries/whatever_starter/shaders/mesh_unlit.wgsl",
+            "texture": "core://libraries/whatever_starter/textures/gold.png"
+          },
+          "core:point_light": {
+            "color": [
+              0.9607843137254902,
+              0.7725490196078432,
+              0.25098039215686274
+            ],
+            "intensity": 2,
+            "range": 8
+          }
+        }
+      }
+    ],
+    "name": "Warm Lamp",
+    "script_id": "warm_lamp",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

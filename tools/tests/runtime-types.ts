@@ -11,6 +11,15 @@ function readCurrentTick(): void {
   const snapshot: PressedKeys = Input.keysPressed;
   const mouse: readonly [number, number] = Input.mouseDelta;
   const capture: boolean = Input.mouseCaptured;
+  const firing: boolean = Input.isMouseButtonDown("Left");
+  const click: boolean = Input.wasMouseButtonPressed("Right");
+  // @ts-expect-error Physical mouse button names are typed.
+  Input.isMouseButtonDown("left");
+  // @ts-expect-error Mouse button snapshots are readonly.
+  Input.mouseButtons.push("Left");
+  // @ts-expect-error Mouse button snapshots are owned by the engine.
+  Input.mouseButtonsPressed = [];
+  void [firing, click];
   // @ts-expect-error Shared input queries reject misspelled key codes.
   Input.isPressed("ArrowUP");
   // @ts-expect-error Timing belongs to the engine.
