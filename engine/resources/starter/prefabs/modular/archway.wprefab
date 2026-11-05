@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "name": "Archway",
+  "description": "Editable archway hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "children": [
+      {
+        "name": "Pillar L",
+        "components": {
+          "core:transform": {
+            "position": [
+              -1.3,
+              1.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.6,
+              3,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Pillar R",
+        "components": {
+          "core:transform": {
+            "position": [
+              1.3,
+              1.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.6,
+              3,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Lintel",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              3,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              3.2,
+              0.6,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/stone.png"
+          }
+        }
+      }
+    ],
+    "name": "Archway",
+    "script_id": "archway",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

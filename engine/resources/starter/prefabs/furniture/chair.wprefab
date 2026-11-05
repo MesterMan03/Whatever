@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "name": "Chair",
+  "description": "Editable chair hierarchy from Whatever Starter.",
+  "category": "Furniture",
+  "entity": {
+    "children": [
+      {
+        "name": "Seat",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.55,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.8,
+              0.12,
+              0.8
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Back",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              -0.35
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.8,
+              0.9,
+              0.12
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Leg 0",
+        "components": {
+          "core:transform": {
+            "position": [
+              -0.3,
+              0.25,
+              -0.3
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.1,
+              0.5,
+              0.1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/dark_wood.png"
+          }
+        }
+      },
+      {
+        "name": "Leg 1",
+        "components": {
+          "core:transform": {
+            "position": [
+              0.3,
+              0.25,
+              -0.3
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.1,
+              0.5,
+              0.1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/dark_wood.png"
+          }
+        }
+      },
+      {
+        "name": "Leg 2",
+        "components": {
+          "core:transform": {
+            "position": [
+              -0.3,
+              0.25,
+              0.3
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.1,
+              0.5,
+              0.1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/dark_wood.png"
+          }
+        }
+      },
+      {
+        "name": "Leg 3",
+        "components": {
+          "core:transform": {
+            "position": [
+              0.3,
+              0.25,
+              0.3
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.1,
+              0.5,
+              0.1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/dark_wood.png"
+          }
+        }
+      }
+    ],
+    "name": "Chair",
+    "script_id": "chair",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

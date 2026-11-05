@@ -15,6 +15,8 @@ fn kind(name: &str) -> (&'static str, egui::Color32) {
         "gltf" | "glb" | "obj" | "blend" => ("3D", [113, 194, 222]),
         "png" | "jpg" | "jpeg" => ("IMAGE", [126, 202, 151]),
         "wscene" => ("SCENE", [133, 177, 245]),
+        "wprefab" => ("PREFAB", [100, 211, 180]),
+        "wasset" => ("LIBRARY", [222, 177, 92]),
         "ts" | "js" => ("CODE", [130, 174, 238]),
         _ => ("FILE", [155, 165, 180]),
     };
@@ -244,6 +246,16 @@ impl Editor {
                             self.report(result);
                             ui.close_menu();
                         }
+                        if ui.button("Prefab from selection…").clicked() {
+                            let result = self.action(Action::SavePrefab);
+                            self.report(result);
+                            ui.close_menu();
+                        }
+                        if ui.button("Import asset library…").clicked() {
+                            let result = self.action(Action::ImportLibrary);
+                            self.report(result);
+                            ui.close_menu();
+                        }
                     });
                     if ui
                         .small_button("Refresh")
@@ -387,7 +399,14 @@ impl Editor {
                                     if directory {
                                         self.browser_path = relative;
                                     } else {
-                                        let result = if scene {
+                                        let result = if path
+                                            .extension()
+                                            .is_some_and(|e| e == "wprefab")
+                                        {
+                                            self.place_prefab(&uri)
+                                        } else if path.extension().is_some_and(|e| e == "wasset") {
+                                            self.start_library_import(path.clone(), None, false)
+                                        } else if scene {
                                             self.request_scene(&path)
                                         } else {
                                             if matches!(
@@ -451,6 +470,7 @@ impl Editor {
                         "types",
                         ".gitkeep",
                         ".gitignore",
+                        ".wasset-import.json",
                     ]
                     .contains(&entry.file_name().to_string_lossy().as_ref())
                 {

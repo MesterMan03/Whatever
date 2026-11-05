@@ -75,6 +75,9 @@ pub fn create_runtime_kit(
         &source.join("engine/resources/starter"),
         &output.join("resources/starter"),
     )?;
+    std::fs::create_dir_all(output.join("resources/libraries"))?;
+    super::AssetLibrary::from_directory(&source.join("engine/resources/starter"))?
+        .write(&output.join("resources/libraries/WhateverStarter.wasset"))?;
     copy_tree(&source.join("LICENSE"), &output.join("LICENSE"))?;
     copy_tree(
         &source.join("vendor/bun/LICENSE.md"),

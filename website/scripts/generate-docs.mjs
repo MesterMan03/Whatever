@@ -52,6 +52,7 @@ const groups = [
 ];
 const sectionRoutes = new Map(groups.flatMap(([route, , headings]) => headings.map((h) => [slug(h), `reference/api/${route}/`])));
 const docRoutes = new Map([
+  ["docs/ASSETS.md", "reference/assets/"],
   ["docs/EDITOR.md", "reference/editor/"],
   ["docs/PHYSICS.md", "reference/physics/"],
   ["docs/SHADER.md", "reference/shaders/"],

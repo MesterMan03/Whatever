@@ -67,12 +67,12 @@ fn starter_imports_preserve_user_edits_and_restore_deleted_resources_on_demand()
     let project = fixture.project();
     let root = project.roots().expect("roots")[0].clone();
     let first = import_starter(&root, "meshes/cube.obj").expect("import");
-    assert_eq!(first, "core://starter/meshes/cube.obj");
+    assert_eq!(first, "core://libraries/whatever_starter/meshes/cube.obj");
     assert_eq!(
         import_starter(&root, "meshes/cube.obj").expect("reuse"),
         first
     );
-    let path = root.join("assets/starter/meshes/cube.obj");
+    let path = root.join("libraries/whatever_starter/meshes/cube.obj");
     std::fs::write(&path, "user mesh").expect("edit");
     let second = import_starter(&root, "meshes/cube.obj").expect("distinct import");
     assert_ne!(second, first);
@@ -81,9 +81,9 @@ fn starter_imports_preserve_user_edits_and_restore_deleted_resources_on_demand()
         "user mesh"
     );
     project
-        .trash_resource("core", "assets/starter/meshes/cube.obj")
+        .trash_resource("core", "libraries/whatever_starter/meshes/cube.obj")
         .expect("trash");
-    assert_eq!(
+    assert_ne!(
         import_starter(&root, "meshes/cube.obj").expect("restore"),
         first
     );

@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "name": "Nightlight Rig",
+  "description": "Editable nightlight rig hierarchy from Whatever Starter.",
+  "category": "Lighting",
+  "entity": {
+    "children": [
+      {
+        "name": "Night sky",
+        "components": {
+          "core:ambient_light": {
+            "color": [
+              0.2,
+              0.3,
+              0.6
+            ],
+            "intensity": 0.2
+          }
+        }
+      },
+      {
+        "name": "Moon",
+        "components": {
+          "core:directional_light": {
+            "color": [
+              0.5,
+              0.65,
+              1
+            ],
+            "direction": [
+              -0.3,
+              1,
+              -0.5
+            ],
+            "intensity": 0.45
+          }
+        }
+      }
+    ],
+    "name": "Nightlight Rig",
+    "script_id": "nightlight_rig",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

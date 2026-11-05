@@ -22,7 +22,11 @@ export function inspectComponents(directory: string, owner: string): ComponentDe
   }
   function walk(path: string): void {
     for (const item of readdirSync(path, { withFileTypes: true })) {
-      if (["node_modules", ".git", "assets"].includes(item.name) || item.isSymbolicLink()) continue;
+      if (
+        ["node_modules", ".git", ".whatever", "assets"].includes(item.name) ||
+        item.isSymbolicLink()
+      )
+        continue;
       const child = resolve(path, item.name);
       if (item.isDirectory()) walk(child);
       else if (/\.(?:[cm]?[jt]s|[jt]sx)$/.test(item.name) && !item.name.endsWith(".d.ts")) {

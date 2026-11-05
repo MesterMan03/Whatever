@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "name": "Mushroom",
+  "description": "Editable mushroom hierarchy from Whatever Starter.",
+  "category": "Nature",
+  "entity": {
+    "children": [
+      {
+        "name": "Stem",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.4,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.3,
+              0.8,
+              0.3
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cylinder.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/cream.png"
+          }
+        }
+      },
+      {
+        "name": "Cap",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.8,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.4,
+              -1,
+              1.4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/bowl.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/red.png"
+          }
+        }
+      }
+    ],
+    "name": "Mushroom",
+    "script_id": "mushroom",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

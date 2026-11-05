@@ -39,6 +39,8 @@ mod entity_picker;
 mod hierarchy;
 #[path = "inspector.rs"]
 mod inspector;
+#[path = "libraries.rs"]
+mod libraries;
 #[path = "live.rs"]
 mod live;
 #[path = "menus.rs"]
@@ -128,8 +130,17 @@ enum JobEvent {
     Player(Result<PathBuf, String>),
     ModValidated(Result<(), String>),
     AssetChanged(asset_actions::AssetAction, Result<PathBuf, String>),
+    LibraryImported(
+        Option<String>,
+        Result<engine::project::LibraryImport, String>,
+    ),
+    LibraryExported(Result<PathBuf, String>),
 }
 struct Editor {
+    show_prefabs: bool,
+    prefab_search: String,
+    prefabs: Vec<libraries::PrefabChoice>,
+    pending_prefab: Option<(String, PathBuf)>,
     live: Option<live::LiveSession>,
     view: live::View,
     preferences: preferences::Preferences,
@@ -195,6 +206,10 @@ struct Editor {
 impl Editor {
     fn new(project: Option<anyhow::Result<Project>>, menus: Option<Menus>) -> Self {
         let mut editor = Self {
+            show_prefabs: false,
+            prefab_search: String::new(),
+            prefabs: Vec::new(),
+            pending_prefab: None,
             live: None,
             view: live::View::Scene,
             preferences: preferences::Preferences::load(),
@@ -323,6 +338,20 @@ impl Editor {
                 JobEvent::AssetChanged(action, result) => {
                     self.job = None;
                     self.finish_asset_action(action, result);
+                }
+                JobEvent::LibraryImported(prefab, result) => {
+                    self.job = None;
+                    let result = self.finish_library_import(prefab, result);
+                    self.report(result);
+                }
+                JobEvent::LibraryExported(result) => {
+                    self.job = None;
+                    match result {
+                        Ok(path) => {
+                            self.status = format!("Library exported: {}", display_path(&path))
+                        }
+                        Err(error) => self.report(Err(anyhow::anyhow!(error))),
+                    }
                 }
             }
         }
@@ -650,7 +679,8 @@ impl Drop for Editor {
 
 impl Editor {
     pub(super) fn has_dialog(&self) -> bool {
-        self.show_settings
+        self.show_prefabs
+            || self.show_settings
             || self.show_new_project
             || self.show_new_mod
             || self.show_preferences

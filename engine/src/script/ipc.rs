@@ -258,6 +258,10 @@ pub enum ScriptPacket {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum ScriptMessage {
+    PrefabSpawn {
+        request_id: String,
+        path: String,
+    },
     SceneLoad {
         request_id: String,
         path: String,

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Hex Column",
+  "description": "Editable hex column hierarchy from Whatever Starter.",
+  "category": "Primitives",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/hex_column.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/white.png"
+      }
+    },
+    "script_id": "hex_column"
+  }
+}

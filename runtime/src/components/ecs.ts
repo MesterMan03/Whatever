@@ -996,6 +996,29 @@ export class LoadedScene {
   }
 }
 
+/** One independent prefab hierarchy with fresh entity IDs and local named references. */
+export class PrefabInstance extends LoadedScene {
+  get root(): Entity {
+    return this.entities()[0]!;
+  }
+}
+
+export const Prefab = {
+  /** Spawn an authored prefab in the next command batch. No prefab code runs during discovery. */
+  spawn(path: string): Promise<PrefabInstance> {
+    const result = new Promise<PrefabInstance>((resolve, reject) => {
+      const request_id = nextReqId();
+      _sceneCallbacks.set(request_id, {
+        resolve: (data) => resolve(new PrefabInstance(data)),
+        reject,
+      });
+      _send({ type: "PrefabSpawn", request_id, path });
+    });
+    void result.catch(() => {});
+    return result;
+  },
+};
+
 export interface TagQuery {
   all?: readonly string[];
   any?: readonly string[];

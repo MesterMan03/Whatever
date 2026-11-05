@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Ramp",
+  "description": "Editable ramp hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          1,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          2,
+          2,
+          4
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/ramp.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/concrete_tile.png"
+      }
+    },
+    "script_id": "ramp"
+  }
+}

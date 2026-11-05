@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "name": "Red Beacon",
+  "description": "Editable red beacon hierarchy from Whatever Starter.",
+  "category": "Lighting",
+  "entity": {
+    "children": [
+      {
+        "name": "Post",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.12,
+              2,
+              0.12
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cylinder.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/black.png"
+          }
+        }
+      },
+      {
+        "name": "Bulb",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              2.2,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.35,
+              0.35,
+              0.35
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/sphere.obj",
+            "shader": "whatever_starter://shaders/mesh_unlit.wgsl",
+            "texture": "whatever_starter://textures/red.png"
+          },
+          "core:point_light": {
+            "color": [
+              0.8627450980392157,
+              0.2549019607843137,
+              0.23921568627450981
+            ],
+            "intensity": 2,
+            "range": 8
+          }
+        }
+      }
+    ],
+    "name": "Red Beacon",
+    "script_id": "red_beacon",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

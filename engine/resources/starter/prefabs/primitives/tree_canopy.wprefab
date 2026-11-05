@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Tree Canopy",
+  "description": "Editable tree canopy hierarchy from Whatever Starter.",
+  "category": "Primitives",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/tree_canopy.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/white.png"
+      }
+    },
+    "script_id": "tree_canopy"
+  }
+}

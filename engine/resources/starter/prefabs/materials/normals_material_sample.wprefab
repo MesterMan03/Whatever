@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Normals Material Sample",
+  "description": "Editable normals material sample hierarchy from Whatever Starter.",
+  "category": "Materials",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/sphere.obj",
+        "shader": "whatever_starter://shaders/mesh_normals.wgsl",
+        "texture": "whatever_starter://textures/checker_blue_white.png"
+      }
+    },
+    "script_id": "normals_material_sample"
+  }
+}

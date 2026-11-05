@@ -56,7 +56,7 @@ pub fn configure_types(directory: &Path) -> anyhow::Result<()> {
     bind_sdk(directory)?;
     let config = serde_json::json!({"extends":"./.whatever/tsconfig.sdk.json", "compilerOptions":{
         "target":"ESNext","module":"ESNext","moduleResolution":"bundler","strict":true,"noEmit":true,"skipLibCheck":true,
-        "allowImportingTsExtensions":true,"allowJs":true,"resolveJsonModule":true},"include":["scripts/**/*","mods/**/*"],"exclude":["**/node_modules","**/assets"]});
+        "allowImportingTsExtensions":true,"allowJs":true,"resolveJsonModule":true},"include":["scripts/**/*","libraries/**/*","mods/**/*"],"exclude":["**/node_modules","**/assets"]});
     std::fs::write(
         crate::sandbox::resolve_contained(directory, "tsconfig.json")?,
         serde_json::to_vec_pretty(&config)?,

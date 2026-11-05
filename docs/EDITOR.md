@@ -85,7 +85,7 @@ The viewport supports mesh-surface picking and Move/Rotate/Scale handles (Q/W/E/
 All three tools follow the selected object's world rotation, including parents. Rotate uses three rings perpendicular to the local axes and applies signed, snapped rotation. Cameras show their oriented frustums; Look through camera previews a selected camera without changing the game's active camera. Every overlay is clipped to the scene rectangle.
 Right-drag or Alt-left-drag orbits, and middle-drag pans. Drag colored handles to
 transform a selected entity; the white center moves in the view plane or scales
-uniformly. Each gesture is one undo step. Docking, prefabs and live script reload
+uniformly. Each gesture is one undo step. Docking and live script reload
 remain future work.
 
 ## Build Game
@@ -194,8 +194,14 @@ Play embeds the ordinary player process in the viewport on Windows. Shift-click
 Play keeps it in a separate window. Other platforms currently use separate-window
 Play. The player retains its console (F2), input, audio and sandboxed hosts.
 
-The creation menu offers Empty Entity, Cube, Sphere, Bean, cameras and lights;
-mesh presets import editable mesh/shader files from the editor library into the scene-owning mod's `assets/starter` folder. Matching imports are reused and edited files are preserved under distinct names. Deleted references produce missing-asset diagnostics; creating another primitive can import the needed files again. The asset browser has folder navigation,
+The creation menu offers Empty Entity, Prefab, cameras and lights;
+object templates come from `.wprefab` documents. Scene > Instantiate Prefab opens
+the searchable project/official catalog. Choosing an official template imports
+its editable `.wasset` library into the scene-owning mod's `libraries` folder.
+Identical imports are reused; conflicts get a separate coherent bundle. Scene >
+Save Selected as Prefab saves a self-contained subtree. Instances are independent
+copies. See [Asset libraries and prefabs](ASSETS.md) for formats and tooling.
+The asset browser has folder navigation,
 breadcrumbs, search, compact tiles and portable type icons for meshes, shaders,
 fonts, text, JSON, images and scenes. It does not depend on platform icon fonts.
 

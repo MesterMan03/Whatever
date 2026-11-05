@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "name": "Physics Sandbox",
+  "description": "Editable physics sandbox hierarchy from Whatever Starter.",
+  "category": "Physics",
+  "entity": {
+    "name": "Physics Sandbox",
+    "script_id": "physics",
+    "components": {
+      "core:physics_world": {
+        "gravity": [
+          0,
+          -9.81,
+          0
+        ]
+      },
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    "children": [
+      {
+        "name": "Floor",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              -0.2,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              8,
+              0.4,
+              8
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/checker_white_black.png"
+          },
+          "core:collider": {
+            "world": {
+              "$entity": "physics"
+            },
+            "body": null,
+            "shape": {
+              "type": "box",
+              "size": [
+                8,
+                0.4,
+                8
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "Box 1",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.0,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/red.png"
+          },
+          "core:rigid_body": {
+            "world": {
+              "$entity": "physics"
+            },
+            "type": "dynamic"
+          },
+          "core:collider": {
+            "body": {
+              "$entity": "body_0"
+            },
+            "shape": {
+              "type": "box",
+              "size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        },
+        "script_id": "body_0"
+      },
+      {
+        "name": "Box 2",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              2.1,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/gold.png"
+          },
+          "core:rigid_body": {
+            "world": {
+              "$entity": "physics"
+            },
+            "type": "dynamic"
+          },
+          "core:collider": {
+            "body": {
+              "$entity": "body_1"
+            },
+            "shape": {
+              "type": "box",
+              "size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        },
+        "script_id": "body_1"
+      },
+      {
+        "name": "Box 3",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              3.2,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/green.png"
+          },
+          "core:rigid_body": {
+            "world": {
+              "$entity": "physics"
+            },
+            "type": "dynamic"
+          },
+          "core:collider": {
+            "body": {
+              "$entity": "body_2"
+            },
+            "shape": {
+              "type": "box",
+              "size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        },
+        "script_id": "body_2"
+      },
+      {
+        "name": "Box 4",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              4.300000000000001,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/blue.png"
+          },
+          "core:rigid_body": {
+            "world": {
+              "$entity": "physics"
+            },
+            "type": "dynamic"
+          },
+          "core:collider": {
+            "body": {
+              "$entity": "body_3"
+            },
+            "shape": {
+              "type": "box",
+              "size": [
+                1,
+                1,
+                1
+              ]
+            }
+          }
+        },
+        "script_id": "body_3"
+      }
+    ]
+  }
+}

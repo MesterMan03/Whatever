@@ -67,6 +67,7 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
       editor_transport.rs  Private authenticated editor/player connection
       performance.rs    Native CPU phase and frame timings
     scene/              Versioned scene documents and atomic instantiation
+      prefab.rs         Named single-root templates and independent runtime spawning
       references.rs     Scene asset ownership and direct mod dependency validation
     project/            Mod collections, scaffolding and managed game builds
       build.rs          Installed support discovery and automatic source builds
@@ -75,6 +76,9 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
       files.rs          Contained file operations, reference updates and local trash
       sdk.rs            Local TypeScript bindings to the installed editor SDK
       starter.rs        On-demand imports from the editor starter asset library
+      library.rs        Asset library metadata, atomic imports and namespace remapping
+      library_archive.rs Portable ZIP pack/read validation and bounded extraction
+      library_tests.rs  Archive, import, prefab and official-content integration checks
       workflow_tests.rs Project, asset, SDK and dependency regression tests
     renderer/           wgpu, cameras, meshes, sprites, text and shared world rendering
       render.rs         Renderer, pipelines and render passes
@@ -104,7 +108,7 @@ engine/                 Shared whatever-engine Rust library (own Cargo.toml)
     cursor.rs           Embedded player cursor confinement and visibility
     watchdog.rs         Slow-tick diagnostics
   resources/core/       Stock core template packaged with the editor
-  resources/starter/    Editor-owned meshes, shaders and font imported on demand
+  resources/starter/    Official .wasset source: prefabs, meshes, surfaces, UI, audio and scripts
 player/                 Whatever executable; depends on shared engine crate
   src/main.rs           CLI, game loading, client/server entry point
 editor/                 Separate native editor application (own Cargo.toml)
@@ -119,7 +123,8 @@ editor/                 Separate native editor application (own Cargo.toml)
   src/ui.rs             Workspace panels, browser, viewport and project settings
   src/inspector.rs      Typed core components and custom component editing
   src/entity_picker.rs  Entity references and hierarchy drops
-  src/presets.rs        Common entity presets
+  src/presets.rs        Native component helpers; object templates remain data
+  src/libraries.rs      Searchable prefab catalog and background library import/export
   src/browser.rs        Folder navigation and typed asset tiles
   src/asset_actions.rs  Create folder, move, rename and recoverable delete dialogs
   src/viewport.rs       Surface picking and transform handles
@@ -154,6 +159,7 @@ vendor/
 tools/                  Fork/host builds, generated assets and integration tests
   check-versions.ts     Shared release version and lockfile audit
   package-editor.ts     Portable editor assembly, dependency bundling and relocation smoke
+  generate-starter.py   Reproducible official library content generation
 .github/workflows/
   editor.yml            Build, test and portable archives on Windows/Linux/macOS
   release.yml           Publish the same tested archives on version tags
@@ -161,6 +167,7 @@ tools/                  Fork/host builds, generated assets and integration tests
 docs/
   releases/             Curated GitHub release notes
   EDITOR.md             Projects, native editor, CLI and branded deployment layout
+  ASSETS.md             .wasset libraries, independent prefabs and official starter content
   SCRIPTING.md          Public API, scene format and IPC reference
   PHYSICS.md            Native physics configuration and lifecycle
   SHADER.md             Shader contract, mesh formats and patterns

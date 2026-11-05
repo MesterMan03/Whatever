@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "name": "Autumn Tree",
+  "description": "Editable autumn tree hierarchy from Whatever Starter.",
+  "category": "Nature",
+  "entity": {
+    "children": [
+      {
+        "name": "Trunk",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.35,
+              2,
+              0.35
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cylinder.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Crown",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              2.3,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              3,
+              2.5,
+              3
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/low_sphere.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/gold.png"
+          }
+        }
+      }
+    ],
+    "name": "Autumn Tree",
+    "script_id": "autumn_tree",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

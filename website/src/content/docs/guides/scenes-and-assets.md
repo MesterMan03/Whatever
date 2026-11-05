@@ -9,12 +9,23 @@ Assets use `mod_id://relative/path`. The path is relative to the mod's configure
 
 ```text
 core://textures/player.png  → mods/core/assets/textures/player.png
-core://starter/meshes/cube.obj           → mods/core/assets/starter/meshes/cube.obj
+core://libraries/whatever_starter/meshes/cube.obj → mods/core/libraries/whatever_starter/meshes/cube.obj
 ```
 
 Scenes use their mod's `scenes/` directory. `core://main`, `core://main.wscene`, and `core://scenes/main.wscene` resolve to the same scene file.
 
-The game owns `mods/core`. Creating a Cube in the editor imports its mesh and shader under `assets/starter`; empty projects contain no required starter assets. A scene may reference another mod's assets or custom components only when its owning mod declares a direct dependency on that mod. Missing referenced assets and undeclared dependencies reject saving, loading and game packaging.
+The game owns `mods/core`. **Scene > Instantiate Prefab** opens project and official templates. Choosing an official template imports its editable asset library under `libraries/`; empty projects contain no required starter assets. A scene may reference another mod's assets or custom components only when its owning mod declares a direct dependency on that mod. Missing referenced assets and undeclared dependencies reject saving, loading and game packaging.
+
+## Asset libraries and prefabs
+
+Share authoring content as `.wasset` ZIPs with creator/license metadata. Import them through **Project > Import Asset Library**. Prefabs are `.wprefab` JSON documents with one entity tree; use **Save Selected as Prefab** to author one. Every placed or spawned hierarchy is an independent copy. Imported scripts remain inside the normal mod sandbox. See the [library format and workflows](/reference/assets/) for namespace remapping, export and the official starter catalog.
+
+```ts
+import { Prefab } from "@whatever-engine/api";
+
+const instance = await Prefab.spawn("core://prefabs/my_object.wprefab");
+instance.root.setEulerDegrees(0, 90, 0);
+```
 
 ## Load and address a scene
 

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Grayscale Material Sample",
+  "description": "Editable grayscale material sample hierarchy from Whatever Starter.",
+  "category": "Materials",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/sphere.obj",
+        "shader": "whatever_starter://shaders/mesh_grayscale.wgsl",
+        "texture": "whatever_starter://textures/checker_blue_white.png"
+      }
+    },
+    "script_id": "grayscale_material_sample"
+  }
+}

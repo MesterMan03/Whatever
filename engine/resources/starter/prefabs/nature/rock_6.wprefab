@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Rock 6",
+  "description": "Editable rock 6 hierarchy from Whatever Starter.",
+  "category": "Nature",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/rock_6.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/stone.png"
+      }
+    },
+    "script_id": "rock_6"
+  }
+}

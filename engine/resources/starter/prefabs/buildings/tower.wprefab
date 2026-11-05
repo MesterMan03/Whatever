@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "name": "Tower",
+  "description": "Editable tower hierarchy from Whatever Starter.",
+  "category": "Buildings",
+  "entity": {
+    "children": [
+      {
+        "name": "Tower",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              3,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              3,
+              6,
+              3
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/hex_column.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/stone.png"
+          }
+        }
+      },
+      {
+        "name": "Roof",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              6.8,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              4,
+              2,
+              4
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cone.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/navy.png"
+          }
+        }
+      }
+    ],
+    "name": "Tower",
+    "script_id": "tower",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

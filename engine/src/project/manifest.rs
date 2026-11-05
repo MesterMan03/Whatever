@@ -312,6 +312,27 @@ impl Project {
                         scene.instantiate(&mut schemas.clone())?;
                     }
                 }
+                for path in vfs.list(&item.manifest.meta.id, "")? {
+                    if path.ends_with(".wprefab")
+                        && !path
+                            .split('/')
+                            .any(|part| [".git", ".whatever", "node_modules"].contains(&part))
+                    {
+                        let path = crate::vfs::VfsPath {
+                            mod_id: item.manifest.meta.id.clone(),
+                            path,
+                        };
+                        let prefab = crate::scene::PrefabDocument::parse(&vfs.read(&path)?)?;
+                        crate::scene::validate_references(
+                            &prefab.scene(),
+                            &item.manifest,
+                            &vfs,
+                            &schemas.component_types,
+                        )
+                        .with_context(|| format!("prefab {}", path.as_string()))?;
+                        prefab.scene().instantiate(&mut schemas.clone())?;
+                    }
+                }
             }
         }
         Ok(())

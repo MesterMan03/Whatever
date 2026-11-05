@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "name": "Bookshelf",
+  "description": "Editable bookshelf hierarchy from Whatever Starter.",
+  "category": "Furniture",
+  "entity": {
+    "children": [
+      {
+        "name": "Back",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              -0.22
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.5,
+              2,
+              0.12
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/dark_wood.png"
+          }
+        }
+      },
+      {
+        "name": "Shelf 0",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.0,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.5,
+              0.1,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Shelf 1",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              0.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.5,
+              0.1,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Shelf 2",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.0,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.5,
+              0.1,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Shelf 3",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.5,
+              0.1,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Shelf 4",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              2.0,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.5,
+              0.1,
+              0.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cube.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      }
+    ],
+    "name": "Bookshelf",
+    "script_id": "bookshelf",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

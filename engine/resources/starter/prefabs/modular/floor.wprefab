@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Floor",
+  "description": "Editable floor hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0.1,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          4,
+          0.2,
+          4
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/cube.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/concrete_tile.png"
+      }
+    },
+    "script_id": "floor"
+  }
+}

@@ -7,7 +7,7 @@ const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=process.env.WHATEVER_TEST_PLAYER ?? join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
 if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
-async function runServer(source:string, options:{shutdownCommand?:string;expectedCode?:number;initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>;coreScript?:boolean}={}) {
+async function runServer(source:string, options:{shutdownCommand?:string;expectedCode?:number;initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>;coreScript?:boolean;coreAssets?:string}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
@@ -23,6 +23,7 @@ async function runServer(source:string, options:{shutdownCommand?:string;expecte
       put("mods/fixture/server.ts",'');
     }
     for(const [path,text] of Object.entries(options.files??{}))put((path.startsWith("scenes/")?"mods/core/":"mods/fixture/")+path,text);
+    if(options.coreAssets)cpSync(options.coreAssets,join(directory,"mods/core/assets"),{recursive:true});
     put("mods/client_only/mod.toml",'[mod]\nid="client_only"\nname="Client"\nversion="1.0.0"\nsides=["client"]\n[dependencies]\nmissing_client_dependency="*"\n[script]\nentry="wrong.ts"\n');
     put("mods/client_only/wrong.ts",'throw new Error("client-only mod executed");');
     put("mods/server_only/mod.toml",'[mod]\nid="server_only"\nname="Server"\nversion="1.0.0"\nsides=["server"]\n[script]\nentry="server.ts"\n');
@@ -76,21 +77,43 @@ const normal='import { Component, Engine, Scene, Mods } from "@whatever-engine/a
   'Engine.on("tick",({tick_number,keys_pressed,mouse_delta})=>{if(keys_pressed.length||mouse_delta.some(x=>x!==0))throw new Error("server has input");'+
   'if(ready&&tick_number>=5)Engine.log("info","FIXTURE_DONE");});';
 
+test("prefabs spawn independent trees through the sandboxed batched API", async () => {
+  const prefab = JSON.stringify({version:1,name:"Pair",entity:{script_id:"root",components:{"fixture:link":{target:{$entity:"child"}}},children:[{script_id:"child",components:{"core:transform":{position:[0,1,0],rotation:[0,0,0,1],scale:[1,1,1]}}}]}});
+  const source = `import { Component, Entity, Engine, Prefab, Scene } from "@whatever-engine/api";
+export class Link extends Component { static readonly type="fixture:link"; target: Entity | null=null; }
+Engine.on("init", async () => {
+  const a = await Prefab.spawn("fixture://pair");
+  const b = await Prefab.spawn("fixture://prefabs/pair.wprefab");
+  if (a.entityCount !== 2 || a.root.id !== a.get("root").id || a.root.id === b.root.id) throw Error("independent prefab roots failed");
+  const linkA = await a.root.requestComponent(Link).get();
+  const linkB = await b.root.requestComponent(Link).get();
+  if (linkA?.target?.id !== a.get("child").id || linkB?.target?.id !== b.get("child").id) throw Error("prefab-local references leaked");
+  let rejected = 0;
+  for (const path of ["fixture://missing", "server_only://foreign"]) {
+    try { await Prefab.spawn(path); } catch { rejected++; }
+  }
+  if (rejected !== 2) throw Error("missing/dependency checks failed");
+  if (!Scene.find(a.root.id) || !Scene.find(b.root.id)) throw Error("failed spawns disturbed earlier objects");
+  Engine.log("info", "FIXTURE_DONE");
+});`;
+  await runServer(source,{mode:"server",files:{"prefabs/pair.wprefab":prefab}});
+});
+
 test("scene files instantiate independent hierarchies and reject invalid loads atomically", async () => {
   const source = `
 import { Component, Entity, Engine, Scene } from "@whatever-engine/api";
 export class Link extends Component { static readonly type="fixture:link"; target: Entity | null=null; text=""; }
 Engine.on("init", async () => {
   try {
-    const first = await Scene.loadScene("core://graph");
-    const second = await Scene.loadScene("core://scenes/graph.wscene");
+    const first = await Scene.loadScene("fixture://graph");
+    const second = await Scene.loadScene("fixture://scenes/graph.wscene");
     if (first.entityCount !== 2 || second.entities().length !== 2 || first.loadTime < 0) throw Error("scene metadata");
     if (first.get("root").id === second.get("root").id) throw Error("instances reused IDs");
     const child = second.get("child");
     if ((await child.requestParent().get())?.id !== second.get("root").id) throw Error("parent");
     const link = await child.requestComponent(Link).get();
     if (link.target.id !== second.get("root").id || link.text !== "root") throw Error("reference remapping");
-    for (const path of ["core://invalid", "core://missing", "core://../outside"]) {
+    for (const path of ["fixture://invalid", "fixture://missing", "fixture://../outside"]) {
       let rejected = false;
       try { await Scene.loadScene(path); } catch { rejected = true; }
       if (!rejected) throw Error("invalid load succeeded: " + path);
@@ -100,8 +123,8 @@ Engine.on("init", async () => {
   } catch (error) { Engine.log("error", "SCENE_FAILURE " + error.stack); Engine.log("info", "FIXTURE_DONE"); }
 });`;
   const result = await runServer(source, { mode: "server", files: {
-    "scenes/graph.wscene": JSON.stringify({version:1,entities:[{script_id:"root",children:[{script_id:"child",components:{"fixture:link":{target:{$entity:"root"},text:"root"}}}]}]}),
-    "scenes/invalid.wscene": JSON.stringify({version:1,entities:[{}, {components:{"fixture:link":{$entity:"missing"}}}]}),
+    "./scenes/graph.wscene": JSON.stringify({version:1,entities:[{script_id:"root",children:[{script_id:"child",components:{"fixture:link":{target:{$entity:"root"},text:"root"}}}]}]}),
+    "./scenes/invalid.wscene": JSON.stringify({version:1,entities:[{}, {components:{"fixture:link":{$entity:"missing"}}}]}),
   }});
   expect(result.code).toBe(0);
   expect(result.stdout).toContain("FIXTURE_DONE");
@@ -321,7 +344,7 @@ Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)start
   const sceneSource=readFileSync(join(repository,"games/test/mods/physics_demo/scripts/scene.ts"),"utf8");
   const authored=JSON.parse(readFileSync(join(repository,"games/test/mods/physics_demo/scenes/playground.wscene"),"utf8"));
   authored.entities.find((entity:{script_id?:string})=>entity.script_id==="cube_spawn").components["core:transform"].position[0]=20;
-  const result=await runServer(source,{mode:"server",files:{"physics-scene.ts":sceneSource,"scenes/playground.wscene":JSON.stringify(authored)}});
+  const result=await runServer(source,{mode:"server",coreAssets:join(repository,"games/test/mods/physics_demo/assets"),files:{"physics-scene.ts":sceneSource,"scenes/playground.wscene":JSON.stringify(authored).replaceAll("physics_demo://","core://")}});
   expect(result.stdout).toContain("PHYSICS_SCENE_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
 });
 
@@ -403,7 +426,7 @@ Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));`;
   expect(result.stdout).not.toContain("CORE_PROBE");
 });
 
-test.each(["core://graph", "core://scenes/graph.wscene", "core://missing", "core://invalid"])("builtin scene load %s runs on the simulation worker with atomic validation", async path => {
+test.each(["fixture://graph", "fixture://scenes/graph.wscene", "fixture://missing", "fixture://invalid"])("builtin scene load %s runs on the simulation worker with atomic validation", async path => {
   const valid = !path.endsWith("missing") && !path.endsWith("invalid");
   const source = `import {Component,Entity,Engine,Scene} from "@whatever-engine/api";
 export class ConsoleLink extends Component {static readonly type="fixture:link";target:Entity|null=null;}
@@ -423,8 +446,8 @@ try {
 }catch(error){Engine.log("error","SCENE_CONSOLE_FAILURE "+error);}
 Engine.log("info","FIXTURE_DONE");});`;
   const result = await runServer(source, {mode:"server",commandsOnReady:[`scene load ${path}`],files:{
-    "scenes/graph.wscene": JSON.stringify({version:1,entities:[{script_id:"root",children:[{components:{"fixture:link":{target:{$entity:"root"}}}}]}]}),
-    "scenes/invalid.wscene": JSON.stringify({version:1,entities:[{}, {components:{"fixture:link":{$entity:"missing"}}}]}),
+    "./scenes/graph.wscene": JSON.stringify({version:1,entities:[{script_id:"root",children:[{components:{"fixture:link":{target:{$entity:"root"}}}}]}]}),
+    "./scenes/invalid.wscene": JSON.stringify({version:1,entities:[{}, {components:{"fixture:link":{$entity:"missing"}}}]}),
   }});
   expect(result.stdout).toContain("SCENE_CONSOLE_OK");
   expect(result.stdout).not.toContain("SCENE_CONSOLE_FAILURE");

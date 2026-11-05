@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "name": "Pine Tree",
+  "description": "Editable pine tree hierarchy from Whatever Starter.",
+  "category": "Nature",
+  "entity": {
+    "children": [
+      {
+        "name": "Trunk",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              0.28,
+              2,
+              0.28
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/cylinder.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/wood_tile.png"
+          }
+        }
+      },
+      {
+        "name": "Lower canopy",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              1.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.6,
+              1.6,
+              1.6
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/tree_canopy.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/forest.png"
+          }
+        }
+      },
+      {
+        "name": "Upper canopy",
+        "components": {
+          "core:transform": {
+            "position": [
+              0,
+              2.4,
+              0
+            ],
+            "rotation": [
+              0,
+              0.0,
+              0,
+              1.0
+            ],
+            "scale": [
+              1.2,
+              1.5,
+              1.2
+            ]
+          },
+          "core:mesh_renderer": {
+            "mesh": "whatever_starter://meshes/tree_canopy.obj",
+            "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+            "texture": "whatever_starter://textures/forest.png"
+          }
+        }
+      }
+    ],
+    "name": "Pine Tree",
+    "script_id": "pine_tree",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    }
+  }
+}

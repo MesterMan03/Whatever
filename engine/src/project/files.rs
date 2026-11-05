@@ -22,6 +22,24 @@ pub fn resource_uri(manifest: &ModManifest, relative: &str) -> Option<String> {
                 .map(String::as_str)
                 .unwrap_or("scenes"),
         )))
+        .chain([
+            (
+                "prefabs",
+                manifest
+                    .mounts
+                    .get("prefabs")
+                    .map(String::as_str)
+                    .unwrap_or("prefabs"),
+            ),
+            (
+                "libraries",
+                manifest
+                    .mounts
+                    .get("libraries")
+                    .map(String::as_str)
+                    .unwrap_or("libraries"),
+            ),
+        ])
     {
         if let Some(tail) = relative.strip_prefix(&format!("{}/", directory.trim_end_matches('/')))
         {
@@ -61,7 +79,9 @@ fn editable(manifest: &ModManifest, relative: &str) -> anyhow::Result<()> {
             "package.json",
             ".gitignore",
             "scripts",
-            "scenes"
+            "scenes",
+            "prefabs",
+            "libraries"
         ]
         .contains(&relative)
             && relative != manifest.assets.root
@@ -213,6 +233,74 @@ impl Project {
                     crate::scene::rewrite_asset_references(&mut value, definitions, old, new);
                     if serde_json::to_vec(&value)? != before {
                         edits.push((path, original, serde_json::to_vec_pretty(&value)?));
+                    }
+                }
+            }
+            if let (Some(old), Some(new)) = (&old_uri, &new_uri) {
+                let mut folders = item
+                    .mounts
+                    .values()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>();
+                folders.extend([
+                    item.assets.root.clone(),
+                    "prefabs".into(),
+                    "libraries".into(),
+                ]);
+                for folder in folders {
+                    let folder = if folder == "." {
+                        mod_root.clone()
+                    } else {
+                        crate::sandbox::resolve_contained(mod_root, &folder)?
+                    };
+                    use crate::vfs::Vfs;
+                    for relative in crate::vfs::DiskLayer::new(&item.meta.id, &folder)
+                        .list(&item.meta.id, "")?
+                    {
+                        if relative
+                            .split('/')
+                            .any(|part| [".git", ".whatever", "node_modules"].contains(&part))
+                        {
+                            continue;
+                        }
+                        if relative.ends_with(".wasset-import.json") {
+                            let path = folder.join(&relative);
+                            if edits.iter().any(|(p, _, _)| p == &path) {
+                                continue;
+                            }
+                            let original = std::fs::read(&path)?;
+                            let mut binding: serde_json::Value = serde_json::from_slice(&original)?;
+                            if let Some(prefix) = binding.get_mut("asset_prefix")
+                                && let Some(text) = prefix.as_str()
+                            {
+                                let changed = replace_prefix(text, old, new);
+                                if changed != text {
+                                    *prefix = changed.into();
+                                    edits.push((
+                                        path,
+                                        original,
+                                        serde_json::to_vec_pretty(&binding)?,
+                                    ));
+                                }
+                            }
+                            continue;
+                        }
+                        if !relative.ends_with(".wprefab") {
+                            continue;
+                        }
+                        let path = folder.join(relative);
+                        if edits.iter().any(|(p, _, _)| p == &path) {
+                            continue;
+                        }
+                        let original = std::fs::read(&path)?;
+                        let mut prefab = crate::scene::PrefabDocument::parse(&original)?;
+                        let mut scene = prefab.scene();
+                        let before = serde_json::to_vec(&scene)?;
+                        crate::scene::rewrite_asset_references(&mut scene, definitions, old, new);
+                        if serde_json::to_vec(&scene)? != before {
+                            prefab.entity = scene.entities.remove(0);
+                            edits.push((path, original, serde_json::to_vec_pretty(&prefab)?));
+                        }
                     }
                 }
             }

@@ -5,3 +5,5 @@ pub use references::{
 };
 
 pub use document::{LoadedScene, SceneDocument, SceneEntity, scene_path};
+mod prefab;
+pub use prefab::{PrefabDocument, prefab_path};

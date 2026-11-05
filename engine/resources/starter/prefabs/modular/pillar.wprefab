@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Pillar",
+  "description": "Editable pillar hierarchy from Whatever Starter.",
+  "category": "Modular",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          1.5,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          0.6,
+          3,
+          0.6
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/cube.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/marble_tile.png"
+      }
+    },
+    "script_id": "pillar"
+  }
+}

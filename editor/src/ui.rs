@@ -27,6 +27,7 @@ impl Editor {
         self.preferences_ui(ctx);
         self.mod_editor_ui(ctx);
         self.asset_actions_ui(ctx);
+        self.prefabs_ui(ctx);
         if self.input_blocked() {
             ctx.data_mut(|state| {
                 state.remove::<hierarchy::DroppedEntity>(egui::Id::new("entity_drop"))

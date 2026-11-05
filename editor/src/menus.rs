@@ -24,9 +24,10 @@ pub(super) enum Action {
     Redo,
     Delete,
     AddEntity,
-    Cube,
-    Sphere,
-    Bean,
+    Prefabs,
+    ImportLibrary,
+    ExportLibrary,
+    SavePrefab,
     Camera,
     AmbientLight,
     DirectionalLight,
@@ -40,9 +41,7 @@ pub(super) enum Action {
 
 pub(super) const PRESETS: &[(&str, Action)] = &[
     ("Empty Entity", Action::AddEntity),
-    ("Cube", Action::Cube),
-    ("Sphere", Action::Sphere),
-    ("Bean / Capsule", Action::Bean),
+    ("Prefab…", Action::Prefabs),
     ("Camera", Action::Camera),
     ("Ambient Light", Action::AmbientLight),
     ("Directional Light", Action::DirectionalLight),
@@ -83,9 +82,12 @@ pub(super) const GROUPS: &[(&str, &[MenuEntry])] = &[
         "Scene",
         &[
             ("entity", "Empty Entity", Action::AddEntity),
-            ("cube", "Cube", Action::Cube),
-            ("sphere", "Sphere", Action::Sphere),
-            ("bean", "Bean", Action::Bean),
+            ("prefab", "Instantiate Prefab…", Action::Prefabs),
+            (
+                "save_prefab",
+                "Save Selected as Prefab…",
+                Action::SavePrefab,
+            ),
             ("camera", "Camera", Action::Camera),
             ("ambient", "Ambient Light", Action::AmbientLight),
             ("directional", "Directional Light", Action::DirectionalLight),
@@ -98,6 +100,16 @@ pub(super) const GROUPS: &[(&str, &[MenuEntry])] = &[
         &[
             ("mod_settings", "Edit Active Mod…", Action::ModSettings),
             ("new_script", "New Script…", Action::NewScript),
+            (
+                "import_library",
+                "Import Asset Library…",
+                Action::ImportLibrary,
+            ),
+            (
+                "export_library",
+                "Export Asset Library…",
+                Action::ExportLibrary,
+            ),
             ("new_mod", "Create Mod…", Action::NewMod),
             ("add_mod", "Add Existing Mod…", Action::AddMod),
             ("settings", "Project & Build Settings…", Action::Settings),

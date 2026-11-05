@@ -17,6 +17,9 @@ Usage:\n\
   wmod project bind-sdk <project-or-directory>\n\
   wmod project add <project-or-directory> <mod-directory>\n\
   wmod package <project-or-directory> --output <build-directory>\n\
+  wmod library pack <folder> --output <file.wasset>\n\
+  wmod library inspect <file.wasset>\n\
+  wmod library import <file.wasset> --project <project> --mod <id>\n\
   wmod runtime-kit --player <binary> --host <binary> --launcher <binary> --source <checkout> --output <new-directory>\n";
 
 struct Arguments {
@@ -101,7 +104,7 @@ fn main() -> anyhow::Result<()> {
         return create::run(args.get(1).map(String::as_str).unwrap_or("."));
     }
     let action = args[0].as_str();
-    let (subcommand, tail) = if matches!(action, "project" | "mod") {
+    let (subcommand, tail) = if matches!(action, "project" | "mod" | "library") {
         (
             args.get(1)
                 .context("missing subcommand; run wmod --help")?
@@ -112,6 +115,33 @@ fn main() -> anyhow::Result<()> {
         ("", &args[1..])
     };
     match (action, subcommand) {
+        ("library", "pack") => {
+            let args = Arguments::parse(tail, &["output"])?;
+            args.count(1)?;
+            let library =
+                project::AssetLibrary::from_directory(Path::new(args.at(0, "library folder")?))?;
+            library.write(Path::new(args.required("output")?))?;
+            tracing::info!(name=%library.manifest.name, files=library.files.len(), "packed asset library");
+        }
+        ("library", "inspect") => {
+            let args = Arguments::parse(tail, &[])?;
+            args.count(1)?;
+            let library = project::AssetLibrary::open(Path::new(args.at(0, "library archive")?))?;
+            use std::io::Write;
+            std::io::stdout().write_all(format!("{:#?}\n", library.manifest).as_bytes())?;
+            tracing::info!(
+                files = library.files.len(),
+                "archive validated without executing content"
+            );
+        }
+        ("library", "import") => {
+            let args = Arguments::parse(tail, &["project", "mod"])?;
+            args.count(1)?;
+            let library = project::AssetLibrary::open(Path::new(args.at(0, "library archive")?))?;
+            let project = Project::open(Path::new(args.required("project")?))?;
+            let imported = project.import_library(args.required("mod")?, &library)?;
+            tracing::info!(path=%imported.directory.display(), reused=imported.reused, "imported editable library");
+        }
         ("project", "create") => {
             let args = Arguments::parse(tail, &["id", "name", "core"])?;
             args.count(1)?;

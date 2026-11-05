@@ -56,9 +56,6 @@ impl Editor {
                     | Action::Duplicate
                     | Action::Rename
                     | Action::AddEntity
-                    | Action::Cube
-                    | Action::Sphere
-                    | Action::Bean
                     | Action::Camera
                     | Action::AmbientLight
                     | Action::DirectionalLight
@@ -82,6 +79,9 @@ impl Editor {
         match action {
             Action::Home => {
                 if self.confirm_leave()? {
+                    self.pending_prefab = None;
+                    self.show_prefabs = false;
+                    self.prefabs.clear();
                     self.stop();
                     self.component_reload.reset();
                     self.project = None;
@@ -261,10 +261,13 @@ impl Editor {
                 self.sync_selection();
                 self.preview_dirty = true;
             }
+            Action::Prefabs => {
+                self.show_prefabs = true;
+            }
+            Action::ImportLibrary => self.choose_library_import()?,
+            Action::ExportLibrary => self.export_library()?,
+            Action::SavePrefab => self.save_prefab()?,
             Action::AddEntity
-            | Action::Cube
-            | Action::Sphere
-            | Action::Bean
             | Action::Camera
             | Action::AmbientLight
             | Action::DirectionalLight
@@ -292,6 +295,8 @@ impl Editor {
         Ok(())
     }
     pub(super) fn set_project(&mut self, project: Project) -> anyhow::Result<()> {
+        self.pending_prefab = None;
+        self.show_prefabs = false;
         self.preview_camera = None;
         self.component_reload.reset();
         if project.path.parent().is_some_and(|root| {
@@ -390,6 +395,7 @@ impl Editor {
             self.collect_mod_files(&root, &manifest)?;
         }
         self.resources.sort_by(|a, b| a.relative.cmp(&b.relative));
+        self.refresh_prefabs()?;
         Ok(())
     }
     pub(super) fn scene_directory(&self) -> anyhow::Result<PathBuf> {

@@ -15,6 +15,16 @@ function inspect(source: string, owner = "fixture") {
 }
 
 describe("component source metadata", () => {
+  test("ignores local trash and staging scripts when discovering live components", () => {
+    const root = mkdtempSync(join(tmpdir(), "whatever-component-trash-"));
+    try {
+      mkdirSync(join(root, ".whatever", "trash"), { recursive: true });
+      const source = 'import { Component } from "@whatever-engine/api"; export class Live extends Component {}';
+      writeFileSync(join(root, "live.ts"), source);
+      writeFileSync(join(root, ".whatever", "trash", "old.ts"), source);
+      expect(inspectComponents(root, "fixture").map((definition) => definition.id)).toEqual(["fixture:Live"]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test("the game core can export custom component classes", () => {
     const [definition] = inspect('import { Component } from "@whatever-engine/api"; export class Player extends Component { speed = 3; }', "core");
     expect(definition?.id).toBe("core:Player");

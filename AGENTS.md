@@ -71,7 +71,7 @@ bun run format:check
 bun run build:runtime
 ```
 
-The shipped core template is metadata only; project scaffolding adds its game entry script and initial scene. Editor primitive creation imports editable assets into the scene-owning mod. Put engine diagnostic/demo tools in `games/test/mods/debug`; keep protocols/examples in `games/test/mods/network_example`. Headless stdin uses the same command registry as the client console. Project autocomplete references the installed SDK through an ignored `.whatever/tsconfig.sdk.json`; never copy API declarations into new projects.
+The shipped core template is metadata only; project scaffolding adds its game entry script and initial scene. Object templates are data-driven `.wprefab` documents; `.wasset` ZIP libraries import editable content into a mod's `libraries/` mount. Never add engine-native Cube/Sphere/game object definitions. See `docs/ASSETS.md`. Put engine diagnostic/demo tools in `games/test/mods/debug`; keep protocols/examples in `games/test/mods/network_example`. Headless stdin uses the same command registry as the client console. Project autocomplete references the installed SDK through an ignored `.whatever/tsconfig.sdk.json`; never copy API declarations into new projects.
 
 ## Versioning
 

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Stone Plinth",
+  "description": "Editable stone plinth hierarchy from Whatever Starter.",
+  "category": "Props",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/pedestal.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/marble_tile.png"
+      }
+    },
+    "script_id": "stone_plinth"
+  }
+}

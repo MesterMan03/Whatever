@@ -4,6 +4,13 @@ Mods with a `[script]` section in `mod.toml` run as a Bun subprocess. The engine
 communicates with each script over NDJSON on stdin/stdout. The `@whatever-engine/api`
 package abstracts the wire protocol.
 
+`Prefab.spawn(path): Promise<PrefabInstance>` instantiates a `.wprefab` entity tree
+in the next command batch. The result exposes `root: Entity`, `get(scriptId)`,
+`entities()`, `entityCount`, `path` and `loadTime`, with fresh IDs and local named
+references for every instance. Creation is atomic and enforces direct mod
+dependencies. Instances are independent copies. See [Asset libraries and
+prefabs](ASSETS.md) for the JSON format, editor catalog and `.wasset` imports.
+
 ```ts
 import { Engine, Input, Time, Window, File, Scene, EntityRef, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
 ```
@@ -1040,7 +1047,9 @@ Mutable drafts for `editComponent("core:text_renderer")`. Renders a UTF-8 string
 | `getColor()` | `[r, g, b, a]` | Copy of the colour tuple |
 | `setColor(r, g, b, a)` | `this` | Change the colour |
 
-Text is rendered on top of sprites. The engine ships Noto Sans as `core://fonts/default.ttf`; any mod can supply alternative fonts as TTF/OTF assets and pass the VFS path in the `font` field.
+Text is rendered on top of sprites. The official starter library includes Noto Sans;
+after import its path is `<mod>://libraries/whatever_starter/fonts/default.ttf`.
+Mods may supply other TTF/OTF fonts and pass their VFS path in the `font` field.
 
 ```ts
 // Spawn a white label

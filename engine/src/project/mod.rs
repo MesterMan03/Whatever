@@ -4,6 +4,11 @@ mod deployment;
 mod files;
 pub use files::resource_uri;
 mod kit;
+mod library;
+mod library_archive;
+#[cfg(test)]
+mod library_tests;
+pub use library::{AssetLibrary, LibraryImport, LibraryManifest};
 mod manifest;
 mod paths;
 mod scaffold;

@@ -28,6 +28,13 @@ Other package imports, including `node:` and `bun:` modules, are denied initiall
 
 ## API
 
+### `Prefab`
+
+- `Prefab.spawn(path)` — create an independent hierarchy in a command batch; returns `Promise<PrefabInstance>`
+- `PrefabInstance.root`, `.get(scriptId)`, `.entities()` — access the fresh root and its local named descendants
+
+Prefab JSON and library imports: [`docs/ASSETS.md`](../docs/ASSETS.md).
+
 ### `Engine`
 
 - `Engine.mode` — read-only `"client" | "server"`, available before top-level evaluation

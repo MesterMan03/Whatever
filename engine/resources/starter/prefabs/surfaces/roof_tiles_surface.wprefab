@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "name": "Roof Tiles Surface",
+  "description": "Editable roof tiles surface hierarchy from Whatever Starter.",
+  "category": "Surfaces",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          3,
+          0.15,
+          3
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/cube.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/roof_tiles_tile.png"
+      }
+    },
+    "script_id": "roof_tiles_surface"
+  }
+}

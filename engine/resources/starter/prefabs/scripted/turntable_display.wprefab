@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "name": "Turntable Display",
+  "description": "Editable visual behavior. Requires a script-enabled receiving mod; no gameplay logic is installed into the engine.",
+  "category": "Scripted",
+  "entity": {
+    "name": "",
+    "components": {
+      "core:transform": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0.0,
+          0,
+          1.0
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "core:mesh_renderer": {
+        "mesh": "whatever_starter://meshes/pedestal.obj",
+        "shader": "whatever_starter://shaders/mesh_lit.wgsl",
+        "texture": "whatever_starter://textures/stone.png"
+      },
+      "whatever_starter:StarterTurntable": {}
+    },
+    "script_id": "turntable_display"
+  }
+}

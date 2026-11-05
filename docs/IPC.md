@@ -6,6 +6,14 @@ independent of the engine release version, scene file version, and QUIC network
 protocol.
 
 For the supplied TypeScript implementation, see [Scripting API](SCRIPTING.md).
+
+`PrefabSpawn { request_id, path }` is an application command in a normal
+`CommandBatch`. It loads version 1 `.wprefab` JSON through VFS, checks the caller's
+direct mod dependency and the template's asset/component dependencies, and creates
+one independent root hierarchy atomically. Its response reuses
+`SceneLoaded { request_id, scene, error }`; `scene.entity_ids[0]` is the root and
+`script_ids` maps prefab-local names to the new IDs. Existing `SceneLoad` behavior
+is unchanged. Archives are authoring inputs, never IPC executable payloads.
 For the execution boundary, see [Mod runtime policy](SANDBOX.md).
 
 ## What can be replaced today

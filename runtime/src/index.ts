@@ -20,6 +20,7 @@ export { Time } from "./time.ts";
 export { Window } from "./components/window.ts";
 export { File } from "./components/file.ts";
 export { BuiltInComponents, Entity, PendingEntity, LoadedScene, Scene } from "./components/ecs.ts";
+export { Prefab, PrefabInstance } from "./components/ecs.ts";
 export type { Pending } from "./pending.ts";
 export { EntityRef } from "./references.ts";
 export { Physics } from "./components/physics.ts";

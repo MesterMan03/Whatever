@@ -158,6 +158,12 @@ pub fn discover_and_load(
         mounts
             .entry("scenes".into())
             .or_insert_with(|| "scenes".into());
+        mounts
+            .entry("prefabs".into())
+            .or_insert_with(|| "prefabs".into());
+        mounts
+            .entry("libraries".into())
+            .or_insert_with(|| "libraries".into());
         for (prefix, directory) in mounts {
             anyhow::ensure!(
                 crate::sandbox::valid_storage_id(&prefix),
