@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "Whatever"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "whatever-engine",
@@ -5295,7 +5295,7 @@ dependencies = [
 
 [[package]]
 name = "whatever-editor"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "egui",
@@ -5316,7 +5316,7 @@ dependencies = [
 
 [[package]]
 name = "whatever-engine"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5359,11 +5359,11 @@ dependencies = [
 
 [[package]]
 name = "whatever-launcher"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "whatever-render-deps"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -5376,7 +5376,7 @@ dependencies = [
 
 [[package]]
 name = "whatever-script-vm"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "scoped-tls-hkt",
@@ -5879,7 +5879,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wmod"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "inquire",
