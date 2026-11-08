@@ -105,9 +105,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          dotnet tool install wix --version 5.0.2 --tool-path target/build-tools/wix
+          # Rust cache cleanup removes NuGet metadata inside target/. Keep tools separate.
+          $wixTools = Join-Path $env:RUNNER_TEMP 'whatever-wix'
+          dotnet tool install wix --version 5.0.2 --tool-path $wixTools
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $wix = Join-Path $env:GITHUB_WORKSPACE 'target/build-tools/wix/wix.exe'
+          $wix = Join-Path $wixTools 'wix.exe'
           & $wix extension add -g WixToolset.UI.wixext/5.0.2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           (Split-Path $wix) >> $env:GITHUB_PATH

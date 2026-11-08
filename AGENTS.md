@@ -89,6 +89,9 @@ Linux/macOS native builds embed source-build library search paths. Editor distri
 CI builds and tests release only; `WHATEVER_TEST_PROFILE=release` selects those
 binaries for the Bun integration tests. The game launcher overrides the workspace's
 dynamic-linking flags through its Cargo environment and statically links Rust std.
+For WSL verification, keep the checkout and Cargo build outputs on the Linux
+filesystem (for example, under the WSL user's home directory). Do not run expensive
+builds from a Windows-mounted path such as `/mnt/c`.
 Development uses stock Bun for package installation, builds, tests and documentation.
 Bun is not part of the shipped mod runtime; mods execute in the embedded QuickJS Wasm VM.
 Windows/Linux distributions keep real executables and private libraries once in
