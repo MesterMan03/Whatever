@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
+import { nativeBinary } from "./native.ts";
 import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -44,7 +45,7 @@ test("Coinwatch runs its actual components, prefabs and physics through the embe
   Object.assign(prefab.entity.components["core:EnemyNavigation"], { roamSpeed: .1, chaseSpeed: .1, sightFov: 360, chaseSeconds: 1, cooldownSeconds: .6, sightInterval: .05 });
   writeFileSync(enemyPath, JSON.stringify(prefab));
   writeFileSync(scenePath, JSON.stringify(scene));
-  const binary = process.env.WHATEVER_TEST_PLAYER ?? join(root, "target/debug/Whatever" + (process.platform === "win32" ? ".exe" : ""));
+  const binary = nativeBinary("Whatever");
   const child = spawnCaptured([binary, "--mode", "server", "--project", directory], { env: { ...process.env, RUST_LOG: "whatever_engine=info" } });
   let output = "";
   const reading = (async () => { for await (const bytes of child.stdout) output += new TextDecoder().decode(bytes).replace(/\x1b\[[0-9;]*m/g, ""); })();
@@ -52,7 +53,8 @@ test("Coinwatch runs its actual components, prefabs and physics through the embe
   async function waitFor(predicate: () => boolean, timeout = 15000): Promise<void> {
     const start = Date.now();
     while (!predicate()) {
-      if (Date.now() - start > timeout || child.exitCode !== null) throw Error(output + "\nTimed out waiting for game");
+      if (child.exitCode !== null) throw Error(`Coinwatch exited ${child.exitCode}\n${output}\n${await errors}`);
+      if (Date.now() - start > timeout) throw Error(output + "\nTimed out waiting for game");
       await sleep(20);
     }
   }

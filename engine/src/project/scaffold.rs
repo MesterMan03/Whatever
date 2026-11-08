@@ -29,14 +29,14 @@ impl ModOptions {
 pub fn default_core() -> anyhow::Result<PathBuf> {
     if let Some(root) = super::installation::distribution_root()? {
         let installed = root.join("mods/core");
-        if installed.join("mod.toml").is_file() {
-            return Ok(installed);
-        }
+        ensure!(
+            installed.join("mod.toml").is_file(),
+            "core template is missing from this editor installation"
+        );
+        return Ok(installed);
     }
-    if cfg!(debug_assertions) {
-        return Ok(crate::development_root().join("engine/resources/core"));
-    }
-    anyhow::bail!("core template is missing from this editor installation")
+    super::installation::development_resource("engine/resources/core")
+        .context("core template is missing from this editor installation")
 }
 
 pub fn create_mod(directory: &Path, options: &ModOptions) -> anyhow::Result<PathBuf> {

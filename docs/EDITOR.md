@@ -338,8 +338,16 @@ The result is a self-contained editor distribution.
 
 Build native binaries with `bun run build:native -- --release` before packaging.
 The helper configures the dynamic Rust library path for build tools and stages
-the standard library for direct executable launches. Native libraries and
+the standard library for direct executable launches. Linux/macOS source builds
+also embed library search paths. The branded launcher is built with static Rust
+runtime linkage independently of the shared engine libraries. Native libraries and
 executables form a single versioned distribution; replace them together.
+Distribution CI builds and tests the release profile throughout, including native
+unit tests and game integrations, so it does not also compile the dev profile.
+Set `WHATEVER_TEST_PROFILE=release` to run the integration scripts against a local
+release build. Source executables in the checkout's Cargo output directory can use
+the checkout SDK/core/starter resources in either profile; relocated executables
+must use their installed payload.
 
 Generate an installer from that validated portable payload:
 

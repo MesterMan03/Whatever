@@ -19,6 +19,29 @@ pub(super) fn binary_directory(root: &Path) -> PathBuf {
     }
 }
 
+/// Both debug and release source builds can use checkout resources. Relocated
+/// executables must use their installed payload, even on a developer's machine.
+pub(super) fn development_resource(relative: &str) -> Option<PathBuf> {
+    let source = crate::development_root().canonicalize().ok()?;
+    if !source.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| source.join("target"));
+    let target = source.join(target).canonicalize().ok()?;
+    if !std::env::current_exe()
+        .ok()?
+        .canonicalize()
+        .ok()?
+        .starts_with(target)
+    {
+        return None;
+    }
+    let resource = source.join(relative);
+    resource.exists().then_some(resource)
+}
+
 /// The package collector records the player's complete private dependency closure.
 pub(super) fn player_libraries(directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let manifest = directory.join("native-libraries.json");

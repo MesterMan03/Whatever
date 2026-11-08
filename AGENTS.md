@@ -85,6 +85,10 @@ bun run build:guest
 
 Native builds use dynamic Rust libraries; `build:native` configures loader paths,
 stages Rust std and rebuilds the root game launcher without private dependencies.
+Linux/macOS native builds embed source-build library search paths. Editor distribution
+CI builds and tests release only; `WHATEVER_TEST_PROFILE=release` selects those
+binaries for the Bun integration tests. The game launcher overrides the workspace's
+dynamic-linking flags through its Cargo environment and statically links Rust std.
 Development uses stock Bun for package installation, builds, tests and documentation.
 Bun is not part of the shipped mod runtime; mods execute in the embedded QuickJS Wasm VM.
 Windows/Linux distributions keep real executables and private libraries once in

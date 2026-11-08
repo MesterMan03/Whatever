@@ -1,16 +1,17 @@
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 pub fn starter_library() -> anyhow::Result<PathBuf> {
     if let Some(root) = super::installation::distribution_root()? {
         let installed = root.join("resources/starter");
-        if installed.join("wasset.toml").is_file() {
-            return Ok(installed);
-        }
+        anyhow::ensure!(
+            installed.join("wasset.toml").is_file(),
+            "Official starter library is missing from this editor installation"
+        );
+        return Ok(installed);
     }
-    if cfg!(debug_assertions) {
-        return Ok(crate::development_root().join("engine/resources/starter"));
-    }
-    anyhow::bail!("Official starter library is missing from this editor installation")
+    super::installation::development_resource("engine/resources/starter")
+        .context("Official starter library is missing from this editor installation")
 }
 
 /// Native component defaults use the same ordinary library import as the catalog.

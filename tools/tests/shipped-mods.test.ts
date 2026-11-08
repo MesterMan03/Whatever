@@ -1,5 +1,6 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
+import { nativeBinary } from "./native.ts";
 import {test,expect} from "bun:test";
 import {mkdtempSync,rmSync} from "node:fs";
 import {join,resolve,dirname} from "node:path";
@@ -8,7 +9,7 @@ import {fileURLToPath} from "node:url";
 const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 test("shipped server suite registers the shared protocol and runs consolidated diagnostics",async()=>{
   const directory=mkdtempSync(join(tmpdir(),"whatever-shipped-"));
-  const child=spawnCaptured([join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":"")),"--mods",join(repository,"games/test/mods"),"--mode","server"],{
+  const child=spawnCaptured([nativeBinary("Whatever"),"--mods",join(repository,"games/test/mods"),"--mode","server"],{
     cwd:directory,env:{...process.env,RUST_LOG:"whatever_engine=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:""},timeout:20_000,
   });
   let stdout="",stage=0;

@@ -190,6 +190,7 @@ tools/                  VM builds, generated assets and integration tests
   package-installers.ts MSI, DEB and PKG assembly with editor command registration
   test-msi.ps1          Disposable-runner install, repair, upgrade and uninstall checks
   process.ts            Native child-process capture for packaging and tests
+  tests/native.ts       Shared debug/release binary selection for integration tests
   generate-starter.py   Reproducible official library content generation
 .github/workflows/
   editor.yml            Build/test portable archives and installers on Windows/Linux/macOS
@@ -397,7 +398,7 @@ Lines are written to `logs/latest.log` alongside normal output and appear in the
 
 
 Portable editor CI runs on Windows 2025, Ubuntu 24.04 and macOS 15 (Apple Silicon). Each job
-builds and tests the workspace and embedded VM, then assembles a release
+builds and tests the workspace in the release profile, then assembles a release
 archive and platform installer and runs relocation and installation checks. Windows
 uses MSI, Ubuntu/Debian uses DEB, and macOS uses PKG. Installers register
 `whatever-editor` and `wmod` for terminal use. Version tags publish the

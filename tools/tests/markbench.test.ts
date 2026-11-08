@@ -1,11 +1,12 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
+import { nativeBinary } from "./native.ts";
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, cpSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 const repository = resolve(import.meta.dirname, "../..");
-const binary = process.env.WHATEVER_TEST_PLAYER ?? join(repository, "target/debug/Whatever" + (process.platform === "win32" ? ".exe" : ""));
+const binary = nativeBinary("Whatever");
 test("Markbench runs every headless workload, produces native timings and a complete score", async () => {
   const directory = mkdtempSync(join(tmpdir(), "whatever-markbench-"));
   mkdirSync(join(directory, "mods/core"), { recursive: true });

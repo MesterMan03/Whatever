@@ -2,12 +2,16 @@ use anyhow::{Context, ensure};
 use std::path::{Path, PathBuf};
 
 pub fn installed_sdk() -> anyhow::Result<PathBuf> {
-    let mut candidates = super::installation::distribution_root()?
+    let distribution = super::installation::distribution_root()?;
+    let mut candidates = distribution
+        .as_ref()
         .map(|root| root.join("sdk/index.d.ts"))
         .into_iter()
         .collect::<Vec<_>>();
-    if cfg!(debug_assertions) {
-        candidates.push(crate::development_root().join("runtime/dist/index.d.ts"));
+    if distribution.is_none()
+        && let Some(source) = super::installation::development_resource("runtime/dist/index.d.ts")
+    {
+        candidates.push(source);
     }
     let sdk = candidates
         .into_iter()

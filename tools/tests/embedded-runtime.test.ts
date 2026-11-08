@@ -1,6 +1,7 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
 import { collectNativeLibraries } from "../native-libraries.ts";
+import { nativeBinary } from "./native.ts";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -8,7 +9,7 @@ import { tmpdir } from "node:os";
 
 const repository = resolve(import.meta.dirname, "../..");
 const suffix = process.platform === "win32" ? ".exe" : "";
-const built = process.env.WHATEVER_TEST_PLAYER ?? join(repository, "target/debug/Whatever" + suffix);
+const built = nativeBinary("Whatever");
 let directory: string;
 let player: string;
 beforeAll(() => {

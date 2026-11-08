@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { text } from "node:stream/consumers";
 import { checkVersions } from "./check-versions.ts";
 import { spawnCaptured } from "./process.ts";
-import { collectNativeLibraries, windowsImports } from "./native-libraries.ts";
+import { collectNativeLibraries } from "./native-libraries.ts";
 const releaseVersion = checkVersions();
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const option = (name: string, fallback?: string) => {
@@ -79,10 +79,13 @@ collectNativeLibraries(
   packageBinaries,
   ["whatever-editor", "wmod", "Whatever", "whatever-launcher"].map((name) => name + extension),
 );
+const dependencies = JSON.parse(
+  readFileSync(join(packageBinaries, "native-libraries.json"), "utf8"),
+);
+const launcherLibraries: string[] = dependencies.programs["whatever-launcher" + extension];
 if (
-  process.platform === "win32" &&
-  windowsImports(join(packageBinaries, "whatever-launcher.exe")).some((name) =>
-    /^(vcruntime|msvcp|std-|whatever_)/i.test(name),
+  launcherLibraries.some((name) =>
+    /^(?:lib)?(?:std-|whatever_)|^(?:vcruntime|msvcp|concrt)/i.test(name),
   )
 ) {
   throw Error("Build the self-contained game launcher with bun run build:native");

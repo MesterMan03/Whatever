@@ -32,6 +32,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: 2
+      WHATEVER_TEST_PROFILE: release
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -66,15 +67,23 @@ jobs:
         shell: bash
         run: |
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy --workspace --all-targets --release --locked -- -D warnings
       - name: Check mod formatting
         shell: bash
         run: bun run format:check
-      - name: Build and test workspace
+      - name: Build release workspace
+        shell: bash
+        run: bun tools/build-native.ts --release
+      - name: Save optimized build outputs before testing and packaging
+        if: steps.release-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: target/release
+          key: ${{ steps.release-cache.outputs.cache-primary-key }}
+      - name: Test the release build
         shell: bash
         run: |
-          bun tools/build-native.ts
-          cargo test --workspace --locked
+          cargo test --workspace --release --locked -- --include-ignored
           bun run test:network
           bun run test:runtime
           bun run test:embedded
@@ -85,18 +94,6 @@ jobs:
           bun run test:mods
           bun run test:project
           bun run test:markbench
-          cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
-          cargo test -p whatever-engine --locked network_messenger -- --ignored
-          cargo test -p whatever-engine --locked editor_controls_apply_before_physics -- --ignored
-      - name: Build release workspace
-        shell: bash
-        run: bun tools/build-native.ts --release
-      - name: Save optimized build outputs before packaging
-        if: steps.release-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: target/release
-          key: ${{ steps.release-cache.outputs.cache-primary-key }}
       - name: Assemble, relocate, smoke-test and archive editor
         shell: bash
         run: bun run package:editor
@@ -161,7 +158,10 @@ jobs:
           retention-days: 3
           path: |
             target/ci-server-failures/
-            target/debug/Whatever.exe
-            target/debug/Whatever
-            target/debug/*.dll
+            target/coinwatch-qa/
+            target/release/Whatever.exe
+            target/release/Whatever
+            target/release/*.dll
+            target/release/*.so
+            target/release/*.dylib
           if-no-files-found: ignore
