@@ -1,4 +1,4 @@
-import {describe, expect, test} from "vitest";
+import {describe, expect, test} from "bun:test";
 import {Type, defineStruct, definePacket, defineSpecification, toWire, fromWire} from "../../runtime/src/network/schema.ts";
 import {dataProxy} from "../../runtime/src/network/data.ts";
 describe("network specification SDK", () => {

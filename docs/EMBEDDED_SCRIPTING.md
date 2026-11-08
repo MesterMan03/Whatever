@@ -77,18 +77,18 @@ Coinwatch uses RunSession component links for central callbacks.
 
 ## Maintainer build
 
-Install Node.js 24 LTS (24.12+) with npm, Rust's `wasm32-unknown-unknown` target and
+Install stock Bun 1.4.2+, Rust's `wasm32-unknown-unknown` target and
 a Wasm-capable Clang/LLVM toolchain. Windows builds recognize LLVM
 under `target/build-tools` and use copied WASI headers to avoid extended-path bugs.
 
 ```sh
-npm ci
+bun install --frozen-lockfile
 rustup target add wasm32-unknown-unknown
-npm run build:runtime
-npm run build:guest
-npm run build:native
-npm run test:embedded
-npm run test:guest
+bun run build:runtime
+bun run build:guest
+bun run build:native
+bun run test:embedded
+bun run test:guest
 ```
 
 Rebuild the guest after changes to the SDK/compiler or guest sources. The ignored

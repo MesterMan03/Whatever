@@ -55,7 +55,7 @@ export function checkVersions(tag?: string): string {
 if (import.meta.main) {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 2 || args[0] !== "--tag"))
-    throw Error("Usage: npm run check:versions -- [--tag v<version>]");
+    throw Error("Usage: bun run check:versions -- [--tag v<version>]");
   const version = checkVersions(args[1]);
   console.log(`Verified Whatever workspace, Cargo lockfile and @whatever-engine/api at ${version}.`);
 }

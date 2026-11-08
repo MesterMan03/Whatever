@@ -368,7 +368,7 @@ Unique commands use plain names. Collisions qualify all participants as `mod_id:
 
 ```sh
 # Regenerate type declarations after editing index.ts
-npm run build:types
+bun run build:types
 ```
 
 Full API documentation is in [`docs/SCRIPTING.md`](../docs/SCRIPTING.md) at the repo root.

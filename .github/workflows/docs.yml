@@ -9,7 +9,7 @@ on:
       - 'runtime/**'
       - 'engine/src/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -18,7 +18,7 @@ on:
       - 'runtime/**'
       - 'engine/src/**'
       - 'package.json'
-      - 'package-lock.json'
+      - 'bun.lock'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -38,13 +38,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
+          bun-version: '1.4.2'
       - name: Install API development dependencies
-        run: npm ci --ignore-scripts
+        run: bun install --frozen-lockfile --ignore-scripts
       - name: Rebuild API declarations and type-check examples
-        run: npm run docs:check-examples
+        run: bun run docs:check-examples
 
   build:
     name: Build and check docs
@@ -57,11 +57,11 @@ jobs:
         working-directory: website
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
+          bun-version: '1.4.2'
       - name: Install docs dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
       - name: Default to a project-site URL for pull request checks
         shell: bash
         env:
@@ -88,7 +88,7 @@ jobs:
           echo "DOCS_SITE=$PAGES_ORIGIN" >> "$GITHUB_ENV"
           echo "DOCS_BASE=${PAGES_BASE:-/}" >> "$GITHUB_ENV"
       - name: Build, index search, and verify links
-        run: npm run build
+        run: bun run build
       - name: Upload GitHub Pages artifact
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v4

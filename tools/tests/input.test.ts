@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test } from "bun:test";
 import { Input, PressedKeys, _updateInput, type KeyCode } from "../../runtime/src/input.ts";
 import { Time, _updateTime } from "../../runtime/src/time.ts";
 

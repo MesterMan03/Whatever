@@ -58,7 +58,7 @@ native state and replicates no scene to scripts: snapshot bytes/application and
 publication fields remain zero for comparison with historical reports. `hosts`
 now counts isolated VMs. Compare the same engine build and workload configuration.
 
-`npm run test:markbench` runs all eight headless stages automatically. Set
+`bun run test:markbench` runs all eight headless stages automatically. Set
 `WHATEVER_TEST_PLAYER` to a freshly built player, and optionally
 `WHATEVER_MARKBENCH_PRESET=standard` for the full stress pass. `test:snapshots`
 checks scoring math; live-state and retained-snapshot checks are in `test:embedded`.

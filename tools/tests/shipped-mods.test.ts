@@ -1,6 +1,6 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
-import {test,expect} from "vitest";
+import {test,expect} from "bun:test";
 import {mkdtempSync,rmSync} from "node:fs";
 import {join,resolve,dirname} from "node:path";
 import {tmpdir} from "node:os";

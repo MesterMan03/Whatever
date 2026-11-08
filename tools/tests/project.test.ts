@@ -1,6 +1,6 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
-import { expect, test } from "vitest";
+import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,7 +10,7 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const extension = process.platform === "win32" ? ".exe" : "";
 const binary = (name: string) => join(repository, "target/debug", name + extension);
 for (const name of ["wmod", "Whatever", "whatever-launcher"]) {
-  if (!existsSync(binary(name))) throw new Error("Run npm run build:native before test:project");
+  if (!existsSync(binary(name))) throw new Error("Run bun run build:native before test:project");
 }
 async function wmod(args: string[], success = true, executable=binary("wmod")) {
   const child = spawnCaptured([executable, ...args]);

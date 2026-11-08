@@ -61,30 +61,32 @@ resolve mod-local class instances; isolated mods use messaging for communication
 ## Commands
 
 ```sh
-npm ci
+bun install --frozen-lockfile
 rustup target add wasm32-unknown-unknown
-npm run build:runtime
-npm run build:guest
-npm run test:embedded
-npm run test:guest
-npm run test:network
-npm run test:runtime
-npm run build:native
+bun run build:runtime
+bun run build:guest
+bun run test:embedded
+bun run test:guest
+bun run test:network
+bun run test:runtime
+bun run build:native
 cargo run
 cargo run -- --mode server
 cargo run -- --debug=all
 cargo run -- --debug=ipc,modloader
-npm run test:native
-npm run format
-npm run format:check
+bun run test:native
+bun run format
+bun run format:check
 
 # Rebuild @whatever-engine/api bundle + declarations after editing runtime/src/
-npm run build:runtime
-npm run build:guest
+bun run build:runtime
+bun run build:guest
 ```
 
 Native builds use dynamic Rust libraries; `build:native` configures loader paths,
 stages Rust std and rebuilds the root game launcher without private dependencies.
+Development uses stock Bun for package installation, builds, tests and documentation.
+Bun is not part of the shipped mod runtime; mods execute in the embedded QuickJS Wasm VM.
 Windows/Linux distributions keep real executables and private libraries once in
 `bin/`, with data at the root. macOS uses `.app/Contents/MacOS`. Game exports keep
 their branded launcher at the root and player/libraries in `bin/`. Packaging records
@@ -102,7 +104,7 @@ identifiers. Always skip from `4` to `6`: `0.4.0` → `0.6.0`, `0.14.0` → `0.1
 
 This applies to the shared engine, editor, launcher, CLI and scripting API release
 version and matching release tags. Game, mod, dependency and protocol/schema
-versions remain independent. `npm run check:versions` enforces the release rule.
+versions remain independent. `bun run check:versions` enforces the release rule.
 
 ## Adding a New Mod
 
@@ -119,7 +121,7 @@ versions remain independent. `npm run check:versions` enforces the release rule.
 - `mod.rs` files are re-exports only
 - Add dependencies only when correct implementation would take more than a day or requires significant platform complexity
 
-Mod JavaScript/TypeScript/JSON sources use the root Biome configuration: 2 spaces, 100 columns, LF. Run `npm run format` after editing mods or game mods, then `npm run format:check`. Keep assets and generated output out of formatting.
+Mod JavaScript/TypeScript/JSON sources use the root Biome configuration: 2 spaces, 100 columns, LF. Run `bun run format` after editing mods or game mods, then `bun run format:check`. Keep assets and generated output out of formatting.
 
 ## Documentation
 
@@ -127,7 +129,7 @@ Mod JavaScript/TypeScript/JSON sources use the root Biome configuration: 2 space
 `docs/SCRIPTING.md` and `runtime/README.md` to reflect the changes (`docs/SCRIPTING.md` may contain detailed
 type descriptions, while `runtime/README.md` should only have basic function headers).
 The doc must stay in sync with the actual exported namespaces, types, and IPC messages.
-After editing, run `npm run build:runtime` to rebuild `runtime/dist/`.
+After editing, run `bun run build:runtime` to rebuild `runtime/dist/`.
 
 **When the project layout changes** (new module added, directory renamed or removed, new
 top-level file), update the "Project Layout" block in `README.md` to match.

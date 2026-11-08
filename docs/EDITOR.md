@@ -177,7 +177,7 @@ Release maintainers use `wmod runtime-kit` to assemble the support payload from
 the player and launcher binaries. CI adds the editor and CLI to that distribution.
 `package --runtime <distribution>` remains an advanced override.
 
-Run `npm run test:native`, `npm run test:server` and `npm run test:project`
+Run `bun run test:native`, `bun run test:server` and `bun run test:project`
 after changing this workflow. The project integration test checks automatic
 installed-payload discovery, launcher metadata, safe rebuilding and a relocated
 game running with an empty PATH. The physics demo loads its authored playground
@@ -268,7 +268,7 @@ releases it on console opening, focus loss or window destruction. Child cursor
 messages explicitly restore visibility when capture ends.
 
 The native player embeds the SDK, TypeScript compiler and QuickJS Wasm VM. Source
-maintainers rebuild these with `npm run build:runtime` and `npm run build:guest`
+maintainers rebuild these with `bun run build:runtime` and `bun run build:guest`
 before compiling engine binaries. Distributed editor and game builds compile mods
 internally.
 
@@ -333,10 +333,10 @@ using its installed core and SDK, validates it through the installed editor, and
 builds a game and runs its branded launcher and player headlessly with an empty
 PATH before archiving.
 The result is a self-contained editor distribution.
-`npm run package:editor` packages a release build. For a local smoke test, run
-`npm run package:editor -- --profile debug --output ./dist/editor-smoke`.
+`bun run package:editor` packages a release build. For a local smoke test, run
+`bun run package:editor -- --profile debug --output ./dist/editor-smoke`.
 
-Build native binaries with `npm run build:native -- --release` before packaging.
+Build native binaries with `bun run build:native -- --release` before packaging.
 The helper configures the dynamic Rust library path for build tools and stages
 the standard library for direct executable launches. Native libraries and
 executables form a single versioned distribution; replace them together.
@@ -344,8 +344,8 @@ executables form a single versioned distribution; replace them together.
 Generate an installer from that validated portable payload:
 
 ```sh
-npm run package:editor
-npm run package:installers -- --source dist/WhateverEditor-windows-x86_64
+bun run package:editor
+bun run package:installers -- --source dist/WhateverEditor-windows-x86_64
 ```
 
 Use the matching platform/architecture source directory on Linux or macOS. The

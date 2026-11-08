@@ -69,28 +69,28 @@ jobs:
           cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Check mod formatting
         shell: bash
-        run: npm run format:check
+        run: bun run format:check
       - name: Build and test workspace
         shell: bash
         run: |
-          node tools/build-native.ts
+          bun tools/build-native.ts
           cargo test --workspace --locked
-          npm run test:network
-          npm run test:runtime
-          npm run test:embedded
-          npm run test:coinwatch
-          npm run test:components
-          npm run test:snapshots
-          npm run test:server -- --bail=1
-          npm run test:mods
-          npm run test:project
-          npm run test:markbench
+          bun run test:network
+          bun run test:runtime
+          bun run test:embedded
+          bun run test:coinwatch
+          bun run test:components
+          bun run test:snapshots
+          bun run test:server -- --bail=1
+          bun run test:mods
+          bun run test:project
+          bun run test:markbench
           cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
           cargo test -p whatever-engine --locked network_messenger -- --ignored
           cargo test -p whatever-engine --locked editor_controls_apply_before_physics -- --ignored
       - name: Build release workspace
         shell: bash
-        run: node tools/build-native.ts --release
+        run: bun tools/build-native.ts --release
       - name: Save optimized build outputs before packaging
         if: steps.release-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -99,7 +99,7 @@ jobs:
           key: ${{ steps.release-cache.outputs.cache-primary-key }}
       - name: Assemble, relocate, smoke-test and archive editor
         shell: bash
-        run: npm run package:editor
+        run: bun run package:editor
       - uses: actions/setup-dotnet@v4
         if: runner.os == 'Windows'
         with:
@@ -116,13 +116,13 @@ jobs:
           (Split-Path $wix) >> $env:GITHUB_PATH
       - name: Build the platform installer
         shell: bash
-        run: npm run package:installers -- --source "dist/WhateverEditor-${{ matrix.platform }}-${{ matrix.architecture }}"
+        run: bun run package:installers -- --source "dist/WhateverEditor-${{ matrix.platform }}-${{ matrix.architecture }}"
       - name: Verify Windows installation, PATH registration and removal
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $upgrade = Join-Path $env:RUNNER_TEMP 'WhateverEditor-upgrade.msi'
-          node tools/package-installers.ts --source dist/WhateverEditor-windows-x86_64 --output $upgrade
+          bun tools/package-installers.ts --source dist/WhateverEditor-windows-x86_64 --output $upgrade
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tools/test-msi.ps1 -Package dist/WhateverEditor-windows-x86_64.msi -UpgradePackage $upgrade
       - name: Verify Linux installation and command registration

@@ -1,7 +1,7 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
 import { collectNativeLibraries } from "../native-libraries.ts";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,7 +12,7 @@ const built = process.env.WHATEVER_TEST_PLAYER ?? join(repository, "target/debug
 let directory: string;
 let player: string;
 beforeAll(() => {
-  if (!existsSync(built)) throw Error("Run npm run build:native first");
+  if (!existsSync(built)) throw Error("Run bun run build:native first");
   directory = mkdtempSync(join(tmpdir(), "whatever-portable-vm-"));
   player = join(directory, "Whatever" + suffix);
   copyFileSync(built, player);

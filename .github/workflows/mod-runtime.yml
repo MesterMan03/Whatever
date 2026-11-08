@@ -17,7 +17,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "package.json"
-      - "package-lock.json"
+      - "bun.lock"
       - "tools/**"
       - ".github/actions/build-embedded-runtime/**"
       - ".github/workflows/mod-runtime.yml"
@@ -39,7 +39,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "package.json"
-      - "package-lock.json"
+      - "bun.lock"
       - "tools/**"
       - ".github/actions/build-embedded-runtime/**"
       - ".github/workflows/mod-runtime.yml"
@@ -78,15 +78,15 @@ jobs:
       - name: Build engine and test headless runtime
         shell: bash
         run: |
-          node tools/build-native.ts
+          bun tools/build-native.ts
           cargo test --workspace --locked
-          npm run test:network
-          npm run test:runtime
-          npm run test:embedded
-          npm run test:coinwatch
-          npm run test:server
-          npm run test:mods
-          npm run test:project
+          bun run test:network
+          bun run test:runtime
+          bun run test:embedded
+          bun run test:coinwatch
+          bun run test:server
+          bun run test:mods
+          bun run test:project
           cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
           cargo test -p whatever-engine --locked network_messenger -- --ignored
       - name: Preserve failed player diagnostics

@@ -1,21 +1,21 @@
 # Whatever modding docs
 
 An [Astro Starlight](https://starlight.astro.build/) static documentation website.
-Requires Node.js 24 LTS (24.12+) with npm.
+Requires Bun 1.4.2+ for dependency installation, scripts and the Astro build.
 It is independent of the native engine build and does not launch mod scripts.
 
 From the repository root:
 
 ```sh
-npm run docs:install
-npm run docs:dev
-npm run docs:build
-npm run docs:preview
+bun run docs:install
+bun run docs:dev
+bun run docs:build
+bun run docs:preview
 ```
 
 The dev server defaults to `http://127.0.0.1:4321`. Search is generated during the
 production build; use `docs:preview` to test it. Build output is `website/dist/`.
-Dependencies have their own `website/package-lock.json`; no native toolchain is needed.
+Dependencies have their own `website/bun.lock`; no native toolchain is needed.
 
 ## Content
 
@@ -27,7 +27,7 @@ Dependencies have their own `website/package-lock.json`; no native toolchain is 
   Generated pages are gitignored and recreated before dev/build; don't edit them.
 - Every scripting H2 must be mapped to a page. New native enum syntax must be
   handled explicitly. Generation fails instead of silently dropping reference content.
-- After changing canonical files while dev is running, run `npm run docs:generate`
+- After changing canonical files while dev is running, run `bun run docs:generate`
   or restart the dev server. Authored guide edits reload normally.
 - Links in Markdown use root-relative documentation routes, such as
   `/reference/api/scenes/`. The Markdown plugin adds the configured deployment base.
@@ -37,9 +37,9 @@ Dependencies have their own `website/package-lock.json`; no native toolchain is 
 It doesn't fetch external websites. The native IPC specification distinguishes
 declared variants from inactive/unimplemented behavior.
 
-`npm run docs:check-examples` rebuilds the API and type-checks the homepage and
+`bun run docs:check-examples` rebuilds the API and type-checks the homepage and
 tutorial snippets against its declarations. This separate check needs the root
-development dependencies (`npm ci`), but no native toolchain.
+development dependencies (`bun install --frozen-lockfile`), but no native toolchain.
 CI runs it before allowing a Pages deployment.
 
 ## GitHub Pages
@@ -62,8 +62,8 @@ To verify the project base locally in PowerShell:
 ```powershell
 $env:DOCS_SITE = "https://mesterman03.github.io"
 $env:DOCS_BASE = "/Whatever"
-npm run docs:build
-npm run docs:preview
+bun run docs:build
+bun run docs:preview
 ```
 
 Open `http://127.0.0.1:4321/Whatever/`. Remove the overrides for a root preview:
@@ -75,6 +75,6 @@ Remove-Item Env:DOCS_SITE, Env:DOCS_BASE -ErrorAction SilentlyContinue
 On POSIX shells:
 
 ```sh
-DOCS_SITE=https://mesterman03.github.io DOCS_BASE=/Whatever npm run docs:build
-DOCS_SITE=https://mesterman03.github.io DOCS_BASE=/Whatever npm run docs:preview
+DOCS_SITE=https://mesterman03.github.io DOCS_BASE=/Whatever bun run docs:build
+DOCS_SITE=https://mesterman03.github.io DOCS_BASE=/Whatever bun run docs:preview
 ```

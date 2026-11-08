@@ -51,7 +51,7 @@ fn prepare(release: bool, progress: &mut impl FnMut(String)) -> anyhow::Result<R
             && source.join("runtime/guest/src/lib.rs").is_file(),
         "This editor installation is missing its engine support files. Reinstall the complete Whatever editor distribution."
     );
-    let mut cargo = Command::new("node");
+    let mut cargo = Command::new("bun");
     cargo
         .current_dir(&source)
         .args(["tools/build-native.ts", "--runtime-only"]);
@@ -82,7 +82,7 @@ fn prepare(release: bool, progress: &mut impl FnMut(String)) -> anyhow::Result<R
     let binaries = target.join(profile);
     let runtime = binaries.join("runtime-bin");
     run(
-        Command::new("node")
+        Command::new("bun")
             .current_dir(&source)
             .arg("tools/native-libraries.ts")
             .arg("--source")

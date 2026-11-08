@@ -30,19 +30,25 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.client_payload.ref || github.event.release.tag_name || github.ref }}
 
-      - name: Setup Node.js
+      # Keep npm's provenance publishing flow; development dependencies and builds use Bun.
+      - name: Setup npm registry publishing
         uses: actions/setup-node@v4
         with:
           node-version: '24'
           registry-url: "https://registry.npmjs.org"
           token: "${{ github.server_url == 'https://github.com' && github.token || '' }}"
 
+      - name: Setup Bun development tooling
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+
       - name: Install dependencies and verify release version
         env:
           RELEASE_TAG: ${{ github.event.client_payload.ref || github.event.release.tag_name || github.ref_name }}
         run: |
-          npm ci --ignore-scripts
-          npm run check:versions -- --tag "$RELEASE_TAG"
+          bun install --frozen-lockfile --ignore-scripts
+          bun run check:versions -- --tag "$RELEASE_TAG"
 
       - name: Check whether this commit is already published
         id: published

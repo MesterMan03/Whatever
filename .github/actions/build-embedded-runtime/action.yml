@@ -3,13 +3,13 @@ description: Build the engine-owned QuickJS Wasm guest and embedded TypeScript c
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: oven-sh/setup-bun@v2
       with:
-        node-version: '24'
+        bun-version: '1.4.2'
     - name: Install build dependencies
       shell: bash
       run: |
-        npm ci --ignore-scripts
+        bun install --frozen-lockfile --ignore-scripts
         rustup target add wasm32-unknown-unknown
     - name: Install Linux Wasm compiler
       if: runner.os == 'Linux'
@@ -38,8 +38,8 @@ runs:
     - name: Build embedded SDK, compiler and VM
       shell: bash
       run: |
-        npm run build:runtime
-        npm run build:guest
+        bun run build:runtime
+        bun run build:guest
     - name: Configure the native Rust library loader
       shell: bash
       run: |

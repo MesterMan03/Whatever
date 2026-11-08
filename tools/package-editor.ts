@@ -85,7 +85,7 @@ if (
     /^(vcruntime|msvcp|std-|whatever_)/i.test(name),
   )
 ) {
-  throw Error("Build the self-contained game launcher with npm run build:native");
+  throw Error("Build the self-contained game launcher with bun run build:native");
 }
 if (process.platform === "darwin") {
   const app = join(output, "Whatever Editor.app");

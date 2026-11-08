@@ -1,13 +1,13 @@
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, cpSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=process.env.WHATEVER_TEST_PLAYER ?? join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
-if(!existsSync(binary))throw new Error("Run cargo build before npm run test:server");
+if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
 
 async function runServer(source:string, options:{shutdownCommand?:string;expectedCode?:number;initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>;coreScript?:boolean;coreAssets?:string}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));

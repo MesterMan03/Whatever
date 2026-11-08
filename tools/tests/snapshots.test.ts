@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { test, expect } from "bun:test";
 import { distribution, geometricMean, score } from "../../games/test/mods/markbench/scripts/scoring.ts";
 test("Markbench scores use nearest-rank percentiles, geometric aggregation and no missing samples", () => {
   expect(distribution([1, 2, 3, 4]).p95).toBe(4);

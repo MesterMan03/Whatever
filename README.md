@@ -18,19 +18,19 @@ This enables the core philosophy of "you can do whatever": both developers and p
 | Tool | Purpose |
 |---|---|
 | [Rust + Cargo](https://rustup.rs) | Building the engine |
-| [Node.js 24 LTS](https://nodejs.org/) (24.12+) and npm | Maintainer builds, tests and documentation |
+| [Bun](https://bun.sh/) 1.4.2+ | Development dependencies, builds, tests and documentation |
 
 ## Build & Run
 
 ```sh
 # Build the engine-owned VM (Clang/LLVM with Wasm support required)
-npm ci
+bun install --frozen-lockfile
 rustup target add wasm32-unknown-unknown
-npm run build:runtime
-npm run build:guest
+bun run build:runtime
+bun run build:guest
 
 # Build native executables and stage their shared libraries
-npm run build:native
+bun run build:native
 
 # Run the client (or use core/meta.toml default_mode)
 cargo run
@@ -46,7 +46,7 @@ cargo run -- --debug=ipc,modloader
 cargo run -- --mods /path/to/my/mods
 
 # Run tests
-npm run test:native
+bun run test:native
 ```
 
 Building the launcher from source for Windows MSVC requires Open Watcom 2.0
@@ -54,7 +54,7 @@ configured for DOS development, with `wcl` and `wlink` on PATH. The launcher
 build compiles the Snake stub automatically. [Open Watcom downloads](https://github.com/open-watcom/open-watcom-v2/releases)
 
 The native build helper configures the Rust library search path and stages the
-matching Rust standard library. Use `npm run build:native -- --release` for an
+matching Rust standard library. Use `bun run build:native -- --release` for an
 optimized build. Player, editor and CLI share engine, scripting and graphics
 libraries; keep binaries and libraries from the same build together.
 
@@ -63,7 +63,7 @@ libraries; keep binaries and libraries from the same build together.
 ```text
 Cargo.toml              Workspace; plain cargo run/build selects the player
 .cargo/config.toml      Dynamic linking for native targets; Wasm builds stay independent
-package-lock.json       Reproducible npm development dependencies
+bun.lock                Reproducible Bun development dependencies
 AGENTS.md               Architecture and contributor instructions
 .gitattributes          LF rules for SDK and mod sources
 .editorconfig           Editor defaults for mod sources
@@ -218,10 +218,10 @@ editor and component guides, the full scripting reference, and the native IPC
 specification with a message catalogue generated from the Rust definitions.
 
 ```sh
-npm run docs:install
-npm run docs:dev
+bun run docs:install
+bun run docs:dev
 # Build static HTML, the search index, and verify internal links:
-npm run docs:build
+bun run docs:build
 ```
 
 The existing `docs/*.md` references remain the source of truth. See
@@ -231,7 +231,7 @@ with **GitHub Actions** as its source.
 
 ## Editor and game builds
 
-Run `npm run build:native`, then `cargo run -p whatever-editor -- games/test` to open the current mod collection. A project is a `whatever.wproject` manifest selecting ordinary mod directories. Scenes are versioned JSON `.wscene` files in each mod's `scenes/` folder; scripts instantiate them with `await Scene.loadScene("my_mod://main")`.
+Run `bun run build:native`, then `cargo run -p whatever-editor -- games/test` to open the current mod collection. A project is a `whatever.wproject` manifest selecting ordinary mod directories. Scenes are versioned JSON `.wscene` files in each mod's `scenes/` folder; scripts instantiate them with `await Scene.loadScene("my_mod://main")`.
 
 `wmod` creates projects and mods, validates collections and packages games through the same shared code as the editor. Deployed games contain a branded launcher, a `bin/` directory with the player and shared libraries, and ordinary mod sources. See [the editor and deployment guide](docs/EDITOR.md) for commands and the folder contract.
 
@@ -242,12 +242,12 @@ Choose **Build Game** and an output folder in the editor, or run `wmod package <
 Biome formats JavaScript, TypeScript and JSON source under `mods/`, `mods_user/` and `games/` with **2 spaces**, a **100-column** line width and LF endings. Assets, dependencies and `dist/` output are excluded. Gitignored local mods are included deliberately. The root `biome.json` is the shared configuration; `.editorconfig` provides matching editor indentation. Editors with Biome support can use this configuration for format-on-save.
 
 ```sh
-npm run format        # Format mod sources
-npm run format:check  # Check formatting without writing (also runs in CI)
-npm run test:runtime  # Check pending-result API types and shipped debug scripts
+bun run format        # Format mod sources
+bun run format:check  # Check formatting without writing (also runs in CI)
+bun run test:runtime  # Check pending-result API types and shipped debug scripts
 ```
 
-Biome is a pinned development dependency. Run `npm ci` after pulling the setup. Formatting does not enable lint fixes or import organization.
+Biome is a pinned development dependency. Run `bun install --frozen-lockfile` after pulling the setup. Formatting does not enable lint fixes or import organization.
 
 ## Mod System
 
@@ -296,7 +296,7 @@ server = "scripts/server.ts" # optional override
 
 Only one entry executes per mod. A mod with no matching entry still contributes its assets and metadata. `Engine.mode` is available before top-level mod evaluation. Window, audio and presentation settings reject server use; ECS, files and inter-mod messages remain available. The shipped core script and visual demo mods run on the client.
 
-Run `npm run test:server` after building the embedded guest and engine to check headless startup and shutdown. The additional `cargo test --workspace client_ticks_without_redraws -- --ignored` integration case uses the embedded VM and verifies client ticks with a 1 FPS cap and no renderer consuming snapshots.
+Run `bun run test:server` after building the embedded guest and engine to check headless startup and shutdown. The additional `cargo test --workspace client_ticks_without_redraws -- --ignored` integration case uses the embedded VM and verifies client ticks with a 1 FPS cap and no renderer consuming snapshots.
 
 ### Physics
 
@@ -330,7 +330,7 @@ my_game://textures/player.png
 
 Scripted mods run in isolated QuickJS Wasm instances inside Wasmtime. The engine discovers raw JS/TS/JSON sources, extracts metadata and compiles them on the destination machine using its embedded TypeScript compiler. Installed games are self-contained and mods distribute source. Entity/component operations and physics queries execute immediately against native state. See [embedded scripting](docs/EMBEDDED_SCRIPTING.md).
 
-The VM embeds `@whatever-engine/api`. Leave it external in mod bundles. npm is optional for editor types. The VM resolves only this package and contained local sources. See [runtime policy](docs/SANDBOX.md).
+The VM embeds `@whatever-engine/api`. Leave it external in mod bundles. Installing the package is optional for editor types. The VM resolves only this package and contained local sources. See [runtime policy](docs/SANDBOX.md).
 
 See [`docs/SCRIPTING.md`](docs/SCRIPTING.md) for the full reference.
 
@@ -339,7 +339,7 @@ See [`docs/SCRIPTING.md`](docs/SCRIPTING.md) for the full reference.
 After editing `runtime/src/`, regenerate `index.d.ts`:
 
 ```sh
-npm run build:runtime
+bun run build:runtime
 ```
 
 ## Debug suite and network API example
@@ -352,7 +352,7 @@ TLS keys and saved trust live in the engine-owned local-data directory `Whatever
 
 The integration demo can run without windows or audio devices after building the embedded guest and engine: `cargo test --workspace --locked network_messenger -- --ignored`. Native QUIC/TLS tests also run under WSL with a separate Linux Cargo target directory.
 
-`npm run test:network` runs schema/proxy tests and compiler checks against the generated public declarations. Native codec and registration tests run with `cargo test --workspace`. `npm run test:server` also exercises native network calls and stdin mod commands through embedded VMs.
+`bun run test:network` runs schema/proxy tests and compiler checks against the generated public declarations. Native codec and registration tests run with `cargo test --workspace`. `bun run test:server` also exercises native network calls and stdin mod commands through embedded VMs.
 
 ## Logging
 
@@ -402,11 +402,11 @@ archive and platform installer and runs relocation and installation checks. Wind
 uses MSI, Ubuntu/Debian uses DEB, and macOS uses PKG. Installers register
 `whatever-editor` and `wmod` for terminal use. Version tags publish the
 exact distributions from successful main-branch CI for the tagged commit; all three platforms
-must pass and their artifacts must still exist. Run `npm run package:editor` after `npm run build:native -- --release`
+must pass and their artifacts must still exist. Run `bun run package:editor` after `bun run build:native -- --release`
 to reproduce packaging locally. See [EDITOR.md](docs/EDITOR.md) for distribution
 contents, platform requirements and live Scene/Play editing.
 
-Rust components inherit `[workspace.package].version`. `npm run check:versions`
+Rust components inherit `[workspace.package].version`. `bun run check:versions`
 checks them, their lockfile entries and the npm workspace/API versions together;
 release tags must match too. Game and mod versions are independent.
 

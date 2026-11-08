@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { text } from "node:stream/consumers";
 import { spawnCaptured } from "../process.ts";
-import { expect, test } from "vitest";
+import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { advanceHunt, route, sweepLength } from "../../games/coinwatch/mods/core/scripts/navigation.ts";

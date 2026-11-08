@@ -75,7 +75,7 @@ async function page(route, title, body, source, order) {
   // Sources stay in their original contributor-facing locations; output is ignored.
   const frontmatter = ["---", `title: ${JSON.stringify(title)}`, `editUrl: ${edit}${source}`];
   if (order !== undefined) frontmatter.push(`sidebar: { order: ${order} }`);
-  frontmatter.push("---", "", `<!-- Generated from ${source}. Edit the source, then run npm run docs:generate. -->`, "");
+  frontmatter.push("---", "", `<!-- Generated from ${source}. Edit the source, then run bun run docs:generate. -->`, "");
   await writeFile(filename, `${frontmatter.join("\n")}${links(body, source).replace(/^# [^\n]+\n/, "")}\n`);
 }
 

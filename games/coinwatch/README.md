@@ -51,6 +51,6 @@ coinwatch enemy 0 0
 coinwatch shoot 0 1 0
 ```
 
-`status` reports score, live enemies and their navigation modes, projectile count and last collision/range distance. The developer commands use the same gameplay code as normal input. `npm run test:coinwatch` runs navigation/timer/range checks and an actual native headless playthrough covering pickup, enemy pursuit/cooldown, kills, walls, range, contact death, score freeze, restart and random spawning. Its native runtime path can be overridden with `WHATEVER_TEST_PLAYER`.
+`status` reports score, live enemies and their navigation modes, projectile count and last collision/range distance. The developer commands use the same gameplay code as normal input. `bun run test:coinwatch` runs navigation/timer/range checks and an actual native headless playthrough covering pickup, enemy pursuit/cooldown, kills, walls, range, contact death, score freeze, restart and random spawning. Its native runtime path can be overridden with `WHATEVER_TEST_PLAYER`.
 
 Original game scripts are Apache-2.0, like the engine. Imported assets retain the starter library's Apache-2.0 license and the font's OFL; see the imported `LICENSE` and `fonts/OFL.txt`.

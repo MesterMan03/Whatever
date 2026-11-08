@@ -19,4 +19,4 @@ If core's initial_scene points to this playground, the mod adopts that preloaded
 instance and starts automatically. Otherwise it remains opt-in through the console.
 
 The authored scene and behavior also run in the headless server integration tests.
-To regenerate the OBJ meshes/shaders, run `node tools/generate-physics-demo.ts`.
+To regenerate the OBJ meshes/shaders, run `bun tools/generate-physics-demo.ts`.

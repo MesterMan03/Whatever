@@ -33,16 +33,16 @@ Use SDK types from the same editor distribution, or the npm API release matching
 
 ## Build from source
 
-Install [Rust and Cargo](https://rustup.rs/) and [Node.js 24 LTS](https://nodejs.org/) (24.12+) with npm. Native windowing, audio and Wasm build prerequisites depend on your platform. See the [sandbox reference](/reference/sandbox/#build-and-verification).
+Install [Rust and Cargo](https://rustup.rs/) and [Bun](https://bun.sh/) 1.4.2+. Bun runs development tooling; installed mods run in the engine's embedded Wasm VM. Native windowing, audio and Wasm build prerequisites depend on your platform. See the [sandbox reference](/reference/sandbox/#build-and-verification).
 
 ```sh
 git clone https://github.com/MesterMan03/Whatever.git
 cd Whatever
-npm ci
+bun install --frozen-lockfile
 rustup target add wasm32-unknown-unknown
-npm run build:runtime
-npm run build:guest
-npm run build:native
+bun run build:runtime
+bun run build:guest
+bun run build:native
 ```
 
 The engine embeds its Wasm VM, SDK and TypeScript compiler. Installed games compile raw mod sources internally.
