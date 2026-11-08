@@ -6,7 +6,7 @@
       "!!**/assets",
       "!!**/node_modules",
       "!!**/dist",
-      "!!vendor",
+      "!!runtime/guest/generated",
       "!!target"
     ],
     "ignoreUnknown": true

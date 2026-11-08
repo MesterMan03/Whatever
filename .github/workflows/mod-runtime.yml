@@ -3,37 +3,45 @@ on:
   pull_request:
     paths:
       - ".gitattributes"
-      - ".gitmodules"
-      - "vendor/**"
       - "runtime/**"
       - "engine/**"
+      - "script-vm/**"
+      - "render-deps/**"
+      - ".cargo/**"
       - "player/**"
       - "editor/**"
       - "launcher/**"
+      - "dosstub/**"
       - "wmod/**"
       - "games/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
       - "tools/**"
-      - ".github/actions/build-mod-host/**"
+      - ".github/actions/build-embedded-runtime/**"
       - ".github/workflows/mod-runtime.yml"
   push:
     branches: [main]
     paths:
       - ".gitattributes"
-      - ".gitmodules"
-      - "vendor/**"
       - "runtime/**"
       - "engine/**"
+      - "script-vm/**"
+      - "render-deps/**"
+      - ".cargo/**"
       - "player/**"
       - "editor/**"
       - "launcher/**"
+      - "dosstub/**"
       - "wmod/**"
       - "games/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
       - "tools/**"
-      - ".github/actions/build-mod-host/**"
+      - ".github/actions/build-embedded-runtime/**"
       - ".github/workflows/mod-runtime.yml"
   workflow_dispatch:
 
@@ -50,31 +58,38 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: mod-runtime
           cache-on-failure: true
-      - uses: ./.github/actions/build-mod-host
       - name: Install Linux engine prerequisites
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev
+          sudo apt-get install -y --no-install-recommends pkg-config patchelf libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev
+      - name: Install Open Watcom for the DOS launcher stub
+        if: runner.os == 'Windows'
+        uses: open-watcom/setup-watcom@v1
+        with:
+          version: '2.0-64'
+          tag: '2026-11-01-Build'
+          target: dos
+      - uses: ./.github/actions/build-embedded-runtime
       - name: Build engine and test headless runtime
         shell: bash
         run: |
-          cargo build --workspace --locked
+          node tools/build-native.ts
           cargo test --workspace --locked
-          bun run test:network
-          bun run test:runtime
-          bun run test:server
-          bun run test:mods
-          bun run test:project
+          npm run test:network
+          npm run test:runtime
+          npm run test:embedded
+          npm run test:coinwatch
+          npm run test:server
+          npm run test:mods
+          npm run test:project
           cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
           cargo test -p whatever-engine --locked network_messenger -- --ignored
-      - name: Preserve failed player and IPC diagnostics
+      - name: Preserve failed player diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -85,5 +100,4 @@ jobs:
             target/debug/Whatever.exe
             target/debug/Whatever
             target/debug/*.dll
-            runtime/dist/whatever-mod-host*
           if-no-files-found: ignore

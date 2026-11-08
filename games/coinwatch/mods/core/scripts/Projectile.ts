@@ -1,10 +1,11 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Physics, Type, field } from "@whatever-engine/api";
 import { sweepLength } from "./navigation.ts";
 import { emit, playing, position, resolve, run } from "./session.ts";
 /** One entity owns one swept projectile and its lifetime. */
 export class Projectile extends Component {
   static readonly type = "core:Projectile";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   world = field(Type.Nullable(Type.Entity), null);
   owner = field(Type.Nullable(Type.Entity), null);
   direction = field(Type.Tuple(Type.F64, Type.F64, Type.F64), [0, 0, -1]);
@@ -27,13 +28,11 @@ export class Projectile extends Component {
     }
     this.origin ??= position(this.entity);
     const step = sweepLength(this.speed, dt, this.travelled, this.range);
-    const hit = await Physics.world(world)
-      .castRay(this.origin, this.direction, {
-        maxDistance: step,
-        excludeBody: resolve(this.owner) ?? undefined,
-        flags: Physics.QueryFilterFlag.EXCLUDE_SENSORS,
-      })
-      .get();
+    const hit = await Physics.world(world).castRay(this.origin, this.direction, {
+      maxDistance: step,
+      excludeBody: resolve(this.owner) ?? undefined,
+      flags: Physics.QueryFilterFlag.EXCLUDE_SENSORS,
+    });
     if (!this.active) return;
     if (!playing(this.session) || run(this.session)?.generation !== this.generation) {
       this.end();

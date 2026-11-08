@@ -10,8 +10,8 @@ export const sandboxCommand: CommandSpec = {
       "fs",
       "node:child_process",
       "node:module",
-      "bun",
-      "bun:ffi",
+      "node:vm",
+      "npm:typescript",
       "not-an-allowed-package",
     ]) {
       try {
@@ -22,7 +22,7 @@ export const sandboxCommand: CommandSpec = {
         results.push("BLOCKED import " + name);
       }
     }
-    for (const name of ["Bun", "process", "fetch", "WebSocket", "Worker", "ShadowRealm"]) {
+    for (const name of ["require", "process", "fetch", "WebSocket", "Worker", "ShadowRealm"]) {
       if ((globalThis as Record<string, unknown>)[name] !== undefined) {
         throw new Error("Global unexpectedly exposed: " + name);
       }

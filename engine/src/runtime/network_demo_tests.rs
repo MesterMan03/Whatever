@@ -59,34 +59,32 @@ impl Node {
     }
     fn pump(&mut self) {
         self.simulation.controls();
-        let batches = self.simulation.tick_commands();
-        for (owner, commands) in &batches {
-            for message in commands {
-                if self.trace.len() < 30 {
-                    self.trace.push(format!("{owner}: {message:?}"));
-                }
-                if owner == "network_example" {
-                    match &message {
-                        ScriptMessage::RegisterCommand { name, .. } if name == "netdemo" => {
-                            self.registered = true
-                        }
-                        ScriptMessage::CommandResponse {
-                            request_id,
-                            output,
-                            error,
-                        } => {
-                            self.responses
-                                .insert(request_id.clone(), (output.clone(), error.clone()));
-                        }
-                        ScriptMessage::Log { level, message } if level == "error" => {
-                            panic!("network example error: {message}")
-                        }
-                        _ => {}
+        let tick_delta = self.simulation.tick_commands();
+        for (owner, message) in std::mem::take(&mut self.simulation.script_messages) {
+            if self.trace.len() < 30 {
+                self.trace.push(format!("{owner}: {message:?}"));
+            }
+            if owner == "network_example" {
+                match &message {
+                    ScriptMessage::RegisterCommand { name, .. } if name == "netdemo" => {
+                        self.registered = true
                     }
+                    ScriptMessage::CommandResponse {
+                        request_id,
+                        output,
+                        error,
+                    } => {
+                        self.responses
+                            .insert(request_id.clone(), (output.clone(), error.clone()));
+                    }
+                    ScriptMessage::Log { level, message } if level == "error" => {
+                        panic!("network example error: {message}")
+                    }
+                    _ => {}
                 }
             }
         }
-        self.simulation.finish_tick(batches);
+        self.simulation.finish_tick(tick_delta);
         if let Ok(mut slot) = self.simulation.shared.presentation.lock() {
             slot.take();
         }
@@ -171,7 +169,7 @@ fn await_status(nodes: &mut [Node], index: usize, expected: &str) {
 }
 
 #[test]
-#[ignore = "requires the bundled mod host; run in mod-runtime CI"]
+#[ignore = "runs the full multi-node embedded runtime; run in mod-runtime CI"]
 fn network_messenger_runs_with_three_real_mod_clients() {
     use serde_json::json;
     let directory = Directory(std::env::temp_dir().join(format!(

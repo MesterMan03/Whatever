@@ -1,13 +1,13 @@
+import { _native, _readComponentRow, _requestNow, _turn } from "../transport.ts";
+import { liveValue } from "../live.ts";
 import {
-  activeEntity,
   worldTransform,
   canonical,
-  committedComponents,
   immutable,
   listEntityIds,
   queryEntityIds,
   queryTagIds,
-  readEntity,
+  readMetadata,
   sceneRevision,
   SceneSnapshot,
   type ComponentSnapshot,
@@ -19,6 +19,7 @@ import {
   _hydrateComponent,
   _componentDraft,
   _componentFields,
+  _componentReference,
   type ComponentClass,
 } from "../component.ts";
 import { _startupScene } from "../shared.ts";
@@ -28,7 +29,6 @@ import { EntityRef, type EntityReference, type ComponentValue } from "../referen
 import {
   _send,
   nextReqId,
-  _entityCallbacks,
   _tagCallbacks,
   _entityListCallbacks,
   _componentGetCallbacks,
@@ -563,8 +563,16 @@ export namespace BuiltInComponents {
 }
 
 export interface ComponentRegistry {
-  "core:world_transform": BuiltInComponents.Transform;
-  "core:entity": { id: "core:entity"; enabled: boolean; active: boolean };
+  "core:world_transform": {
+    readonly position: readonly [number, number, number];
+    readonly rotation: readonly [number, number, number, number];
+    readonly scale: readonly [number, number, number];
+  };
+  "core:entity": {
+    readonly id: "core:entity";
+    readonly enabled: boolean;
+    readonly active: boolean;
+  };
   [BuiltInComponents.TRANSFORM_ID]: BuiltInComponents.Transform;
   [BuiltInComponents.SPRITE_RENDERER_ID]: BuiltInComponents.SpriteRenderer;
   [BuiltInComponents.TEXT_RENDERER_ID]: BuiltInComponents.TextRenderer;
@@ -621,6 +629,12 @@ export const _componentHydrators: Record<string, (data: any) => any> = {
 export function hydrateReferences(value: any): any {
   if (Array.isArray(value)) return value.map(hydrateReferences);
   if (value && typeof value === "object") {
+    if (
+      Object.keys(value).length === 2 &&
+      typeof value.$entity === "string" &&
+      typeof value.$component === "string"
+    )
+      return _componentReference(value.$entity, value.$component);
     if (Object.keys(value).length === 1 && typeof value.$entity === "string")
       return new Entity(value.$entity);
     return Object.fromEntries(
@@ -686,7 +700,7 @@ function _getComponentImpl(entity_id: string, selector: string | ComponentClass)
       if (data === null) return null;
       const hydrator = _componentHydrators[component_type];
       return (
-        _hydrateComponent(entity_id, component_type, data) ??
+        _hydrateComponent(entity_id, component_type) ??
         (hydrator ? hydrator(hydrateReferences(data)) : hydrateReferences(data))
       );
     }),
@@ -710,35 +724,60 @@ function snapshotComponent<T extends Component>(
 function snapshotComponent(id: string, kind: any): any {
   return readComponent(id, kind);
 }
-const snapshotValues = new WeakMap<object, Map<string | ComponentClass, any>>();
+const liveComponents = new Map<string, any>();
+let componentTurn = -1;
 function readComponent(entity_id: string, selector: string | ComponentClass): any {
-  const kind = typeof selector === "string" ? selector : _componentId(selector);
-  const entity = readEntity(entity_id);
-  if (!entity) return null;
-  if (kind === "core:entity")
-    return immutable({
-      id: kind,
-      enabled: entity.metadata.enabled,
-      active: activeEntity(entity_id),
-    });
-  const raw = kind === "core:world_transform" ? worldTransform(entity_id) : entity.components[kind];
-  if (raw === undefined) return null;
-  let cached = snapshotValues.get(raw);
-  if (!cached) {
-    cached = new Map();
-    snapshotValues.set(raw, cached);
+  if (componentTurn !== _turn()) {
+    componentTurn = _turn();
+    liveComponents.clear();
   }
-  if (!cached.has(selector))
-    cached.set(
-      selector,
-      immutable({
-        ...(typeof selector === "string"
-          ? (_componentHydrators[kind]?.(hydrateReferences(raw)) ?? hydrateReferences(raw))
-          : _componentFields(selector, raw)),
-        id: kind,
-      }),
-    );
-  return cached.get(selector);
+  const kind = typeof selector === "string" ? selector : _componentId(selector);
+  if (typeof selector !== "string") {
+    return _hydrateComponent(entity_id, kind);
+  }
+  if (kind === "core:entity") {
+    const metadata = readMetadata(entity_id);
+    return metadata ? { id: kind, enabled: metadata.enabled, active: metadata.active } : null;
+  }
+  if (kind === "core:world_transform") {
+    const data = worldTransform(entity_id);
+    return data ? immutable(data) : null;
+  }
+  const id = canonical(entity_id);
+  const row = _readComponentRow(id, kind);
+  if (!row) return null;
+  const { data, instance_id: incarnation } = row;
+  const key = JSON.stringify([id, kind, incarnation]);
+  if (liveComponents.has(key)) return liveComponents.get(key);
+  const read = () => {
+    const row = _readComponentRow(id, kind);
+    if (!row || row.instance_id !== incarnation) throw new Error("Component handle is stale");
+    return row.data;
+  };
+  const patch = (field: PropertyKey, value: any) =>
+    _native("component_patch", { id, kind, data: { [field]: value } });
+  const target = _componentHydrators[kind]?.(hydrateReferences(data)) ?? {};
+  const proxy = new Proxy(target, {
+    get(target, field, receiver) {
+      if (field === "toJSON") return () => ({ $entity: id, $component: kind });
+      if (field === "id") return kind;
+      if (field === "entity") return new Entity(id);
+      const current = read();
+      if (Object.hasOwn(current, field))
+        return liveValue(
+          () => read()[field],
+          (value) => patch(field, value),
+        );
+      return Reflect.get(target, field, receiver);
+    },
+    set(_target, field, value) {
+      read();
+      patch(field, value);
+      return true;
+    },
+  });
+  liveComponents.set(key, proxy);
+  return proxy;
 }
 
 export class Entity {
@@ -753,6 +792,9 @@ export class Entity {
   /** Add a case-sensitive tag. Duplicate additions are harmless; at most 32 tags per entity. */
   addTag(tag: string): this {
     validateTag(tag);
+    const tags = this.getTags();
+    if (!tags.includes(tag) && tags.length >= 32)
+      throw new Error("An entity can have at most 32 tags");
     _send({ type: "EntityTagAdd", entity_id: this._entityId, tag });
     return this;
   }
@@ -762,26 +804,21 @@ export class Entity {
     return this;
   }
   get exists(): boolean {
-    return readEntity(this._entityId) !== null;
+    return readMetadata(this._entityId) !== null;
   }
   get isPending(): boolean {
     return this.id.startsWith("pending:");
   }
   get name(): string | null {
-    return readEntity(this._entityId)?.metadata.name ?? null;
+    return readMetadata(this._entityId)?.name ?? null;
   }
   hasComponent(selector: keyof ComponentRegistry | ComponentClass): boolean {
-    const entity = readEntity(this._entityId);
     const kind = typeof selector === "string" ? selector : _componentId(selector);
-    return (
-      entity !== null &&
-      (kind === "core:entity" ||
-        kind === "core:world_transform" ||
-        Object.hasOwn(entity.components, kind))
-    );
+    if (kind === "core:entity" || kind === "core:world_transform") return this.exists;
+    return _readComponentRow(this.id, kind) !== null;
   }
   getTags(): readonly string[] {
-    return readEntity(this._entityId)?.metadata.tags ?? Object.freeze([]);
+    return Object.freeze([...(readMetadata(this._entityId)?.tags ?? [])]);
   }
   hasTag(tag: string): boolean {
     validateTag(tag);
@@ -797,10 +834,10 @@ export class Entity {
     return this;
   }
   getEnabled(): boolean {
-    return readEntity(this._entityId)?.metadata.enabled ?? false;
+    return readMetadata(this._entityId)?.enabled ?? false;
   }
   getActive(): boolean {
-    return activeEntity(this._entityId);
+    return readMetadata(this._entityId)?.active ?? false;
   }
   /** Destroy this entity and all its components. Fire-and-forget. */
   destroy(): void {
@@ -820,7 +857,7 @@ export class Entity {
     return this;
   }
 
-  /** Read immutable component data immediately from the scene revision and local writes. */
+  /** Read a live component handle; edits commit synchronously. */
   getComponent<K extends keyof ComponentRegistry>(
     kind: K,
   ): ComponentSnapshot<ComponentRegistry[K]> | null;
@@ -828,7 +865,7 @@ export class Entity {
   getComponent(kind: keyof ComponentRegistry | ComponentClass): any {
     return readComponent(this._entityId, kind);
   }
-  /** Request data at this command's position in the native batch. */
+  /** Compatibility request capturing native data immediately. */
   requestComponent<K extends keyof ComponentRegistry>(
     kind: K,
   ): Pending<ComponentRegistry[K] | null>;
@@ -844,7 +881,7 @@ export class Entity {
   editComponent<T extends Component>(kind: ComponentClass<T>, edit: (draft: T) => void): this;
   editComponent(kind: any, edit: (draft: any) => unknown): this {
     const id = typeof kind === "string" ? kind : _componentId(kind);
-    const raw = readEntity(this._entityId)?.components[id];
+    const raw = _readComponentRow(this.id, id)?.data;
     if (!raw) throw new Error(`Entity has no component '${id}'`);
     const copy = JSON.parse(JSON.stringify(raw));
     const draft =
@@ -928,36 +965,26 @@ export class Entity {
     );
   }
   getParent(): Entity | null {
-    const id = readEntity(this._entityId)?.metadata.parent;
+    const id = readMetadata(this._entityId)?.parent;
     return id ? new Entity(id) : null;
   }
   getChildren(): readonly Entity[] {
     return Object.freeze(
-      (readEntity(this._entityId)?.metadata.children ?? []).map((id) => new Entity(id)),
+      (readMetadata(this._entityId)?.children ?? []).map((id) => new Entity(id)),
     );
   }
 }
 
-/** An entity reference usable immediately in recorded commands, before its ID exists. */
+/** An immediately created entity with a compatibility get() result. */
 export class PendingEntity extends Entity {
-  private readonly result: Pending<Entity>;
+  private result?: Promise<Entity>;
 
   constructor(clone?: CloneOptions & { entity_id: string }) {
     const request_id = nextReqId();
-    super("pending:" + request_id);
-    this.result = _pending(
-      new Promise((resolve, reject) => {
-        _entityCallbacks.set(request_id, {
-          resolve: (id) => {
-            this._entityId = id;
-            resolve(new Entity(id));
-          },
-          reject,
-        });
-        if (clone) _send({ type: "EntityClone", request_id, ...clone });
-        else _send({ type: "EntityCreate", request_id });
-      }),
+    const response = _requestNow(
+      clone ? { type: "EntityClone", request_id, ...clone } : { type: "EntityCreate", request_id },
     );
+    super(response.entity_id);
   }
 
   override get id(): string {
@@ -965,7 +992,7 @@ export class PendingEntity extends Entity {
   }
 
   get(): Promise<Entity> {
-    return this.result.get();
+    return (this.result ??= Promise.resolve(new Entity(this.id)));
   }
 }
 
@@ -1004,18 +1031,10 @@ export class PrefabInstance extends LoadedScene {
 }
 
 export const Prefab = {
-  /** Spawn an authored prefab in the next command batch. No prefab code runs during discovery. */
-  spawn(path: string): Promise<PrefabInstance> {
-    const result = new Promise<PrefabInstance>((resolve, reject) => {
-      const request_id = nextReqId();
-      _sceneCallbacks.set(request_id, {
-        resolve: (data) => resolve(new PrefabInstance(data)),
-        reject,
-      });
-      _send({ type: "PrefabSpawn", request_id, path });
-    });
-    void result.catch(() => {});
-    return result;
+  /** Spawn an authored prefab immediately. No prefab code runs during discovery. */
+  spawn(path: string): PrefabInstance {
+    const response = _requestNow({ type: "PrefabSpawn", request_id: nextReqId(), path });
+    return new PrefabInstance(response.scene);
   },
 };
 
@@ -1043,7 +1062,7 @@ export const Scene = {
     return new SceneSnapshot();
   },
   find(id: string): Entity | null {
-    return readEntity(id) ? new Entity(canonical(id)) : null;
+    return readMetadata(id) ? new Entity(canonical(id)) : null;
   },
   findByTag(tag: string, options: { includeDisabled?: boolean } = {}): readonly Entity[] {
     return Scene.findByTags({ all: [tag], ...options });
@@ -1061,18 +1080,10 @@ export const Scene = {
   initialScene(): LoadedScene | null {
     return _startupScene.data ? new LoadedScene(_startupScene.data) : null;
   },
-  /** Instantiate an ordinary mod scene in the next command batch. */
-  loadScene(path: string): Promise<LoadedScene> {
-    const result = new Promise<LoadedScene>((resolve, reject) => {
-      const request_id = nextReqId();
-      _sceneCallbacks.set(request_id, {
-        resolve: (data) => resolve(new LoadedScene(data)),
-        reject,
-      });
-      _send({ type: "SceneLoad", request_id, path });
-    });
-    void result.catch(() => {});
-    return result;
+  /** Instantiate an ordinary mod scene immediately. */
+  loadScene(path: string): LoadedScene {
+    const response = _requestNow({ type: "SceneLoad", request_id: nextReqId(), path });
+    return new LoadedScene(response.scene);
   },
   /** Embed an entity or opaque entity ID in any component field. */
   ref(target: EntityReference | string): EntityRef {
@@ -1143,7 +1154,7 @@ export const Scene = {
                     const hydrator = _componentHydrators[k];
                     return [
                       k,
-                      _hydrateComponent(r.entity_id, k, v) ??
+                      _hydrateComponent(r.entity_id, k) ??
                         (hydrator ? hydrator(hydrateReferences(v)) : hydrateReferences(v)),
                     ];
                   }),
@@ -1246,11 +1257,11 @@ export const Scene = {
 
   /** Return the parent entity ID, or `null` if the entity has no parent. */
   getParent(entity_id: string): string | null {
-    return readEntity(entity_id)?.metadata.parent ?? null;
+    return readMetadata(entity_id)?.parent ?? null;
   },
 
   getChildren(entity_id: string): readonly string[] {
-    return readEntity(entity_id)?.metadata.children ?? Object.freeze([]);
+    return [...(readMetadata(entity_id)?.children ?? [])];
   },
 
   /**

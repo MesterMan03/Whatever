@@ -20,8 +20,9 @@ pub struct RuntimeInput {
     pub mouse_buttons: Vec<String>,
     pub mouse_buttons_pressed: Vec<String>,
 }
+type TickInput = (Vec<String>, (f32, f32), bool, Vec<String>, Vec<String>);
 impl RuntimeInput {
-    pub fn take_tick(&mut self) -> (Vec<String>, (f32, f32), bool, Vec<String>, Vec<String>) {
+    pub fn take_tick(&mut self) -> TickInput {
         let mouse = std::mem::take(&mut self.mouse);
         let pressed = std::mem::take(&mut self.mouse_buttons_pressed);
         (
@@ -58,7 +59,7 @@ pub struct Presentation {
     pub world: World,
     pub(crate) motion: crate::presentation::MotionHistory,
     pub main_camera: Option<EntityId>,
-    pub tick_rate: f64,
+    pub ticks_per_second: f32,
     pub editor_sequence: u64,
     pub render_cmds: std::collections::HashMap<(u8, u32), RenderCommand>,
     pub events: Vec<(String, ScriptMessage)>,
@@ -69,7 +70,7 @@ impl Presentation {
         self.world = newer.world;
         self.motion = newer.motion;
         self.main_camera = newer.main_camera;
-        self.tick_rate = newer.tick_rate;
+        self.ticks_per_second = newer.ticks_per_second;
         self.editor_sequence = newer.editor_sequence;
         self.render_cmds.extend(newer.render_cmds);
         self.events.extend(newer.events);
@@ -151,7 +152,7 @@ mod tests {
             world: World::new(),
             motion: Default::default(),
             main_camera: None,
-            tick_rate: 60.0,
+            ticks_per_second: 60.0,
             editor_sequence: 0,
             render_cmds: std::iter::once((command.key(), command)).collect(),
             events: vec![],
@@ -199,8 +200,11 @@ mod tests {
     fn skipped_frames_keep_latest_world_and_latest_render_operation() {
         let mut first = snapshot(RenderCommand::UpsertSprite { entity_idx: 0 });
         first.world.allocator.alloc();
-        first.merge(snapshot(RenderCommand::RemoveSprite { entity_idx: 0 }));
+        let mut newer = snapshot(RenderCommand::RemoveSprite { entity_idx: 0 });
+        newer.ticks_per_second = 23.5;
+        first.merge(newer);
         assert_eq!(first.world.allocator.alive_entity_ids().count(), 0);
+        assert_eq!(first.ticks_per_second, 23.5);
         assert_eq!(first.render_cmds.len(), 1);
         assert!(matches!(
             first.render_cmds.get(&(0, 0)),

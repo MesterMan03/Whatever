@@ -4,6 +4,7 @@ import { EntityRef, type EntityReference } from "../references.ts";
 import { _pending, type Pending } from "../pending.ts";
 import { _send, nextReqId } from "../shared.ts";
 import type * as Options from "../physics-options.ts";
+import { _requestNow } from "../transport.ts";
 
 const callbacks = new Map<
   string,
@@ -29,6 +30,11 @@ function request<T>(command: object): Pending<T> {
       callbacks.set(request_id, { resolve, reject });
       _send({ type: "PhysicsRequest", request_id, request: command });
     }),
+  );
+}
+function query<T>(request: object): T {
+  return hydrateReferences(
+    _requestNow({ type: "PhysicsRequest", request_id: nextReqId(), request }).result,
   );
 }
 function ref(target: Options.PhysicsEntityInput): EntityRef {
@@ -266,20 +272,17 @@ export namespace Physics {
   };
   /** Native operations on an existing body component. Does not add or enable a component. */
   export class BodyHandle implements Pending<void> {
-    private pending: Promise<void> = Promise.resolve();
     constructor(private readonly entity: EntityRef) {}
     private command(action: string, options: object = {}): this {
-      const result = request<void>({ op: "body", entity: this.entity, action, ...options });
-      this.pending = Promise.all([this.pending, result.get()]).then(() => undefined);
-      void this.pending.catch(() => {});
+      query<void>({ op: "body", entity: this.entity, action, ...options });
       return this;
     }
     /** Wait for the commands queued on this handle so far, including their validation errors. */
     get(): Promise<void> {
-      return this.pending;
+      return Promise.resolve();
     }
-    state(): Pending<BodyState> {
-      return request({ op: "state", entity: this.entity });
+    state(): BodyState {
+      return query({ op: "state", entity: this.entity });
     }
     applyImpulse(vector: Vec3, options: { point?: Vec3; wake?: boolean } = {}): this {
       return this.command("applyImpulse", { vector, ...options });
@@ -325,9 +328,9 @@ export namespace Physics {
   export class WorldHandle {
     constructor(private readonly entity: EntityRef) {}
     /** Sees all earlier commands in this tick, without advancing physics time. Direction is normalized. */
-    castRay(origin: Vec3, direction: Vec3, options: RayOptions): Pending<RayHit | null> {
+    castRay(origin: Vec3, direction: Vec3, options: RayOptions): RayHit | null {
       const { excludeBody, excludeCollider, ...rest } = options;
-      return request({
+      return query({
         op: "castRay",
         world: this.entity,
         origin,

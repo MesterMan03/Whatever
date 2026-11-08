@@ -1,9 +1,10 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Type, field } from "@whatever-engine/api";
 import { distance } from "./navigation.ts";
 import { emit, listen, playing, position, resolve } from "./session.ts";
 export class CoinPickup extends Component {
   static readonly type = "core:CoinPickup";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   collector = field(Type.Nullable(Type.Entity), null);
   radius = field(Type.F64.with({ min: 0.2, max: 5 }), 1.1);
   score = field(Type.I32.with({ min: 1, max: 10000 }), 10);

@@ -54,13 +54,9 @@ jobs:
               "Bash(cargo fmt:*)" \
               "Bash(cargo check:*)" \
               "Bash(cargo run:*)" \
-              "Bash(bun install:*)" \
-              "Bash(bun run:*)" \
-              "Bash(bun test:*)" \
-              "Bash(bun build:*)" \
-              "Bash(bun add:*)" \
-              "Bash(bun remove:*)" \
-              "Bash(bun x:*)" \
+              "Bash(npm ci:*)" \
+              "Bash(npm run:*)" \
+              "Bash(npm exec:*)" \
               "Bash(git status:*)" \
               "Bash(git diff:*)" \
               "Bash(git log:*)" \

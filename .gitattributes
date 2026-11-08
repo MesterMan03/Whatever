@@ -1,6 +1,3 @@
-# Native fork patches need LF endings; blank context markers contain a required space.
-vendor/patches/*.patch text eol=lf whitespace=-blank-at-eol
-
 # Keep formatted mod sources stable across Windows and Unix checkouts.
 biome.json text eol=lf
 mods/**/*.js text eol=lf
@@ -34,7 +31,7 @@ games/**/*.cts text eol=lf
 games/**/*.json text eol=lf
 games/**/*.jsonc text eol=lf
 
-# The public API and trusted host share the mod formatter's LF contract.
+# The public API and embedded compiler share the mod formatter's LF contract.
 runtime/**/*.js text eol=lf
 runtime/**/*.jsx text eol=lf
 runtime/**/*.ts text eol=lf

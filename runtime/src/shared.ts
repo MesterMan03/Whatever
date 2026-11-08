@@ -1,10 +1,8 @@
-import { stageCommand, submitSceneCommands, resolveCommandReferences } from "./scene-store.ts";
 import type { EventName, JsonValue, ModManifest } from "./types.ts";
 
-import { _write } from "./transport.ts";
-const _stringify = JSON.stringify;
+import { _command } from "./transport.ts";
 
-// --- Shared mutable IPC state ---
+// --- Shared engine callback state ---
 
 export const _handlers = new Map<EventName, Set<(payload: any) => void | Promise<void>>>();
 export const _fileCallbacks = new Map<
@@ -77,46 +75,12 @@ export function nextReqId(): string {
   return String(++_counter.n);
 }
 
-let commands: string[] = [];
-
-/** Record immediately, including a snapshot of mutable arguments, in call order. */
+/** Execute in call order against the authoritative simulation world. */
 export function _send(msg: any): void {
-  const encoded = _stringify(msg);
-  if (
-    [
-      "SetMainCamera",
-      "EntityCreate",
-      "EntityClone",
-      "EntityDestroy",
-      "EntityMove",
-      "EntitySetEnabled",
-      "EntitySetParent",
-      "EntityTagAdd",
-      "EntityTagRemove",
-      "ComponentSet",
-      "ComponentPatch",
-      "ComponentRemove",
-    ].includes(msg.type)
-  )
-    stageCommand(encoded);
-  commands.push(encoded);
+  _command(msg);
 }
 
-/** Private automatic tick listener. Even an empty buffer acknowledges submission. */
-export function _flush(tick_number: number): void {
-  const batch = commands.map(resolveCommandReferences);
-  submitSceneCommands(tick_number);
-  commands = [];
-  _write(
-    '{"type":"CommandBatch","tick_number":' +
-      tick_number +
-      ',"commands":[' +
-      batch.join(",") +
-      "]}\n",
-  );
-}
-
-/** Maps public event names to the Rust IPC message type that triggers them.
+/** Maps public event names to the native delivery type that triggers them.
  *  `mod_message` is absent — it is dispatched specially and needs no Subscribe. */
 export const _EVENT_SUBSCRIBE: Partial<Record<EventName, string>> = {
   init: "Init",

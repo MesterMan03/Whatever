@@ -1,5 +1,5 @@
-// Side-effect import — starts the private IPC loop.
-import "./ipc.ts";
+// Side-effect import — starts the engine delivery dispatcher.
+import "./dispatch.ts";
 
 export type {
   RuntimeMode,

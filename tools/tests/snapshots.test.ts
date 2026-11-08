@@ -1,45 +1,5 @@
-import { test, expect } from "bun:test";
-import { applySceneDelta, readEntity, stageCommand, submitSceneCommands, SceneSnapshot, queryEntityIds, queryTagIds, resolveEntityAlias, resolveCommandReferences, worldTransform, type SceneDelta } from "../../runtime/src/scene-store.ts";
+import { test, expect } from "vitest";
 import { distribution, geometricMean, score } from "../../games/test/mods/markbench/scripts/scoring.ts";
-const transform = (x: number) => ({ position: [x, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1] });
-const metadata = { name: "test", enabled: true, active: true, parent: null, children: [], tags: ["enemy"] };
-const delta = (revision: number, extra: Partial<SceneDelta> = {}): SceneDelta => ({ revision, base_revision: revision - 1, tick_number: revision - 1, reset: false, camera: null, created: [], changed: [], removed: [], ...extra });
-const command = (value: object) => stageCommand(JSON.stringify(value));
-test("revisioned snapshots retain immutable values, reconcile overlays, index queries and reject gaps", () => {
-  applySceneDelta(delta(1, { reset: true, created: [{ id: "0:0", metadata, components: { "core:transform": transform(1), "core:world_transform": transform(1) }, instances: {} }] }));
-  const retained = new SceneSnapshot();
-  const old = readEntity("0:0")!;
-  expect(Object.isFrozen(old.components["core:transform"].position)).toBe(true);
-  command({ type: "EntityMove", entity_id: "0:0", position: [3, 0, 0] });
-  expect(readEntity("0:0")!.components["core:transform"].position[0]).toBe(3);
-  expect(retained.get("0:0")!.components["core:transform"].position[0]).toBe(1);
-  submitSceneCommands(1);
-  // A later continuation survives the acknowledgement of the submitted batch.
-  command({ type: "EntityTagAdd", entity_id: "0:0", tag: "local" });
-  applySceneDelta(delta(2, { changed: [{ id: "0:0", components: { "core:transform": transform(3) }, instances: {} }] }));
-  expect(readEntity("0:0")!.metadata.tags).toContain("local");
-  expect(retained.get("0:0")!.metadata.tags).not.toContain("local");
-  command({ type: "EntityCreate", request_id: "new" });
-  command({ type: "ComponentSet", entity_id: "pending:new", component_type: "core:transform", data: transform(2) });
-  command({ type: "EntitySetParent", entity_id: "pending:new", parent_id: "0:0" });
-  expect(worldTransform("pending:new").position[0]).toBe(5);
-  expect(queryEntityIds(["core:transform"])).toHaveLength(2);
-  command({ type: "EntitySetEnabled", entity_id: "0:0", enabled: false });
-  expect(queryEntityIds(["core:transform"])).toHaveLength(0);
-  expect(queryTagIds({ all: ["enemy"], includeDisabled: true })).toEqual(["0:0"]);
-  resolveEntityAlias("pending:new", "1:0");
-  expect(readEntity("pending:new")!.id).toBe("1:0");
-  expect(JSON.parse(resolveCommandReferences(JSON.stringify({ type: "ComponentSet", entity_id: "pending:new", data: { ref: { $entity: "pending:new" }, arbitrary: { entity_id: "pending:new" } } })))).toEqual({ type: "ComponentSet", entity_id: "1:0", data: { ref: { $entity: "1:0" }, arbitrary: { entity_id: "pending:new" } } });
-  command({ type: "EntityDestroy", entity_id: "1:0" });
-  expect(readEntity("0:0")!.metadata.children).toEqual([]);
-  expect(readEntity("1:0")).toBeNull();
-  submitSceneCommands(2);
-  applySceneDelta(delta(3, { removed: ["0:0"], created: [{ id: "0:1", metadata, components: {}, instances: {} }] }));
-  expect(readEntity("0:0")).toBeNull();
-  expect(readEntity("0:1")).not.toBeNull();
-  expect(retained.has("0:0")).toBe(true);
-  expect(() => applySceneDelta(delta(9))).toThrow("revision gap");
-});
 test("Markbench scores use nearest-rank percentiles, geometric aggregation and no missing samples", () => {
   expect(distribution([1, 2, 3, 4]).p95).toBe(4);
   expect(distribution([]).p95).toBeNull();

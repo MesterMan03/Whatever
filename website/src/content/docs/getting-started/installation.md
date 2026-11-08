@@ -1,13 +1,24 @@
 ---
 title: Install and create a project
-description: Start with a portable editor distribution or build the tools from source.
+description: Install the editor, use a portable distribution, or build the tools from source.
 ---
 
 ## Use an editor distribution
 
-Get an editor archive for your operating system from [GitHub Releases](https://github.com/MesterMan03/Whatever/releases). Extract the whole archive and keep its support files together. The portable distribution includes the editor, `wmod`, player, pinned mod host, SDK declarations, and stock core template.
+Get an installer or portable archive for your operating system from [GitHub Releases](https://github.com/MesterMan03/Whatever/releases). Each includes the editor, `wmod`, player, shared libraries, SDK declarations, and stock core template.
 
-The installed editor can run and package games without a separate Rust or Bun installation. Use the native welcome screen to create a project, or run the included CLI from a terminal:
+| Platform | Installer | Terminal commands |
+|---|---|---|
+| Windows | Run the `.msi`; the default location is `Program Files/Whatever Editor` | Adds its `bin` directory to system PATH and creates a Start menu shortcut. |
+| Ubuntu/Debian | Run `sudo apt install ./WhateverEditor-linux-x86_64.deb` | Installs `whatever-editor` and `wmod` links in `/usr/bin`. Requires Ubuntu 24.04 or a compatible glibc 2.39 system. |
+| macOS | Open the `.pkg` to install `/Applications/Whatever Editor.app` | Registers its command directory through `/etc/paths.d`. |
+
+Open a new terminal after installing. To use a portable archive instead, extract the
+whole archive and keep its support files together. Windows/Linux start the actual
+editor at `bin/whatever-editor` (`.exe` on Windows); macOS opens `Whatever Editor.app`.
+The app's terminal tools live in `Contents/MacOS`. Portable archives leave PATH unchanged.
+
+The installed editor includes the tools to run and package games. Use the native welcome screen to create a project, or run the included CLI from a terminal.
 
 ```sh
 wmod project create ./hello-game --id hello_mod --name "Hello Game"
@@ -17,25 +28,24 @@ wmod project check ./hello-game
 Open the resulting `hello-game/whatever.wproject` in the editor. If `wmod` is not on your PATH, run it from the extracted distribution using the appropriate executable path.
 
 :::note[Match your engine and API]
-Use SDK types from the same editor distribution, or the npm API release matching your engine. The native host verifies its embedded API version. These docs follow the current source tree, which may include changes newer than a released archive.
+Use SDK types from the same editor distribution, or the npm API release matching your engine. The SDK and VM are embedded with their matching engine version. These docs follow the current source tree, which may include changes newer than a released archive.
 :::
 
 ## Build from source
 
-Install [Rust and Cargo](https://rustup.rs/) and [Bun](https://bun.sh/). Native windowing/audio development libraries and the Bun fork's native build prerequisites depend on your platform; the runtime build details live in the [sandbox reference](/reference/sandbox/#build-and-verification).
+Install [Rust and Cargo](https://rustup.rs/) and [Node.js 24 LTS](https://nodejs.org/) (24.12+) with npm. Native windowing, audio and Wasm build prerequisites depend on your platform. See the [sandbox reference](/reference/sandbox/#build-and-verification).
 
 ```sh
-git clone --recurse-submodules https://github.com/MesterMan03/Whatever.git
+git clone https://github.com/MesterMan03/Whatever.git
 cd Whatever
-bun install --frozen-lockfile
-bun run prepare:bun
-bun run build:bun
-bun run build:runtime
-bun run build:host
-cargo build --workspace
+npm ci
+rustup target add wasm32-unknown-unknown
+npm run build:runtime
+npm run build:guest
+npm run build:native
 ```
 
-`prepare:bun` verifies the committed engine-owned fork. Mods run in the bundled `whatever-mod-host`; the system Bun installation is for development tooling.
+The engine embeds its Wasm VM, SDK and TypeScript compiler. Installed games compile raw mod sources internally.
 
 Create and open the tutorial project from the checkout:
 

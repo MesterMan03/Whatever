@@ -20,7 +20,7 @@ Usage:\n\
   wmod library pack <folder> --output <file.wasset>\n\
   wmod library inspect <file.wasset>\n\
   wmod library import <file.wasset> --project <project> --mod <id>\n\
-  wmod runtime-kit --player <binary> --host <binary> --launcher <binary> --source <checkout> --output <new-directory>\n";
+  wmod runtime-kit --player <binary> --launcher <binary> --source <checkout> --output <new-directory>\n";
 
 struct Arguments {
     positional: Vec<String>,
@@ -225,11 +225,10 @@ fn main() -> anyhow::Result<()> {
             tracing::info!(path=%whatever_engine::project::display_path(&output), "packaged game");
         }
         ("runtime-kit", "") => {
-            let args = Arguments::parse(tail, &["player", "host", "launcher", "source", "output"])?;
+            let args = Arguments::parse(tail, &["player", "launcher", "source", "output"])?;
             args.count(0)?;
             project::create_runtime_kit(
                 Path::new(args.required("player")?),
-                Path::new(args.required("host")?),
                 Path::new(args.required("launcher")?),
                 Path::new(args.required("source")?),
                 Path::new(args.required("output")?),

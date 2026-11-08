@@ -509,7 +509,8 @@ impl Editor {
             fn rewrite(value: &mut serde_json::Value, old: &str, new: &str) {
                 match value {
                     serde_json::Value::Object(fields)
-                        if fields.len() == 1
+                        if (fields.len() == 1
+                            || (fields.len() == 2 && fields.contains_key("$component")))
                             && fields.get("$entity").and_then(|v| v.as_str()) == Some(old) =>
                     {
                         fields.insert("$entity".into(), serde_json::Value::String(new.into()));

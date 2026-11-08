@@ -9,18 +9,16 @@ use crate::{
     debug::DebugLogger,
     ecs::{EntityId, World},
     mods::{GameMeta, ModRegistry},
-    sandbox::SandboxConfig,
     script::{
-        EngineContext, RecvOutcome, ScriptHost, dispatch,
-        ipc::{EngineMessage, ScriptMessage, ScriptPacket},
-        mod_data_root,
+        EngineContext, ScriptHost, dispatch,
+        ipc::{EngineMessage, ScriptMessage},
     },
     vfs::VfsHandle,
     watchdog::Watchdog,
 };
 use anyhow::Context;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, atomic::Ordering, mpsc},
     time::{Duration, Instant},
 };
@@ -38,14 +36,16 @@ pub struct Simulation {
     console: crate::console::DevConsole,
     fatal_error: Option<String>,
     world: World,
-    scene_publisher: crate::ecs::ScenePublisher,
+    command_count: usize,
+    #[cfg(test)]
+    script_messages: Vec<(String, ScriptMessage)>,
     timings: super::TickTimings,
     initial_scene: Option<crate::scene::LoadedScene>,
     physics: crate::physics::PhysicsRegistry,
     audio: AudioManager,
     clock: TickClock,
+    tick_meter: crate::presentation::RateMeter,
     tick_number: u64,
-    startup_packets: Vec<(String, ScriptPacket)>,
     scripts_initialized: bool,
     pending_controls: Vec<RuntimeCommand>,
     editor_edits: Vec<super::editor::EditorControl>,
@@ -87,7 +87,7 @@ impl Simulation {
             meta,
             registry,
             vfs,
-            mut debug,
+            debug,
         } = game;
         let clock = TickClock::new(meta.game.tick_rate)?;
         let mut script_host = ScriptHost::new()?;
@@ -98,34 +98,17 @@ impl Simulation {
             let Some(script_entry) = script_cfg.entry_for(mode) else {
                 continue;
             };
-            let entry = loaded_mod.root.join(script_entry);
             let mod_id = &loaded_mod.manifest.meta.id;
-
-            let mod_data_dir = match mod_data_root(&meta.game.id, mod_id) {
-                Ok(d) => d,
-                Err(e) => {
-                    tracing::error!(mod_id, "could not determine mod data dir: {e:#}");
-                    continue;
-                }
-            };
-            if let Err(e) = std::fs::create_dir_all(&mod_data_dir) {
-                tracing::error!(mod_id, "could not create mod data dir: {e:#}");
-                continue;
-            }
-
-            let sandbox_cfg = SandboxConfig {
-                mod_id: mod_id.clone(),
-                mod_root: loaded_mod.root.clone(),
-                runtime_executable: script_host.runtime_path().to_path_buf(),
-            };
-
-            if let Err(e) = script_host.spawn(mod_id, &entry, mode, &sandbox_cfg, &mut debug) {
-                tracing::error!(mod_id, entry = %entry.display(), "script spawn failed: {e:#}");
+            let package = crate::script::compile_sources(&loaded_mod.root, mod_id)?;
+            script_host.register(mod_id, package, script_entry, mode)?;
+        }
+        let mut world = World::new();
+        for (owner, script) in &script_host.scripts {
+            for definition in &script.package.definitions {
+                world.register_component(owner, definition.clone())?;
             }
         }
 
-        let mut world = World::new();
-        crate::script::load_component_types(&mut world, &registry)?;
         let initial_scene = if let Some(path) = registry.startup_scene()? {
             Some(
                 crate::scene::SceneDocument::load_checked(
@@ -158,14 +141,16 @@ impl Simulation {
             console: crate::console::DevConsole::new(),
             fatal_error: None,
             world,
-            scene_publisher: Default::default(),
+            command_count: 0,
+            #[cfg(test)]
+            script_messages: Vec::new(),
             timings: Default::default(),
             initial_scene,
             physics,
             audio,
             clock,
+            tick_meter: Default::default(),
             tick_number: 0,
-            startup_packets: vec![],
             scripts_initialized: false,
             pending_controls: vec![],
             editor_edits: vec![],
@@ -230,16 +215,24 @@ impl Simulation {
         }
         self.network.shutdown();
         self.network_events();
-        let messages = self.script_host.shutdown_all(0, &mut self.debug);
-        for (id, packet) in messages {
-            if let ScriptPacket::CommandBatch { commands, .. } = packet {
-                for message in commands {
-                    if let ScriptMessage::Log { .. } = message {
-                        self.message(id.clone(), message, &mut HashMap::new());
-                    }
+        let order = self
+            .registry
+            .iter()
+            .map(|loaded| loaded.manifest.meta.id.clone())
+            .collect::<Vec<_>>();
+        for id in order {
+            if self.script_host.contains_mod(&id) {
+                self.script_host.send(
+                    &id,
+                    &EngineMessage::Shutdown { exit_code: 0 },
+                    &mut self.debug,
+                );
+                if let Err(error) = self.run_script(&id, false) {
+                    tracing::warn!(mod_id=%id,%error,"mod shutdown callback failed");
                 }
             }
         }
+        self.script_host.shutdown_all(0, &mut self.debug);
         tracing::info!(ticks = self.tick_number, "simulation stopped");
         if let Some(error) = self.fatal_error {
             anyhow::bail!(error);
@@ -261,7 +254,7 @@ impl Simulation {
                 if !self.script_host.send(&mod_id, &message, &mut self.debug) {
                     console.handle_command_response(
                         vec![],
-                        Some("command's mod process is unavailable".into()),
+                        Some("command's mod is unavailable".into()),
                     );
                     console.discard_output();
                 }
@@ -359,6 +352,8 @@ impl Simulation {
         message: ScriptMessage,
         batch_entities: &mut HashMap<String, EntityId>,
     ) {
+        #[cfg(test)]
+        self.script_messages.push((id.clone(), message.clone()));
         if let ScriptMessage::GetMainCamera { request_id } = &message {
             self.script_host.send(
                 &id,
@@ -431,13 +426,14 @@ impl Simulation {
     fn tick(&mut self) {
         self.watchdog.start_tick();
         let start = Instant::now();
-        let batches = self.tick_commands();
+        self.command_count = 0;
+        let tick_delta = self.tick_commands();
         self.timings = super::TickTimings {
             tick_number: self.tick_number,
             tick_rate: 1.0 / self.clock.interval.as_secs_f64(),
             scripts_ms: super::performance::elapsed(start),
-            commands: batches.iter().map(|(_, commands)| commands.len()).sum(),
-            hosts: batches.len(),
+            commands: self.command_count,
+            hosts: self.script_host.scripts.len(),
             build: if cfg!(debug_assertions) {
                 "debug"
             } else {
@@ -447,9 +443,9 @@ impl Simulation {
             platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             ..Default::default()
         };
-        self.finish_tick(batches);
+        self.finish_tick(tick_delta);
         self.timings.total_ms = super::performance::elapsed(start);
-        self.timings.entities = self.scene_publisher.entity_count();
+        self.timings.entities = self.world.allocator.alive_entity_ids().count();
         self.timings.frame = self
             .shared
             .frame_timings
@@ -468,28 +464,12 @@ impl Simulation {
         self.watchdog.end_tick();
     }
 
-    /// Gather external state, then request exactly one buffer from each initialized mod.
-    fn tick_commands(&mut self) -> Vec<(String, Vec<ScriptMessage>)> {
+    /// Gather external state, then run each mod directly in dependency order.
+    fn tick_commands(&mut self) -> f64 {
         self.initialize_scripts();
         self.tick_number += 1;
-        let mut packets = std::mem::take(&mut self.startup_packets);
-        packets.extend(self.script_host.drain_messages(&mut self.debug));
-        for (id, packet) in packets {
-            match packet {
-                ScriptPacket::RuntimeReady { protocol } => {
-                    if protocol != crate::script::HOST_PROTOCOL {
-                        tracing::warn!(mod_id=%id, "incompatible mod host protocol");
-                        self.script_host.terminate(&id);
-                    }
-                }
-                ScriptPacket::RuntimeFailed { message } => tracing::error!(mod_id=%id, "{message}"),
-                ScriptPacket::CommandBatch { .. } => {
-                    tracing::warn!(mod_id=%id, "unsolicited tick batch");
-                    self.script_host.terminate(&id);
-                }
-            }
-        }
-        // Reap even if no process can accept a Tick: the receive barrier may be empty.
+        self.physics.begin_tick(self.tick_number);
+        let tick_delta = self.clock.interval.as_secs_f64();
         for id in self.script_host.reap_exited() {
             self.network.remove_mod(&id);
         }
@@ -522,145 +502,304 @@ impl Simulation {
             };
         let tick = EngineMessage::Tick {
             tick_number: self.tick_number,
-            delta_seconds: self.clock.interval.as_secs_f64(),
+            delta_seconds: tick_delta,
             keys_pressed,
             mouse_delta: [mouse_delta.0, mouse_delta.1],
             mouse_captured,
             mouse_buttons,
             mouse_buttons_pressed,
         };
-        // Registry iteration is dependency/load order, independent of pipe scheduling.
+        // The registry supplies dependency/load order.
         let order: Vec<String> = self
             .registry
             .iter()
             .map(|loaded| loaded.manifest.meta.id.clone())
             .filter(|id| self.script_host.is_ready(id))
             .collect();
-        let mut pending: HashSet<String> = HashSet::new();
-        let mut batches = HashMap::new();
         for id in &order {
-            if self.script_host.send(id, &tick, &mut self.debug) {
-                pending.insert(id.clone());
+            self.script_host.send(id, &tick, &mut self.debug);
+            if let Err(error) = self.run_script(id, false) {
+                tracing::error!(mod_id=%id,error=%format!("{error:#}"),"mod execution failed");
+                self.script_host.terminate(id);
             }
         }
-        while !pending.is_empty() && !self.stopped() {
-            self.controls();
-            match self
-                .script_host
-                .recv_blocking(Duration::from_millis(5), &mut self.debug)
-            {
-                RecvOutcome::Message(
-                    id,
-                    ScriptPacket::CommandBatch {
-                        tick_number,
-                        commands,
-                    },
-                ) => {
-                    if tick_number == self.tick_number && pending.remove(&id) {
-                        batches.insert(id, commands);
-                    } else {
-                        tracing::warn!(mod_id=%id, tick_number, "duplicate or mismatched tick batch");
-                        self.script_host.terminate(&id);
-                    }
-                }
-                RecvOutcome::Message(id, packet) => self.startup_packets.push((id, packet)),
-                RecvOutcome::Disconnected => break,
-                RecvOutcome::Timeout => {}
-            }
-            for id in self.script_host.reap_exited() {
-                pending.remove(&id);
-                self.network.remove_mod(&id);
-            }
-        }
-        order
-            .into_iter()
-            .filter_map(|id| batches.remove(&id).map(|commands| (id, commands)))
-            .collect()
+        tick_delta
     }
 
     fn initialize_scripts(&mut self) {
         if self.scripts_initialized {
             return;
         }
-        let order: Vec<String> = self
+        let order = self
             .registry
             .iter()
             .map(|loaded| loaded.manifest.meta.id.clone())
-            .collect();
-        let mut pending: HashSet<String> = order
-            .iter()
-            .filter(|id| self.script_host.has_process(id))
-            .cloned()
-            .collect();
-        while !pending.is_empty() && !self.stopped() {
-            self.controls();
-            match self
-                .script_host
-                .recv_blocking(Duration::from_millis(5), &mut self.debug)
-            {
-                RecvOutcome::Message(id, ScriptPacket::RuntimeReady { protocol })
-                    if protocol == crate::script::HOST_PROTOCOL && pending.remove(&id) =>
-                {
-                    self.script_host.mark_ready(&id);
-                }
-                RecvOutcome::Message(id, ScriptPacket::RuntimeFailed { message }) => {
-                    tracing::error!(mod_id=%id, "{message}");
-                    self.script_host.terminate(&id);
-                    pending.remove(&id);
-                }
-                RecvOutcome::Message(id, _) => {
-                    tracing::warn!(mod_id=%id, "invalid mod startup handshake");
-                    self.script_host.terminate(&id);
-                    pending.remove(&id);
-                }
-                RecvOutcome::Disconnected => break,
-                RecvOutcome::Timeout => {}
-            }
-            for id in self.script_host.reap_exited() {
-                pending.remove(&id);
-            }
-        }
-        let snapshot = self
-            .scene_publisher
-            .reset(&mut self.world, 0, self.main_camera);
-        if let Err(error) = self.script_host.broadcast_scene(snapshot, &mut self.debug) {
-            tracing::error!(%error, "initial scene snapshot failed");
-        }
+            .collect::<Vec<_>>();
         for id in order {
-            if self.script_host.is_ready(&id) {
-                self.script_host.send(
-                    &id,
-                    &EngineMessage::Init {
-                        initial_scene: self.initial_scene.clone(),
-                        mod_id: id.clone(),
-                        engine_version: env!("CARGO_PKG_VERSION").to_owned(),
-                        mode: self.mode,
-                    },
-                    &mut self.debug,
-                );
+            if !self.script_host.contains_mod(&id) {
+                continue;
+            }
+            let result = self.run_script(&id, true);
+            if let Err(error) = result {
+                tracing::error!(mod_id=%id,%error,"mod initialization failed");
+                self.script_host.terminate(&id);
+                continue;
+            }
+            self.script_host.send(
+                &id,
+                &EngineMessage::Init {
+                    initial_scene: self.initial_scene.clone(),
+                    mod_id: id.clone(),
+                    engine_version: env!("CARGO_PKG_VERSION").into(),
+                    mode: self.mode,
+                },
+                &mut self.debug,
+            );
+            if let Err(error) = self.run_script(&id, false) {
+                tracing::error!(mod_id=%id,%error,"mod init callback failed");
+                self.script_host.terminate(&id);
             }
         }
         self.scripts_initialized = true;
     }
 
+    fn run_script(&mut self, id: &str, boot: bool) -> anyhow::Result<()> {
+        let package = if boot {
+            let script = self.script_host.scripts.get(id).context("mod sources")?;
+            Some(serde_json::to_string(
+                &serde_json::json!({"modules":script.package.modules,"definitions":script.package.definitions,"entry":script.entry,"mode":script.mode.to_string()}),
+            )?)
+        } else {
+            None
+        };
+        let mut runtime = self
+            .script_host
+            .runtime
+            .take()
+            .context("runtime already executing")?;
+        let messages = self.script_host.take_messages(id);
+        let mut aliases = HashMap::new();
+        let mut handler = |mut request: serde_json::Value| -> anyhow::Result<serde_json::Value> {
+            if request["op"] == "command" {
+                let message: ScriptMessage = serde_json::from_value(request["message"].take())?;
+                self.command_count += 1;
+                self.message(id.into(), message, &mut aliases);
+                return Ok(serde_json::to_value(self.script_host.take_messages(id))?);
+            }
+            self.script_query(&request)
+        };
+        let result = (|| -> anyhow::Result<()> {
+            if let Some(package) = package {
+                runtime.scoped(id, "load_package", &package, &mut handler)?;
+                runtime.scoped(id,"evaluate","if(globalThis.__bootError)throw new Error(__bootError); if(!globalThis.__ready)throw new Error('Module initialization did not complete'); null",&mut handler)?;
+            }
+            for message in messages {
+                runtime.scoped(
+                    id,
+                    "evaluate",
+                    &format!("__deliver({});null", serde_json::to_string(&message)?),
+                    &mut handler,
+                )?;
+            }
+            Ok(())
+        })();
+        self.script_host.runtime = Some(runtime);
+        if result.is_ok()
+            && boot
+            && let Some(script) = self.script_host.scripts.get_mut(id)
+        {
+            script.booted = true;
+        }
+        result
+    }
+
+    fn script_query(&mut self, request: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        use serde_json::json;
+        match request["op"].as_str().context("missing host operation")? {
+            "component_row" => {
+                let Some(id) = request["id"].as_str().and_then(EntityId::parse) else {
+                    return Ok(serde_json::Value::Null);
+                };
+                let kind = request["kind"].as_str().context("invalid component type")?;
+                Ok(self.world.get_component(&id, kind).map_or(
+                    serde_json::Value::Null,
+                    |data| json!({
+                        "data": data,
+                        "instance_id": self.world.component_instances.get(kind)
+                            .and_then(|instances| instances.get(&id.index)).map(ToString::to_string),
+                    }),
+                ))
+            }
+            "component_patch" => {
+                let id = request["id"]
+                    .as_str()
+                    .and_then(EntityId::parse)
+                    .context("invalid entity handle")?;
+                let kind = request["kind"].as_str().context("invalid component type")?;
+                anyhow::ensure!(
+                    !crate::physics::PhysicsRegistry::is_read_only(kind),
+                    "component is read-only"
+                );
+                let mut data = self
+                    .world
+                    .get_component(&id, kind)
+                    .context("component handle is stale")?;
+                let fields = data.as_object_mut().context("invalid component data")?;
+                for (key, value) in request["data"]
+                    .as_object()
+                    .context("invalid component patch")?
+                {
+                    fields.insert(key.clone(), value.clone());
+                }
+                crate::ecs::resolve_references(&mut data, &mut |reference| {
+                    EntityId::parse(reference).filter(|id| self.world.is_alive(id))
+                })?;
+                let data = self
+                    .physics
+                    .normalize_component(&mut self.world, id, kind, data)?;
+                anyhow::ensure!(
+                    self.world.set_component(&id, kind, data),
+                    "component update was rejected"
+                );
+                self.physics.component_changed(&self.world, id, kind);
+                if matches!(
+                    kind,
+                    "core:transform"
+                        | "core:sprite_renderer"
+                        | "core:text_renderer"
+                        | "core:mesh_renderer"
+                ) {
+                    self.render_cmds
+                        .extend(RenderCommand::upsert_hierarchy(&self.world, [id]));
+                }
+                self.changed = true;
+                Ok(serde_json::Value::Null)
+            }
+            "query_entities" => {
+                let values = request["kinds"]
+                    .as_array()
+                    .context("invalid component query")?;
+                anyhow::ensure!(values.len() <= 64, "component query exceeds limit");
+                let kinds = values
+                    .iter()
+                    .map(|value| value.as_str().context("invalid component type"))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                Ok(json!(
+                    self.world
+                        .query(&kinds)
+                        .into_iter()
+                        .map(|(id, _)| id.to_string())
+                        .collect::<Vec<_>>()
+                ))
+            }
+            "query_tags" => {
+                let query = &request["query"];
+                let filters = |field: &str| -> anyhow::Result<Vec<String>> {
+                    match query.get(field) {
+                        None => Ok(Vec::new()),
+                        Some(value) => {
+                            let values = value.as_array().context("invalid tag filter")?;
+                            anyhow::ensure!(values.len() <= 32, "tag filter exceeds limit");
+                            values
+                                .iter()
+                                .map(|value| {
+                                    value.as_str().map(str::to_owned).context("invalid tag")
+                                })
+                                .collect()
+                        }
+                    }
+                };
+                let all = filters("all")?;
+                let any = filters("any")?;
+                let none = filters("none")?;
+                Ok(json!(
+                    self.world
+                        .allocator
+                        .alive_entity_ids()
+                        .filter(|id| {
+                            if query["includeDisabled"] != true && !self.world.is_active(id) {
+                                return false;
+                            }
+                            let tags = self.world.tags.get(&id.index);
+                            let has = |tag: &String| tags.is_some_and(|tags| tags.contains(tag));
+                            all.iter().all(has)
+                                && (any.is_empty() || any.iter().any(has))
+                                && !none.iter().any(has)
+                        })
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                ))
+            }
+            "entity_record" => Ok(serde_json::to_value(
+                request["id"]
+                    .as_str()
+                    .and_then(EntityId::parse)
+                    .and_then(|id| crate::ecs::entity_snapshot(&self.world, id)),
+            )?),
+            "entity_metadata" => Ok(serde_json::to_value(
+                request["id"]
+                    .as_str()
+                    .and_then(EntityId::parse)
+                    .and_then(|id| crate::ecs::entity_metadata(&self.world, id)),
+            )?),
+            "entity_list" => Ok(json!(
+                self.world
+                    .allocator
+                    .alive_entity_ids()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+            )),
+            "component_rows" => {
+                #[derive(serde::Serialize)]
+                struct Row<'a> {
+                    entity_id: String,
+                    component_type: &'a str,
+                    instance_id: Option<String>,
+                    data: &'a serde_json::Value,
+                    active: bool,
+                }
+
+                let kinds = request["kinds"]
+                    .as_array()
+                    .context("expected component types")?;
+                anyhow::ensure!(kinds.len() <= 10000, "too many component types");
+                let mut rows = Vec::new();
+                for kind in kinds {
+                    let kind = kind.as_str().context("invalid component type")?;
+                    let Some(components) = self.world.custom.get(kind) else {
+                        continue;
+                    };
+                    let instances = self.world.component_instances.get(kind);
+                    let mut entries: Vec<_> = components.iter().collect();
+                    entries.sort_unstable_by_key(|(index, _)| **index);
+                    rows.extend(entries.into_iter().filter_map(|(&index, data)| {
+                        let id = self.world.allocator.live_id(index)?;
+                        self.world.is_active(&id).then(|| Row {
+                            entity_id: id.to_string(),
+                            component_type: kind,
+                            instance_id: instances
+                                .and_then(|instances| instances.get(&index))
+                                .map(ToString::to_string),
+                            data,
+                            active: true,
+                        })
+                    }));
+                }
+                Ok(serde_json::to_value(rows)?)
+            }
+            "scene_info" => Ok(
+                json!({"revision":self.tick_number,"camera":self.main_camera.map(|id|id.to_string())}),
+            ),
+            _ => anyhow::bail!("unsupported engine operation"),
+        }
+    }
+
     /// Execute once, reserve the next phase for physics, then publish all results.
-    fn finish_tick(&mut self, batches: Vec<(String, Vec<ScriptMessage>)>) {
+    fn finish_tick(&mut self, tick_delta: f64) {
         if self.stopped() {
             return;
         }
-        self.script_host.begin_responses();
         let command_start = Instant::now();
-        let tick_delta = self.clock.interval.as_secs_f64();
-        self.physics.begin_tick(self.tick_number);
-        for (id, commands) in batches {
-            let mut batch_entities = HashMap::new();
-            for message in commands {
-                self.message(id.clone(), message, &mut batch_entities);
-                if self.stopped() {
-                    return;
-                }
-            }
-        }
         for edit in std::mem::take(&mut self.editor_edits) {
             let removals = RenderCommand::remove_hierarchy(
                 &self.world,
@@ -692,8 +831,8 @@ impl Simulation {
         }
         self.timings.commands_ms = super::performance::elapsed(command_start);
         let physics_start = Instant::now();
-        // Fixed simulation order: input/events -> mod batches -> commands -> physics
-        // -> presentation and results. Rendering never advances this clock.
+        // Input/events -> synchronous scripts and editor commands -> physics -> presentation.
+        // Rendering never advances this clock.
         match self.physics.step(&mut self.world, tick_delta) {
             Ok(changed) => {
                 for id in &changed {
@@ -721,20 +860,10 @@ impl Simulation {
         }
         self.timings.physics_ms = super::performance::elapsed(physics_start);
         self.changed = true;
-        let snapshot_start = Instant::now();
-        let delta =
-            self.scene_publisher
-                .publish(&mut self.world, self.tick_number, self.main_camera);
-        match self.script_host.broadcast_scene(delta, &mut self.debug) {
-            Ok(bytes) => self.timings.snapshot_bytes = bytes,
-            Err(error) => tracing::error!(%error, "scene delta publication failed"),
-        }
-        self.timings.snapshot_ms = super::performance::elapsed(snapshot_start);
         let presentation_start = Instant::now();
         self.publish();
+        self.world.scene_changes = Default::default();
         self.timings.presentation_ms = super::performance::elapsed(presentation_start);
-        self.script_host
-            .flush_responses(self.tick_number, &mut self.debug);
     }
     fn publish(&mut self) {
         if !self.changed {
@@ -758,13 +887,13 @@ impl Simulation {
                 sequence: self.editor_sequence,
             });
         }
-        self.motion
-            .capture(&self.world, self.main_camera, Instant::now());
+        let now = Instant::now();
+        self.motion.capture(&self.world, self.main_camera, now);
         let update = Presentation {
             motion: self.motion.clone(),
             world: self.world.clone(),
             main_camera: self.main_camera,
-            tick_rate: 1.0 / self.clock.interval.as_secs_f64(),
+            ticks_per_second: self.tick_meter.record(now),
             editor_sequence: self.editor_sequence,
             render_cmds: self
                 .render_cmds
@@ -905,7 +1034,7 @@ mod tests {
         std::fs::remove_dir_all(directory).expect("cleanup");
     }
     #[test]
-    #[ignore = "requires a built bundled mod host; run in the mod-runtime CI job"]
+    #[ignore = "runs the complete embedded client runtime; run in the mod-runtime CI job"]
     fn client_ticks_without_redraws_or_audio_hardware() {
         use crate::{debug::DebugConfig, runtime::LaunchOptions};
         let directory = std::env::temp_dir().join(format!(
@@ -917,6 +1046,9 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(directory.join("core/assets")).expect("fixture");
+        // Asset validation still runs even though this fixture never renders them.
+        std::fs::write(directory.join("core/assets/unused.png"), b"fixture").expect("texture");
+        std::fs::write(directory.join("core/assets/unused.wgsl"), b"// fixture").expect("shader");
         std::fs::write(
             directory.join("core/meta.toml"),
             "[game]\nid='client_worker_fixture'\nname='Fixture'\ntick_rate=100\n",
@@ -1035,7 +1167,13 @@ Engine.on("tick",({tick_number})=>{
         );
         assert!(
             loaded,
-            "console scene load must publish world and response without redraws"
+            "console scene load must publish world and response without redraws: {:?}",
+            shared
+                .presentation
+                .lock()
+                .expect("snapshot")
+                .as_ref()
+                .map(|frame| &frame.events)
         );
         let frame = shared
             .presentation

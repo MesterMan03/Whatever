@@ -200,9 +200,8 @@ fn official_library_assets_and_every_prefab_validate_after_import() {
     assert!(library.files.len() > 250);
     let imported = project.import_library("core", &library).expect("import");
     let root = project.roots().expect("roots")[0].clone();
-    let host = crate::script::find_host().expect("host");
     let mut world = World::new();
-    for definition in crate::script::inspect_components(&host, &root, "core").expect("components") {
+    for definition in crate::script::inspect_components(&root, "core").expect("components") {
         world
             .register_component("core", definition)
             .expect("register");
@@ -231,7 +230,9 @@ fn official_library_assets_and_every_prefab_validate_after_import() {
             {
                 let volume: f32 = mesh
                     .indices
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|face| {
                         let a = glam::Vec3::from(mesh.vertices[face[0] as usize].position);
                         let b = glam::Vec3::from(mesh.vertices[face[1] as usize].position);

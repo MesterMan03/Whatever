@@ -1,10 +1,9 @@
 # @whatever-engine/api
 
-The npm package contains the scripting bundle and TypeScript declarations. The native mod host is supplied separately by the editor/player distribution.
-
-TypeScript scripting API for Whatever Engine mods. Abstracts the NDJSON IPC protocol between the engine and Bun script subprocesses.
-
-The bundled host delivers complete UTF-8 batches over ordinary engine pipes; its transport handles remain private.
+The engine embeds this SDK, a TypeScript compiler and isolated QuickJS Wasm VMs.
+Mods distribute JS/TS/JSON source, compiled on the destination machine by the
+embedded compiler. The npm package supplies development types.
+Native queries and scene mutations execute synchronously inside the engine.
 
 ## Usage
 
@@ -22,15 +21,22 @@ Engine.on("tick", () => {
 });
 ```
 
-The engine-owned mod host contains this API and resolves `@whatever-engine/api` before loading the mod. No runtime install or workspace ancestry is required. Leave this import external when bundling mods. The npm package remains available for editor types.
+The engine-owned VM contains this API and resolves `@whatever-engine/api` before loading the mod. No runtime install or workspace ancestry is required. Leave this import external when bundling mods. The npm package remains available for editor types.
 
-Other package imports, including `node:` and `bun:` modules, are denied initially. Mods may import local JS/TS/JSON source inside their own directory. Direct Bun/process/network globals are unavailable; use the engine API for file I/O and logging. See [`docs/SANDBOX.md`](../docs/SANDBOX.md) for the native allowlists and build instructions.
+Mods may import local JS/TS/JSON source inside their own directory. Use the engine API for file I/O and logging. See [`docs/SANDBOX.md`](../docs/SANDBOX.md) for the import and capability allowlists and build instructions.
 
 ## API
 
+### Component reference fields
+
+- `session: RunSession | null = null` — infer a reference to a concrete mod-local component; call its methods directly
+- `Type.Component(RunSession)` — explicit descriptor, usable with `Nullable`, `Array` and `Struct`
+
+Experimental engine backend and build instructions: [`docs/EMBEDDED_SCRIPTING.md`](../docs/EMBEDDED_SCRIPTING.md).
+
 ### `Prefab`
 
-- `Prefab.spawn(path)` — create an independent hierarchy in a command batch; returns `Promise<PrefabInstance>`
+- `Prefab.spawn(path)` — create an independent hierarchy immediately; returns `PrefabInstance`
 - `PrefabInstance.root`, `.get(scriptId)`, `.entities()` — access the fresh root and its local named descendants
 
 Prefab JSON and library imports: [`docs/ASSETS.md`](../docs/ASSETS.md).
@@ -92,8 +98,8 @@ provides autocomplete for supported key names. Existing `.includes()` checks wor
 
 - `Profiler.now()` → monotonic milliseconds
 - `Profiler.latest()` → `DeepReadonly<TickTimings> | null`
-- `Profiler.runtime()` → previous host tick/snapshot/script timings
-- `Profiler.memory()` → read-only heap and RSS bytes
+- `Profiler.runtime()` → previous VM tick/script timings (scene-replication fields remain zero)
+- `Profiler.memory()` → read-only Wasm memory bytes
 - `SceneSnapshot.revision`, `.has(id)`, `.get(id)`, `.entities()`
 
 ### `Window`
@@ -115,7 +121,7 @@ Sandboxed per-mod file I/O. Paths must not contain `..`.
 - `pending.get()` → `Promise<T>` — wait for the recorded result; never flushes or repeats work
 - `PendingEntity` — an entity reference with chainable mutations before its native ID exists; reads are synchronous; explicit `request*` methods return `Pending<T>`
 
-All API commands are submitted automatically once per tick. See [tick timing and migration](../docs/SCRIPTING.md#tick-order-and-command-batches).
+Scene/physics calls execute immediately. Entity creation only allocates a compatibility result Promise if `.get()` is used. See [tick timing](../docs/SCRIPTING.md#tick-order-and-direct-calls).
 
 ### `Component`
 
@@ -176,7 +182,7 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.requestComponent(id, kind)` → `Pending<T | null>`
 - `Scene.requestQuery(kinds)` → `Pending<QueryResult<Entity>[]>`
 - `Scene.createEntity()` → `PendingEntity`
-- `Scene.loadScene(path)` → `Promise<LoadedScene>`
+- `Scene.loadScene(path)` → `LoadedScene`
 - `Scene.ref(entityOrId)` → `EntityRef`
 - `Scene.destroyEntity(entity_id)` — fire-and-forget
 - `Scene.listEntities()` → `readonly Entity[]`
@@ -196,7 +202,10 @@ Entity and component management. Methods that accept a raw `entity_id` string ar
 - `Scene.getParent(entity_id)` → `string | null`
 - `Scene.getChildren(entity_id)` → `readonly string[]`
 
-Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` returns immutable fields. Mutable class helpers are available in `editComponent` drafts and ordered `requestComponent` results.
+Built-in component types: `core:transform`, `core:sprite_renderer`, `core:mesh_renderer`, `core:text_renderer`, `core:camera`, `core:ambient_light`, `core:directional_light`, `core:point_light`. `getComponent` returns live fields and class helpers; retained handles stay live across turns. Field assignments, nested edits and component removal cleanup take effect immediately. `editComponent` remains a compatibility helper.
+
+Entity and component reads fetch only the requested data. Repeated reads within
+a turn reuse cached data until an engine write affects it.
 
 ### `LoadedScene`
 
@@ -282,8 +291,8 @@ Native Rapier 3D; see the [full physics reference](../docs/PHYSICS.md).
 - `body.applyImpulse(vector, options?)`, `.applyTorqueImpulse(vector, wake?)`, `.addForce(vector, options?)`, `.addTorque(vector, wake?)`
 - `body.resetForces(wake?)`, `.resetTorques(wake?)`, `.setLinearVelocity(vector, options?)`, `.setAngularVelocity(vector, wake?)`
 - `body.teleport(position, options?)`, `.setKinematicTarget(position, rotation?)`, `.sleep()`, `.wake()`
-- `body.get()` → `Promise<void>`; `body.state()` → `Pending<Physics.BodyState>`
-- `Physics.world(entityOrId?)` → `WorldHandle`; `world.castRay(origin, direction, options)` → `Pending<Physics.RayHit | null>`
+- `body.get()` → `Promise<void>`; `body.state()` → `Physics.BodyState`
+- `Physics.world(entityOrId?)` → `WorldHandle`; `world.castRay(origin, direction, options)` → `Physics.RayHit | null`
 - `Physics.onEvent(handler)`; `Physics.QueryFilterFlag`, `Physics.CollisionType`, `Physics.TriMeshFlag`
 - Read-only ECS views: `core:rigid_body_state` / `Physics.BodyState`, `core:physics_status` / `Physics.Status`
 - Typed expert settings: `Physics.IntegrationOptions`, `BodyRapierOptions`, `ColliderRapierOptions`, `JointRapierOptions`
@@ -359,18 +368,18 @@ Unique commands use plain names. Collisions qualify all participants as `mod_id:
 
 ```sh
 # Regenerate type declarations after editing index.ts
-bun run build:types
+npm run build:types
 ```
 
 Full API documentation is in [`docs/SCRIPTING.md`](../docs/SCRIPTING.md) at the repo root.
 
-The host captures private native pipe handles before lockdown; mods do not receive stdin, stdout or process objects. The public TypeScript declarations remain independent of Bun internals.
+The private Wasm boundary exposes checked engine operations. Mods receive no OS handles or process objects.
 
 
 Init payloads include `mode`. Simulation ticks run independently of rendering. Window/audio operations and presentation settings reject server use. Mod manifests expose supported `sides` and optional shared/client/server script entries; only mods active on the current side appear in `Mods.list()` and `Mods.get()`.
 
 
-Tick handler failures are logged and stop the faulty mod; exited processes are removed from the command-submission barrier. Host protocol 7 uses `CommandBatch` and `CommandResults` envelopes.
+Tick failures and budget traps stop the affected VM. Healthy mods and engine shutdown continue.
 
 ## Entity lifecycle and startup scenes
 
@@ -385,4 +394,4 @@ Tick handler failures are logged and stop the faulty mod; exited processes are r
 - `Physics.Joint.spherical({ connectedBody, ...options }): Physics.Joint`
 - `Physics.Joint.generic({ connectedBody, ...options }): Physics.Joint`
 
-- `Entity.getComponent("core:world_transform"): ComponentSnapshot<BuiltInComponents.Transform> | null` — read-only inherited transform
+- `Entity.getComponent("core:world_transform"): readonly transform data | null` — read-only inherited transform

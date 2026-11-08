@@ -1,8 +1,9 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Input, Physics, Type, field } from "@whatever-engine/api";
 import { playing, resolve } from "./session.ts";
 export class FPSMovement extends Component {
   static readonly type = "core:FPSMovement";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   look = field(Type.Nullable(Type.Entity), null);
   walkSpeed = field(Type.F64.with({ min: 0.1, max: 30 }), 5);
   sprintSpeed = field(Type.F64.with({ min: 0.1, max: 40 }), 8);

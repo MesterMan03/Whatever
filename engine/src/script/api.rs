@@ -39,7 +39,7 @@ pub struct EngineContext<'a> {
     pub physics: &'a mut crate::physics::PhysicsRegistry,
     pub vfs: &'a dyn Vfs,
     pub audio: &'a mut AudioManager,
-    /// References created earlier in this mod's current batch, never shared across mods.
+    /// Symbolic references for this mod's synchronous invocation, never shared across mods.
     pub batch_entities: &'a mut std::collections::HashMap<String, EntityId>,
 }
 
@@ -333,7 +333,7 @@ pub fn dispatch(mod_id: &str, msg: ScriptMessage, ctx: EngineContext) -> Dispatc
             request_id,
             payload,
         } => {
-            if !script_host.has_process(&target_mod_id) {
+            if !script_host.contains_mod(&target_mod_id) {
                 tracing::warn!(mod_id, "ModMessageSend to unknown mod '{target_mod_id}'");
                 return DispatchResult::default();
             }
@@ -1135,5 +1135,7 @@ fn resolve_mod_data_path(
     mod_id: &str,
     path: &str,
 ) -> anyhow::Result<std::path::PathBuf> {
-    crate::sandbox::resolve_contained(&mod_data_root(game_id, mod_id)?, path)
+    let root = mod_data_root(game_id, mod_id)?;
+    std::fs::create_dir_all(&root)?;
+    crate::sandbox::resolve_contained(&root, path)
 }

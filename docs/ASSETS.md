@@ -138,7 +138,7 @@ instance.root.editComponent("core:transform", (pose) => {
 const child = instance.get("named_child");
 ```
 
-`Prefab.spawn` submits a batched command and returns `Promise<PrefabInstance>`.
+`Prefab.spawn` instantiates immediately and returns `PrefabInstance`.
 Instances expose `root`, `get(scriptId)`, `entities()`, `entityCount`, `path` and
 `loadTime`. Native validation enforces the caller's direct dependency on the
 prefab's mod and the prefab owner's own asset/component dependencies. No native

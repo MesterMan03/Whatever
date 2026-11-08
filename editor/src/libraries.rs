@@ -9,68 +9,6 @@ pub(super) struct PrefabChoice {
     library: Option<PathBuf>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn placing_prefabs_remaps_named_references_and_is_one_undo_step_per_copy() {
-        let directory = std::env::temp_dir().join(format!(
-            "whatever-editor-prefab-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
-        struct Cleanup(PathBuf);
-        impl Drop for Cleanup {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-        let _cleanup = Cleanup(directory.clone());
-        let project = engine::project::create_project(
-            &directory,
-            "prefab_qa",
-            "Prefab QA",
-            &engine::development_root().join("engine/resources/core"),
-        )
-        .expect("project");
-        let root = project.roots().expect("roots")[0].clone();
-        std::fs::create_dir(root.join("prefabs")).expect("prefabs");
-        std::fs::write(root.join("prefabs/world.wprefab"),serde_json::to_vec(&serde_json::json!({"version":1,"name":"Catalog Label","entity":{"name":"Authored root","script_id":"world","components":{"core:physics_world":{}},"children":[{"script_id":"body","components":{"core:rigid_body":{"world":{"$entity":"world"}}}}]}})).expect("json")).expect("prefab");
-        let mut editor = Editor::new(None, None);
-        editor.vfs = project
-            .registry(engine::runtime::RuntimeMode::Client)
-            .expect("VFS")
-            .1;
-        editor.document = Some(Document::open(&root.join("scenes/main.wscene")).expect("scene"));
-        editor.mod_roots = vec![("core".into(), root)];
-        editor.project = Some(project);
-        editor.place_prefab("core://world").expect("first copy");
-        editor.place_prefab("core://world").expect("second copy");
-        let doc = editor.document.as_mut().expect("document");
-        assert_eq!(doc.scene.entities.len(), 4);
-        for entity in &doc.scene.entities[2..] {
-            assert_eq!(entity.name, "Authored root");
-            assert_eq!(
-                entity.children[0].components["core:rigid_body"]["world"]["$entity"],
-                entity.script_id.as_deref().expect("name")
-            );
-        }
-        assert_ne!(
-            doc.scene.entities[2].script_id,
-            doc.scene.entities[3].script_id
-        );
-        doc.undo();
-        assert_eq!(doc.scene.entities.len(), 3);
-        doc.undo();
-        assert_eq!(doc.scene.entities.len(), 2);
-        doc.redo();
-        assert_eq!(doc.scene.entities.len(), 3);
-    }
-}
-
 impl Editor {
     pub(super) fn refresh_prefabs(&mut self) -> anyhow::Result<()> {
         let mut choices = Vec::new();
@@ -389,5 +327,67 @@ impl Editor {
             let _ = sender.send(JobEvent::LibraryExported(result));
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn placing_prefabs_remaps_named_references_and_is_one_undo_step_per_copy() {
+        let directory = std::env::temp_dir().join(format!(
+            "whatever-editor-prefab-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+        let project = engine::project::create_project(
+            &directory,
+            "prefab_qa",
+            "Prefab QA",
+            &engine::development_root().join("engine/resources/core"),
+        )
+        .expect("project");
+        let root = project.roots().expect("roots")[0].clone();
+        std::fs::create_dir(root.join("prefabs")).expect("prefabs");
+        std::fs::write(root.join("prefabs/world.wprefab"),serde_json::to_vec(&serde_json::json!({"version":1,"name":"Catalog Label","entity":{"name":"Authored root","script_id":"world","components":{"core:physics_world":{}},"children":[{"script_id":"body","components":{"core:rigid_body":{"world":{"$entity":"world"}}}}]}})).expect("json")).expect("prefab");
+        let mut editor = Editor::new(None, None);
+        editor.vfs = project
+            .registry(engine::runtime::RuntimeMode::Client)
+            .expect("VFS")
+            .1;
+        editor.document = Some(Document::open(&root.join("scenes/main.wscene")).expect("scene"));
+        editor.mod_roots = vec![("core".into(), root)];
+        editor.project = Some(project);
+        editor.place_prefab("core://world").expect("first copy");
+        editor.place_prefab("core://world").expect("second copy");
+        let doc = editor.document.as_mut().expect("document");
+        assert_eq!(doc.scene.entities.len(), 4);
+        for entity in &doc.scene.entities[2..] {
+            assert_eq!(entity.name, "Authored root");
+            assert_eq!(
+                entity.children[0].components["core:rigid_body"]["world"]["$entity"],
+                entity.script_id.as_deref().expect("name")
+            );
+        }
+        assert_ne!(
+            doc.scene.entities[2].script_id,
+            doc.scene.entities[3].script_id
+        );
+        doc.undo();
+        assert_eq!(doc.scene.entities.len(), 3);
+        doc.undo();
+        assert_eq!(doc.scene.entities.len(), 2);
+        doc.redo();
+        assert_eq!(doc.scene.entities.len(), 3);
     }
 }

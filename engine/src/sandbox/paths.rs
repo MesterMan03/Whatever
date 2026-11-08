@@ -33,10 +33,7 @@ pub fn resolve_contained(root: &Path, path: &str) -> anyhow::Result<PathBuf> {
 }
 
 pub fn valid_storage_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.bytes().all(|byte| {
-            (byte.is_ascii_lowercase() || byte.is_ascii_digit()) || matches!(byte, b'_' | b'-')
-        })
+    whatever_script_vm::valid_mod_id(value)
 }
 
 #[cfg(test)]

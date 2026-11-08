@@ -1,4 +1,0 @@
-[submodule "bun"]
-	path = vendor/bun
-	url = https://github.com/MesterMan03/Whatever-mod-runtime.git
-	branch = codex/whatever-runtime

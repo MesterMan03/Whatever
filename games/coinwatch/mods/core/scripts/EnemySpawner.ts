@@ -1,3 +1,4 @@
+import type { RunSession } from "./RunSession.ts";
 import {
   BuiltInComponents as C,
   Component,
@@ -16,7 +17,7 @@ import { spawnNodes } from "./NavNode.ts";
 import { distance } from "./navigation.ts";
 import { playing, position, resolve, run, type Ref } from "./session.ts";
 export type SpawnContext = {
-  session: Ref;
+  session: RunSession;
   world: Entity;
   target: Entity;
   graph: Entity;
@@ -65,7 +66,7 @@ export async function spawnEnemy(context: SpawnContext, at: Physics.Vec3): Promi
 }
 export class EnemySpawner extends Component {
   static readonly type = "core:EnemySpawner";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   world = field(Type.Nullable(Type.Entity), null);
   target = field(Type.Nullable(Type.Entity), null);
   graph = field(Type.Nullable(Type.Entity), null);

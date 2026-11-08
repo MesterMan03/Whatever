@@ -1,3 +1,4 @@
+import type { RunSession } from "./RunSession.ts";
 import {
   BuiltInComponents as C,
   Component,
@@ -12,7 +13,7 @@ import {
 import { Projectile } from "./Projectile.ts";
 import { emit, playing, run, type Ref } from "./session.ts";
 export type ShotOptions = {
-  session: Ref;
+  session: RunSession;
   world: Ref;
   owner: Ref;
   prefab: string;
@@ -46,7 +47,7 @@ export async function fireProjectile(options: ShotOptions): Promise<void> {
 }
 export class ProjectileWeapon extends Component {
   static readonly type = "core:ProjectileWeapon";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   world = field(Type.Nullable(Type.Entity), null);
   owner = field(Type.Nullable(Type.Entity), null);
   prefab = field(Type.Asset, "core://prefabs/pulse.wprefab");

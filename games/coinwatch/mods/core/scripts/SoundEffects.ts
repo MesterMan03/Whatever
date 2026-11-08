@@ -1,8 +1,9 @@
+import type { RunSession } from "./RunSession.ts";
 import { Audio, Component, Engine, Type, field } from "@whatever-engine/api";
 import { library, listen } from "./session.ts";
 export class SoundEffects extends Component {
   static readonly type = "core:SoundEffects";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   enabled = true;
   volume = field(Type.F64.with({ min: 0, max: 1 }), 0.3);
   private unsubscribe: (() => void) | null = null;

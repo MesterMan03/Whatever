@@ -56,7 +56,7 @@ pub struct ScriptConfig {
 }
 
 fn default_runtime() -> String {
-    "bun".to_owned()
+    "javascript".to_owned()
 }
 
 #[derive(Debug, Deserialize)]

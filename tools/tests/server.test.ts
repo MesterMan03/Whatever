@@ -1,15 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { text } from "node:stream/consumers";
+import { spawnCaptured } from "../process.ts";
+import { describe, expect, test } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, cpSync } from "node:fs";
 import { join, dirname, resolve, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 const repository=resolve(dirname(fileURLToPath(import.meta.url)),"../..");
 const binary=process.env.WHATEVER_TEST_PLAYER ?? join(repository,"target/debug/Whatever"+(process.platform==="win32"?".exe":""));
-if(!existsSync(binary))throw new Error("Run cargo build before bun run test:server");
+if(!existsSync(binary))throw new Error("Run cargo build before npm run test:server");
 
 async function runServer(source:string, options:{shutdownCommand?:string;expectedCode?:number;initialScene?:string;mode?:string;defaultMode?:string;stopAt?:string;commandsOnReady?:string[];serverSource?:string;files?:Record<string,string>;coreScript?:boolean;coreAssets?:string}={}) {
   const directory=mkdtempSync(join(tmpdir(),"whatever-server-"));
-  let child: ReturnType<typeof Bun.spawn> | undefined;
+  let child: ReturnType<typeof spawnCaptured> | undefined;
   try {
     const put=(name:string,value:string)=>{const path=join(directory,name);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,value);};
     put("mods/core/meta.toml",'[game]\nid="separation_fixture"\nname="Server Fixture"\ntick_rate=100\ndefault_mode="'+(options.defaultMode??"client")+'"\n');
@@ -29,7 +31,7 @@ async function runServer(source:string, options:{shutdownCommand?:string;expecte
     put("mods/server_only/mod.toml",'[mod]\nid="server_only"\nname="Server"\nversion="1.0.0"\nsides=["server"]\n[script]\nentry="server.ts"\n');
     put("mods/server_only/server.ts", options.serverSource ?? 'import { Engine } from "@whatever-engine/api"; Engine.on("init",()=>Engine.log("info","SERVER_ONLY_READY"));');
     const args=[binary,"--debug=ipc","--mods",join(directory,"mods"),...(options.mode?["--mode",options.mode]:[])];
-    child=Bun.spawn(args,{cwd:directory,env:{...process.env,RUST_LOG:"whatever_engine=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:"",ALSA_CONFIG_PATH:join(directory,"no-audio.conf")},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:15_000});
+    child=spawnCaptured(args,{cwd:directory,env:{...process.env,RUST_LOG:"whatever_engine=info",PATH:"",DISPLAY:"",WAYLAND_DISPLAY:"",ALSA_CONFIG_PATH:join(directory,"no-audio.conf")},timeout:15_000});
     const active=child;
     let stdout="";
     let stopped=false;
@@ -38,14 +40,14 @@ async function runServer(source:string, options:{shutdownCommand?:string;expecte
     const read=(async()=>{
       for await (const bytes of active.stdout as ReadableStream<Uint8Array>){
         stdout+=new TextDecoder().decode(bytes);
-        if(!commandsSent && options.commandsOnReady && stdout.includes("CONSOLE_READY")) {commandsSent=true;(active.stdin as import("bun").FileSink).write(options.commandsOnReady.join("\n")+"\n");}
+        if(!commandsSent && options.commandsOnReady && stdout.includes("CONSOLE_READY")) {commandsSent=true;active.stdin.write(options.commandsOnReady.join("\n")+"\n");}
         if(!stopped && stdout.includes(options.stopAt??"FIXTURE_DONE") && stdout.includes("SERVER_ONLY_READY")){
           stopped=true;stopTime=performance.now();
-          (active.stdin as import("bun").FileSink).write((options.shutdownCommand??"quit")+"\n");
+          active.stdin.write((options.shutdownCommand??"quit")+"\n");
         }
       }
     })();
-    const [stderr,code]=await Promise.all([new Response(active.stderr as ReadableStream).text(),active.exited,read]);
+    const [stderr,code]=await Promise.all([text(active.stderr),active.exited,read]);
     if(code!==(options.expectedCode??0) || ((options.expectedCode??0)===0 && !stopped)) {
       const diagnostics=join(repository,"target/ci-server-failures",basename(directory));
       mkdirSync(dirname(diagnostics),{recursive:true});
@@ -77,7 +79,7 @@ const normal='import { Component, Engine, Scene, Mods } from "@whatever-engine/a
   'Engine.on("tick",({tick_number,keys_pressed,mouse_delta})=>{if(keys_pressed.length||mouse_delta.some(x=>x!==0))throw new Error("server has input");'+
   'if(ready&&tick_number>=5)Engine.log("info","FIXTURE_DONE");});';
 
-test("prefabs spawn independent trees through the sandboxed batched API", async () => {
+test("prefabs spawn independent trees through the sandboxed embedded API", async () => {
   const prefab = JSON.stringify({version:1,name:"Pair",entity:{script_id:"root",components:{"fixture:link":{target:{$entity:"child"}}},children:[{script_id:"child",components:{"core:transform":{position:[0,1,0],rotation:[0,0,0,1],scale:[1,1,1]}}}]}});
   const source = `import { Component, Entity, Engine, Prefab, Scene } from "@whatever-engine/api";
 export class Link extends Component { static readonly type="fixture:link"; target: Entity | null=null; }
@@ -97,6 +99,39 @@ Engine.on("init", async () => {
   Engine.log("info", "FIXTURE_DONE");
 });`;
   await runServer(source,{mode:"server",files:{"prefabs/pair.wprefab":prefab}});
+});
+
+test("component reference fields call the referenced instance and remap per prefab", async () => {
+  const prefab = JSON.stringify({version:1,name:"Session pair",entity:{script_id:"session",components:{"fixture:Session":{score:0,peer:{$entity:"pickup",$component:"fixture:Pickup"}}},children:[{script_id:"pickup",components:{"fixture:Pickup":{session:{$entity:"session",$component:"fixture:Session"}}}}]}});
+  const source = `import { Component, Engine, Prefab } from "@whatever-engine/api";
+export class Session extends Component {
+  score=0; peer: Pickup | null=null;
+  award(amount:number) { this.score+=amount; }
+}
+export class Pickup extends Component {
+  session: Session | null=null;
+  collect() { this.session?.award(10); }
+}
+Engine.on("init", async()=>{
+  const a=await Prefab.spawn("fixture://pair");
+  const b=await Prefab.spawn("fixture://pair");
+  const sa=await a.root.requestComponent(Session).get();
+  const sb=await b.root.requestComponent(Session).get();
+  if (!sa || !sb) throw Error("missing session");
+  sa.peer?.collect();
+  if(sa.score!==10 || sb.score!==0) throw Error("component references leaked between instances");
+  if(sa.peer?.session?.entity.id!==sa.entity.id) throw Error("cyclic component references failed");
+  a.get("pickup").destroy();
+  await a.root.requestComponent(Session).get();
+  let stale=false;
+  try {sa.peer?.collect();} catch {stale=true;}
+  if(!stale) throw Error("destroyed component target remained callable");
+  Engine.log("info","COMPONENT_LINKS_OK");
+  Engine.log("info","FIXTURE_DONE");
+});`;
+  const result=await runServer(source,{mode:"server",files:{"prefabs/pair.wprefab":prefab}});
+  expect(result.stdout).toContain("COMPONENT_LINKS_OK");
+  expect(result.stdout).not.toContain("Tick handler failed");
 });
 
 test("scene files instantiate independent hierarchies and reject invalid loads atomically", async () => {
@@ -131,7 +166,7 @@ Engine.on("init", async () => {
   expect(result.stdout).not.toContain("SCENE_FAILURE");
 });
 
-test("implicit tick buffers execute pending entity chains and capture intermediate query results", async () => {
+test("synchronous calls execute entity chains and capture intermediate query results", async () => {
   const source = `
 import { Component, Engine, Scene, BuiltInComponents } from "@whatever-engine/api";
 export class Selected extends Component { ok = true; }
@@ -167,15 +202,13 @@ Engine.on("init", async () => {
   expect(result.stdout).not.toContain("CHAIN_FAILURE");
 });
 
-test("mod dependency order wins even when its batch arrives after another mod's batch", async () => {
+test("mod dependency order exposes prior writes before a synchronous query", async () => {
   const source = `
 import { Engine, Scene, Entity, BuiltInComponents } from "@whatever-engine/api";
 Engine.on("init", () => Scene.createEntity().setComponent(new BuiltInComponents.Transform()));
 Engine.on("tick", ({ tick_number }) => {
   const previous = new Entity("0:0").requestComponent("core:transform");
   new Entity("0:0").setComponent(new BuiltInComponents.Transform({position:[1,0,0]}));
-  const deadline = Date.now() + 20;
-  while (Date.now() < deadline) {}
   if (tick_number > 1) void previous.get().then(value => {
     if (value.position[0] !== 2) Engine.log("error", "ORDER_FAILURE " + value.position[0]);
     if (tick_number >= 4) Engine.log("info", "FIXTURE_DONE");
@@ -210,11 +243,11 @@ describe("headless runtime",()=>{
   });
   test.each(["", "async"])("a crashed %s tick subscriber does not strand the simulation",async kind=>{
     const source='import {Engine} from "@whatever-engine/api";Engine.on("tick",'+kind+'()=>{throw new Error("deliberate tick failure");});';
-    const result=await runServer(source,{mode:"server",stopAt:"mod process exited"});
-    expect(result.code).toBe(0);expect(result.stdout).toContain("mod process exited");expect(result.shutdownMs).toBeLessThan(3000);
+    const result=await runServer(source,{mode:"server",stopAt:"mod execution failed"});
+    expect(result.code).toBe(0);expect(result.stdout).toContain("mod execution failed");expect(result.shutdownMs).toBeLessThan(3000);
   });});
 
-test("native network registration and offline codecs work through the bundled server host", async () => {
+test("native network registration and offline codecs work through the embedded server runtime", async () => {
   const source = 'import {Engine,Network} from "@whatever-engine/api";'+
     'const game=Network.Specification("fixture:game",{login:{serverbound:{hello:Network.Packet({name:Network.Type.String})},clientbound:{welcome:Network.Packet({id:Network.Type.I32.with({min:0}),maybe:Network.Type.Optional(Network.Type.Bool)})}}});'+
     'Engine.on("init",async()=>{try{'+
@@ -240,7 +273,7 @@ test("headless stdin executes registered mod commands using engine argument vali
   expect(result.stdout).toContain("FIXTURE_DONE target=core");
 });
 
-test("pending ECS references, physics configuration and intermediate results round-trip through the real host",async()=>{
+test("pending ECS references, physics configuration and intermediate results round-trip through the embedded runtime",async()=>{
   const source=String.raw`
 import {Component,Engine,Entity,Physics,Scene} from "@whatever-engine/api";
 export class Refs extends Component {static readonly type="fixture:refs";target:Entity|null=null;nested:Entity[]=[];}
@@ -256,7 +289,7 @@ Engine.on("init",async()=>{try{
   const selected=left.requestComponent("core:collider");
   const selectedState=Physics.body(body).state();
   const selectedRefs=body.requestComponent(Refs);
-  const [entity,collider,state,refs,settings,parent]=await Promise.all([body.get(),selected.get(),selectedState.get(),selectedRefs.get(),arena.requestComponent("core:physics_world").get(),left.requestParent().get()]);
+  const [entity,collider,state,refs,settings,parent]=await Promise.all([body.get(),selected.get(),selectedState,selectedRefs.get(),arena.requestComponent("core:physics_world").get(),left.requestParent().get()]);
   check(parent.id===right.id,"typed entity reference parenting");
   check(collider instanceof Physics.Collider,"typed collider hydration");
   check(collider.body.id===entity.id,"pending body reference");
@@ -268,7 +301,7 @@ Engine.on("init",async()=>{try{
   config.world=arena;
   config.rapier.additional_solver_iterations=6;entity.setComponent(config);
   left.removeComponent("core:collider");
-  const next=await Physics.body(entity).state().get();
+  const next=await Physics.body(entity).state();
   check(Math.abs(next.mass-4)<0.001 && next.linearVelocity[0]===3,"ordered removal/configuration must preserve velocity");
   const defaultWorld=await Physics.defaultWorld.get();
   check(defaultWorld instanceof Entity && defaultWorld.id.includes(":"),"default world entity");
@@ -277,7 +310,7 @@ Engine.on("init",async()=>{try{
   try {await Physics.body(left).applyImpulse([1,0,0]).get();throw new Error("missing body accepted");}
   catch(error){check(String(error).includes("no active rigid body"),"native mutation error must reach Pending.get");}
   Engine.log("info","PHYSICS_REFS_OK");
-}catch(error){Engine.log("error","PHYSICS_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
+}catch(error){Engine.log("error","PHYSICS_FAILURE "+error+" "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
   const result=await runServer(source,{mode:"server"});
   expect(result.stdout).toContain("PHYSICS_REFS_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
 });
@@ -286,7 +319,7 @@ test("physics advances after commands, queries see prior mutations and collision
   const source=String.raw`
 import {Engine,Physics,Scene} from "@whatever-engine/api";
 let body,floor,ready=false,started=0,collision=false,force=false,done=false;
-function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error.stack);else Engine.log("info","PHYSICS_TICKS_OK");Engine.log("info","FIXTURE_DONE");}
+function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error+" "+error.stack);else Engine.log("info","PHYSICS_TICKS_OK");Engine.log("info","FIXTURE_DONE");}
 Physics.onEvent(event=>{
  if(event.kind==="started" && !event.sensor)collision=true;
  if(event.kind==="contactForce" && event.totalForceMagnitude>0 && event.totalForce.length===3)force=true;
@@ -294,15 +327,15 @@ Physics.onEvent(event=>{
 Engine.on("init",async()=>{try{
  floor=Scene.createEntity().move([0,-0.5,0]).setComponent(Physics.RigidBody.fixed()).setComponent(new Physics.Collider({shape:Physics.Shape.box({size:[30,1,30]}),events:["collision","contactForce"],rapier:{contact_force_event_threshold:0}}));
  body=Scene.createEntity().move([0,3,0]).setComponent(Physics.RigidBody.dynamic()).setComponent(new Physics.Collider({shape:Physics.Shape.box({size:[1,1,1]}),mass:2}));
- const first=await Physics.world().castRay([0,10,0],[0,-1,0],{maxDistance:20}).get();
+ const first=await Physics.world().castRay([0,10,0],[0,-1,0],{maxDistance:20});
  if(first.collider.id!==body.id || Math.abs(first.distance-6.5)>0.001)throw new Error("same-batch creation query");
  Physics.body(body).teleport([3,3,0]);
- const second=await Physics.world().castRay([0,10,0],[0,-1,0],{maxDistance:20,flags:Physics.QueryFilterFlag.EXCLUDE_SENSORS}).get();
+ const second=await Physics.world().castRay([0,10,0],[0,-1,0],{maxDistance:20,flags:Physics.QueryFilterFlag.EXCLUDE_SENSORS});
  if(second.collider.id!==floor.id)throw new Error("ordered teleport query");
  ready=true;
 }catch(error){finish(error);}});
 Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)started=tick_number;if(tick_number-started<180)return;try{
- const state=await Physics.body(body).state().get();
+ const state=await Physics.body(body).state();
  const transform=await body.requestComponent("core:transform").get();
  if(Math.abs(state.position[1]-0.5)>0.03 || Math.abs(transform.position[1]-0.5)>0.03)throw new Error("body did not settle or write back to ECS");
  if(!collision || !force)throw new Error("collision/force events missing");
@@ -317,7 +350,7 @@ test("the shipped physics playground scene simulates and cleans up headlessly",a
 import {Engine,Physics,Scene} from "@whatever-engine/api";
 import {createDemoScene,destroyDemoScene,spawnCubes} from "./physics-scene.ts";
 let scene,ready=false,started=0,done=false;
-function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error.stack);else Engine.log("info","PHYSICS_SCENE_OK");Engine.log("info","FIXTURE_DONE");}
+function finish(error){if(done)return;done=true;if(error)Engine.log("error","PHYSICS_FAILURE "+error+" "+error.stack);else Engine.log("info","PHYSICS_SCENE_OK");Engine.log("info","FIXTURE_DONE");}
 Engine.on("init",async()=>{try{
  scene=await createDemoScene(undefined,"core://playground");
  const cubes=await Scene.findByTag("physics_demo:cube");if(cubes.length!==24)throw new Error("initial cubes");
@@ -330,7 +363,7 @@ Engine.on("init",async()=>{try{
  ready=true;
 }catch(error){finish(error);}});
 Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)started=tick_number;if(tick_number-started<120)return;try{
- const state=await Physics.body(scene.player).state().get();
+ const state=await Physics.body(scene.player).state();
  if(Math.abs(state.position[1]-1)>0.04 || state.mass!==75)throw new Error("player capsule did not settle");
  const statuses=await Scene.requestQuery(["core:physics_status"]).get();
  for(const row of statuses)for(const status of Object.values(row.components["core:physics_status"]))if(!status.active)throw new Error("inactive playground physics: "+status.error);
@@ -351,17 +384,21 @@ Engine.on("tick",async({tick_number})=>{if(!ready||done)return;if(!started)start
 test("tick-rate changes preserve the current physics delta and affect the next tick",async()=>{
   const source=String.raw`
 import {Engine,Physics,Scene} from "@whatever-engine/api";
-Engine.on("init",async()=>{try{
+let body, first;
+Engine.on("init",()=>{
  const arena=Scene.createEntity().setComponent(new Physics.World({gravity:[0,0,0]}));
- const body=Scene.createEntity().setComponent(Physics.RigidBody.dynamic({world:arena,rapier:{additional_mass:1}}));
+ body=Scene.createEntity().setComponent(Physics.RigidBody.dynamic({world:arena,rapier:{additional_mass:1}}));
  Physics.body(body).setLinearVelocity([1,0,0]);
- Engine.setTickRate(20);
- await body.get();
- const first=await Physics.body(body).state().get();
- const second=await Physics.body(body).state().get();
- if(Math.abs(first.position[0]-0.01)>0.0001 || Math.abs(second.position[0]-0.06)>0.0001)throw new Error("tick deltas were not stable: "+JSON.stringify([first.position,second.position]));
- Engine.log("info","PHYSICS_CLOCK_OK");
-}catch(error){Engine.log("error","PHYSICS_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`;
+});
+Engine.on("tick",({tick_number,delta_seconds})=>{try{
+ if(tick_number===1){if(Math.abs(delta_seconds-.01)>.00001)throw Error("first delta");Engine.setTickRate(20);}
+ if(tick_number===2)first=Physics.body(body).state();
+ if(tick_number===3){
+  const second=Physics.body(body).state();
+  if(Math.abs(first.position[0]-.01)>.0001||Math.abs(second.position[0]-.06)>.0001||Math.abs(delta_seconds-.05)>.00001)throw Error("tick deltas were not stable: "+JSON.stringify([first.position,second.position]));
+  Engine.log("info","PHYSICS_CLOCK_OK");Engine.log("info","FIXTURE_DONE");
+ }
+}catch(error){Engine.log("error","PHYSICS_FAILURE "+error);Engine.log("info","FIXTURE_DONE");}});`;
   const result=await runServer(source,{mode:"server"});
   expect(result.stdout).toContain("PHYSICS_CLOCK_OK");expect(result.stdout).not.toContain("PHYSICS_FAILURE");
 });
@@ -523,7 +560,7 @@ Engine.on("init",async()=>{
 });
 
 
-test("removing and reattaching a component within one batch starts a new instance", async () => {
+test("removing and reattaching a component within one turn starts a new instance", async () => {
   const source = `
 import {Component,Engine,Scene} from "@whatever-engine/api";
 let starts=0,destroys=0;
@@ -539,27 +576,30 @@ Engine.on("init",()=>Scene.createEntity().setComponent(new Replaced()));`;
   expect(result.stdout).not.toContain("instance reused");
 });
 
-test("scene snapshots provide immediate immutable reads and reconcile native generations", async () => {
+test("live components update immediately while explicit snapshots retain old generations", async () => {
   const result = await runServer(`
 import {Engine,Scene,Entity,BuiltInComponents as C,Profiler} from "@whatever-engine/api";
 Engine.on("init",async()=>{try {
  const parent=Scene.createEntity().setComponent(new C.Transform({position:[10,0,0]}));
  const child=Scene.createEntity().setComponent(new C.Transform({position:[1,0,0]})).setParent(parent).addTag("snapshot");
  const first=child.getComponent("core:transform");
- if(!child.exists||!child.isPending||first.position[0]!==1||!Object.isFrozen(first.position))throw Error("immediate read");
+ if(!child.exists||child.isPending||first.position[0]!==1||Object.isFrozen(first.position))throw Error("immediate read");
  child.move([2,0,0]).setEulerDegrees(0,90,0);
- if(first.position[0]!==1||child.getComponent("core:world_transform").position[0]!==12)throw Error("retained/local world transform");
+ if(first.position[0]!==2||child.getComponent("core:world_transform").position[0]!==12)throw Error("retained/local world transform");
  await child.get();
  const retained=Scene.snapshot();const id=child.id;
  if(!retained.has(id)||!Scene.find(id)||child.isPending)throw Error("commit missing");
  const native=await child.requestComponent("core:transform").get();
  if(native.position[0]!==2||Math.abs(native.rotation[1]-Math.SQRT1_2)>0.001)throw Error("patch lost fields");
+ const oldPose=child.getComponent("core:world_transform");
+ parent.getComponent("core:transform").position[0]=20;
+ if(oldPose.position[0]!==12||child.getComponent("core:world_transform").position[0]!==22)throw Error("parent patch left stale world transform");
  child.destroy();if(child.exists||parent.getChildren().length)throw Error("local removal");
  const next=await Scene.createEntity().get();
  if(new Entity(id).exists||!next.exists||!retained.has(id))throw Error("generation/retained snapshot");
- if(!Profiler.latest()||Profiler.now()<0||Profiler.memory().rss<=0)throw Error("native metrics missing");
+ if(Profiler.now()<0||Profiler.memory().rss<=0)throw Error("native metrics missing");
  Engine.log("info","SNAPSHOT_OK");
- }catch(error){Engine.log("error","SNAPSHOT_FAILURE "+error.stack);}Engine.log("info","FIXTURE_DONE");});`, {mode:"server"});
+ }catch(error){Engine.log("error","SNAPSHOT_FAILURE "+error+" "+error.stack);}Engine.log("info","FIXTURE_DONE");});`, {mode:"server"});
   expect(result.stdout).toContain("SNAPSHOT_OK");
   expect(result.stdout).not.toContain("SNAPSHOT_FAILURE");
 });

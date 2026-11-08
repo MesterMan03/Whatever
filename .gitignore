@@ -5,3 +5,8 @@
 **/logs
 /runtime/dist/
 /dist
+/dosstub/*.obj
+/dosstub/main.exe
+/dosstub/snake-stub.exe
+# Retired local third-party checkout.
+/vendor/

@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { setTimeout as sleep } from "node:timers/promises";
+import { text } from "node:stream/consumers";
+import { spawnCaptured } from "../process.ts";
+import { expect, test } from "vitest";
 import { readFileSync, writeFileSync, cpSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { advanceHunt, route, sweepLength } from "../../games/coinwatch/mods/core/scripts/navigation.ts";
-const root = resolve(import.meta.dir, "../..");
+const root = resolve(import.meta.dirname, "../..");
 test("navigation follows weighted authored links and refuses disconnected shortcuts", () => {
   const nodes = [
     { key: "a", position: [0, 0, 0] as const, links: ["b"] },
@@ -29,7 +32,7 @@ test("a long or delayed projectile step never exceeds the remaining 40 unit rang
   expect(sweepLength(30, 1 / 60, 40, 40)).toBe(0);
 });
 
-test("Coinwatch runs its actual components, prefabs and physics through the sandboxed host", async () => {
+test("Coinwatch runs its actual components, prefabs and physics through the embedded VM", async () => {
   const directory = join(root, "target", "coinwatch-test-" + Date.now());
   cpSync(join(root, "games/coinwatch"), directory, { recursive: true });
   const scenePath = join(directory, "mods/core/scenes/main.wscene");
@@ -42,15 +45,15 @@ test("Coinwatch runs its actual components, prefabs and physics through the sand
   writeFileSync(enemyPath, JSON.stringify(prefab));
   writeFileSync(scenePath, JSON.stringify(scene));
   const binary = process.env.WHATEVER_TEST_PLAYER ?? join(root, "target/debug/Whatever" + (process.platform === "win32" ? ".exe" : ""));
-  const child = Bun.spawn([binary, "--mode", "server", "--project", directory], { env: { ...process.env, RUST_LOG: "whatever_engine=info" }, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const child = spawnCaptured([binary, "--mode", "server", "--project", directory], { env: { ...process.env, RUST_LOG: "whatever_engine=info" } });
   let output = "";
   const reading = (async () => { for await (const bytes of child.stdout) output += new TextDecoder().decode(bytes).replace(/\x1b\[[0-9;]*m/g, ""); })();
-  const errors = new Response(child.stderr).text();
-  async function waitFor(predicate: () => boolean, timeout = 6000): Promise<void> {
+  const errors = text(child.stderr);
+  async function waitFor(predicate: () => boolean, timeout = 15000): Promise<void> {
     const start = Date.now();
     while (!predicate()) {
       if (Date.now() - start > timeout || child.exitCode !== null) throw Error(output + "\nTimed out waiting for game");
-      await Bun.sleep(20);
+      await sleep(20);
     }
   }
   async function command(text: string, expected: string): Promise<void> {
@@ -61,52 +64,66 @@ test("Coinwatch runs its actual components, prefabs and physics through the sand
   async function status(): Promise<any> {
     const cursor = output.length;
     await command("coinwatch status", '"score":');
-    return JSON.parse(output.slice(cursor).split("\n").find(line => line.includes('{"score":'))!.slice(output.slice(cursor).split("\n").find(line => line.includes('{"score":'))!.indexOf('{"score":')));
+    const line=output.slice(cursor).split("\n").find(line=>line.includes('"score":'));
+    if(!line)throw Error("Missing status response\n"+output.slice(cursor));
+    return JSON.parse(line.slice(line.indexOf('{')));
+  }
+  async function advance(seconds: number): Promise<void> {
+    const first = (await status()).tick;
+    const deadline = Date.now() + 30000;
+    while ((await status()).tick < first + Math.ceil(seconds * 60)) {
+      if (Date.now() > deadline) throw Error("Simulation did not advance\n" + output);
+      await sleep(30);
+    }
   }
   try {
     await waitFor(() => output.includes("COINWATCH_READY"));
     expect((await status()).nodes).toBe(25);
+    // Compare with real time so a tick-count-only test cannot hide slow motion.
+    const startedAt = performance.now();
+    await advance(2);
+    expect(performance.now() - startedAt).toBeLessThan(4_000);
     await command("coinwatch teleport 0 6", "Teleported");
-    await Bun.sleep(200);
+    await advance(0.2);
     let s = await status();
     expect(s.score).toBe(10); expect(s.coins).toBe(1);
-    await Bun.sleep(150);
+    await advance(0.15);
     expect((await status()).score).toBe(10);
     await command("coinwatch teleport 0 9", "Teleported");
     await command("coinwatch enemy 0 0", "Spawned");
-    await Bun.sleep(350);
+    await advance(0.35);
     expect((await status()).states[0].mode).toBe("chase");
-    await Bun.sleep(1000);
+    await advance(1.0);
     expect((await status()).states[0].mode).toBe("cooldown");
-    await Bun.sleep(750);
+    await advance(0.75);
     expect((await status()).states[0].mode).toBe("chase");
     await command("coinwatch shoot 0 1 0", "Fired");
-    await Bun.sleep(650);
+    await advance(0.65);
     s = await status();
     expect(s.kills).toBe(1); expect(s.score).toBe(60); expect(s.enemies).toBe(0);
     expect(s.lastShot.reason).toBe("collider");
     await command("coinwatch teleport 14 20", "Teleported");
     await command("coinwatch enemy 14 4", "Spawned");
     await command("coinwatch shoot 14 1 4", "Fired");
-    await Bun.sleep(700);
+    await advance(0.7);
     s = await status();
     expect(s.enemies).toBe(1); expect(s.kills).toBe(1);
     expect(s.lastShot.reason).toBe("collider"); expect(s.lastShot.distance).toBeLessThan(10);
     await command("coinwatch shoot 14 1000 20", "Fired");
-    await Bun.sleep(1700);
+    await advance(1.7);
     s = await status();
     expect(s.projectiles).toBe(0); expect(s.lastShot.reason).toBe("range"); expect(s.lastShot.distance).toBeCloseTo(40);
     const enemyPosition = s.states[0].position;
     await command(`coinwatch teleport ${enemyPosition[0]} ${enemyPosition[2]}`, "Teleported");
     await waitFor(() => output.includes("COINWATCH_GAME_OVER"));
     s = await status(); expect(s.dead).toBe(true); const finalScore = s.score;
-    await command("coinwatch teleport 0 3", "Teleported"); await Bun.sleep(200);
+    await command("coinwatch teleport 0 3", "Teleported"); await advance(0.2);
     expect((await status()).score).toBe(finalScore);
-    await command("coinwatch restart", "Restarted"); await Bun.sleep(200);
+    await command("coinwatch restart", "Restarted"); await advance(0.2);
     s = await status(); expect(s.dead).toBe(false); expect(s.score).toBe(0); expect(s.enemies).toBe(0);
-    await command("coinwatch teleport 0 6", "Teleported"); await Bun.sleep(150);
+    await command("coinwatch teleport 0 6", "Teleported"); await advance(0.15);
     expect((await status()).coins).toBe(1);
-    await command("coinwatch spawning true", "Spawning true"); await Bun.sleep(1300);
+    await command("coinwatch spawning true", "Spawning true"); await advance(1.3);
     s = await status(); expect(s.enemies).toBe(3);
     expect(s.states.every((e: any) => Math.hypot(e.position[0], e.position[2] - 6) > 13)).toBe(true);
     expect(output).not.toMatch(/ERROR|Tick handler failed|component .*failed/i);
@@ -120,4 +137,4 @@ test("Coinwatch runs its actual components, prefabs and physics through the sand
     writeFileSync(join(root, "target/coinwatch-qa/latest.log"), output);
     rmSync(directory, { recursive: true, force: true });
   }
-}, 30000);
+}, 120000);

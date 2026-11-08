@@ -27,8 +27,13 @@ pub fn resolve_references(
     match value {
         Value::Object(fields) if fields.contains_key("$entity") => {
             ensure!(
-                fields.len() == 1,
-                "entity reference must contain only $entity"
+                fields.len() == 1
+                    || (fields.len() == 2
+                        && fields
+                            .get("$component")
+                            .and_then(Value::as_str)
+                            .is_some_and(|s| s.contains(':'))),
+                "reference must contain only $entity and an optional $component type"
             );
             let reference = fields["$entity"]
                 .as_str()
@@ -59,6 +64,49 @@ pub fn referenced_entity(value: &Value) -> Option<EntityId> {
         .get("$entity")?
         .as_str()
         .and_then(EntityId::parse)
+}
+
+impl super::World {
+    /// Validate after atomic hierarchy creation, when forward targets have been populated.
+    pub fn validate_component_references(&self, id: EntityId) -> anyhow::Result<()> {
+        fn check(world: &super::World, value: &Value) -> anyhow::Result<()> {
+            match value {
+                Value::Object(fields) if fields.contains_key("$component") => {
+                    let kind = fields
+                        .get("$component")
+                        .and_then(Value::as_str)
+                        .context("invalid component reference type")?;
+                    let target = fields
+                        .get("$entity")
+                        .and_then(Value::as_str)
+                        .and_then(EntityId::parse)
+                        .context("invalid component reference entity")?;
+                    ensure!(
+                        fields.len() == 2 && world.get_component(&target, kind).is_some(),
+                        "component reference target '{kind}' on '{target}' is unavailable"
+                    );
+                }
+                Value::Object(fields) => {
+                    for value in fields.values() {
+                        check(world, value)?;
+                    }
+                }
+                Value::Array(items) => {
+                    for value in items {
+                        check(world, value)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        for values in self.custom.values() {
+            if let Some(value) = values.get(&id.index) {
+                check(self, value)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

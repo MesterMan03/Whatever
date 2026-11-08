@@ -33,6 +33,9 @@ pub enum Schema {
         values: Vec<String>,
     },
     Entity,
+    Component {
+        component_type: String,
+    },
     Asset,
     String {
         max_length: Option<usize>,
@@ -151,6 +154,15 @@ impl Schema {
                     "invalid enum choices"
                 );
             }
+            Self::Component { component_type } => {
+                let (owner, component) = component_type
+                    .split_once(':')
+                    .ok_or_else(|| anyhow::anyhow!("expected namespaced component type"))?;
+                ensure!(
+                    crate::sandbox::valid_storage_id(owner) && name(component),
+                    "invalid component reference type"
+                );
+            }
             Self::Bool | Self::Entity | Self::Asset => {}
         }
         Ok(())
@@ -199,6 +211,18 @@ impl Schema {
                             .and_then(Value::as_str)
                             .is_some_and(|s| !s.is_empty() && s.len() <= 256),
                     "expected entity reference"
+                );
+                Ok(value.clone())
+            }
+            Self::Component { component_type } => {
+                ensure!(
+                    value.as_object().is_some_and(|o| o.len() == 2)
+                        && value.get("$component").and_then(Value::as_str) == Some(component_type)
+                        && value
+                            .get("$entity")
+                            .and_then(Value::as_str)
+                            .is_some_and(|s| !s.is_empty() && s.len() <= 256),
+                    "expected reference to component '{component_type}'"
                 );
                 Ok(value.clone())
             }

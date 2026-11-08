@@ -1,6 +1,24 @@
 import { Component, Type, field, BuiltInComponents, Engine, Entity, EntityRef, PendingEntity, Physics, Scene, type Pending, type ComponentSnapshot } from "@whatever-engine/api";
 import { Input, Time, PressedKeys, type KeyCode } from "@whatever-engine/api";
 
+class ReferencedSession extends Component {
+  score = 0;
+  award(amount: number): void { this.score += amount; }
+}
+class ReferencingPickup extends Component {
+  session: ReferencedSession | null = null;
+  explicit = field(Type.Nullable(Type.Component(ReferencedSession)), null);
+  collect(): void { this.session?.award(10); this.explicit?.award(10); }
+}
+function checkComponentReferenceTypes(pickup: ReferencingPickup, entity: Entity): void {
+  const linked: ReferencedSession | null = entity.getComponent(ReferencingPickup)?.session ?? null;
+  linked?.award(10);
+  // @ts-expect-error A component field requires the component, not its owning entity.
+  pickup.session = entity;
+  // @ts-expect-error Explicit component descriptors retain behavior method signatures.
+  pickup.explicit?.award("ten");
+}
+
 function readCurrentTick(): void {
   const delta: number = Time.deltaSeconds;
   const tick: number = Time.tickNumber;
@@ -70,16 +88,23 @@ Engine.on("tick", ({ keys_pressed }) => {
   void [snapshot, held, alternative, chord, shift, control, alt, superKey, legacy, codes, iterated, supported];
 });
 
-const loadedScene: Promise<import("@whatever-engine/api").LoadedScene> = Scene.loadScene("fixture://main");
-void loadedScene.then(scene => {
+const loadedScene: import("@whatever-engine/api").LoadedScene = Scene.loadScene("fixture://main");
+void ((scene: import("@whatever-engine/api").LoadedScene) => {
   const entity: Entity = scene.get("camera");
   const entities: Entity[] = scene.entities();
   const count: number = scene.entityCount;
   const time: number = scene.loadTime;
   void [entity, entities, count, time];
-});
+})(loadedScene);
 
 const parent = Scene.createEntity();
+const inherited = parent.getComponent("core:world_transform");
+if (inherited) {
+  // @ts-expect-error Derived world transforms remain read-only.
+  inherited.position[0] = 3;
+  // @ts-expect-error Derived values expose fields rather than mutating class helpers.
+  inherited.setX(3);
+}
 const child = Scene.createEntity()
   .setComponent(new BuiltInComponents.Transform())
   .setParent(parent)
@@ -110,10 +135,10 @@ const physicsWorld=Scene.createEntity().setComponent(new Physics.World({substeps
 const rigidBody=Scene.createEntity().setComponent(Physics.RigidBody.dynamic({world:physicsWorld,lockedAxes:["rotationX"],rapier:{additional_solver_iterations:4}}));
 const collider=Scene.createEntity().setComponent(new Physics.Collider({body:rigidBody,shape:Physics.Shape.box({size:[1,2,3]}),mass:2}));
 const hinge=Scene.createEntity().setComponent(Physics.Joint.revolute({bodyA:rigidBody,bodyB:parent,limits:{min:-1,max:1},rapier:{motors:{angularX:{targetVelocity:1}}}}));
-const bodyState:Pending<Physics.BodyState>=Physics.body(rigidBody).state();
+const bodyState:Physics.BodyState=Physics.body(rigidBody).state();
 const componentState:ComponentSnapshot<Physics.BodyState>|null=rigidBody.getComponent("core:rigid_body_state");
 const settings:ComponentSnapshot<Physics.World>|null=physicsWorld.getComponent("core:physics_world");
-const ray:Pending<Physics.RayHit|null>=Physics.world(physicsWorld).castRay([0,10,0],[0,-1,0],{maxDistance:20,excludeCollider:collider});
+const ray:Physics.RayHit|null=Physics.world(physicsWorld).castRay([0,10,0],[0,-1,0],{maxDistance:20,excludeCollider:collider});
 const mutations:Promise<void>=Physics.body(rigidBody).applyImpulse([1,0,0]).setLinearVelocity([1,0,1],{axes:["x","z"]}).get();
 const previousCamera:Entity|null=Engine.getMainCamera();Engine.setMainCamera(parent);
 export class Target extends Component {
@@ -152,9 +177,9 @@ Physics.body(editableCollider.body).wake();
 void typedRef;
 void [hinge,bodyState,componentState,settings,ray,mutations,previousCamera];
 
-// @ts-expect-error Snapshot tuples cannot be mutated.
+// Component handles and nested values update the engine immediately.
 if (transform) transform.position[0] = 2;
-// @ts-expect-error Snapshot data has no mutable class helper methods.
+// Native component methods remain available on live handles.
 transform?.setX(2);
 child.editComponent("core:transform", draft => { draft.position[0] = 2; });
 const ordered: Pending<BuiltInComponents.Transform | null> = child.requestComponent("core:transform");

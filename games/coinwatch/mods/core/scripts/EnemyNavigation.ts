@@ -1,3 +1,4 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Physics, Type, field } from "@whatever-engine/api";
 import { advanceHunt, distance, nearest, route, type HuntState, type Node } from "./navigation.ts";
 import { readGraph } from "./NavNode.ts";
@@ -5,7 +6,7 @@ import { id, playing, position, resolve } from "./session.ts";
 /** Path selection and pursuit only. Appearance, damage, spawning and scoring are separate. */
 export class EnemyNavigation extends Component {
   static readonly type = "core:EnemyNavigation";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   world = field(Type.Nullable(Type.Entity), null);
   graph = field(Type.Nullable(Type.Entity), null);
   target = field(Type.Nullable(Type.Entity), null);
@@ -93,13 +94,11 @@ export class EnemyNavigation extends Component {
       return;
     this.checking = true;
     try {
-      const hit = await Physics.world(world)
-        .castRay(p, direction, {
-          maxDistance: length + 0.2,
-          excludeBody: this.entity,
-          flags: Physics.QueryFilterFlag.EXCLUDE_SENSORS,
-        })
-        .get();
+      const hit = await Physics.world(world).castRay(p, direction, {
+        maxDistance: length + 0.2,
+        excludeBody: this.entity,
+        flags: Physics.QueryFilterFlag.EXCLUDE_SENSORS,
+      });
       if (this.active && playing(this.session))
         this.visible = hit?.body?.id === id(this.target) || hit?.collider.id === id(this.target);
     } finally {

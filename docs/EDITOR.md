@@ -1,9 +1,17 @@
 # Editor, projects and deployment
 
+Custom component fields may reference a component directly, for example
+`session: RunSession | null = null`. The field picker lists only scene entities
+containing that component type. The reference preserves the entity's authored ID
+and required component type when saving, duplicating or instantiating a prefab.
+
 Whatever has a shared Rust engine crate (`engine/`), an ordinary player application
 (`player/`) and a separate native editor (`editor/`). The editor authors mod files
 without evaluating scripts. Play starts the normal sandboxed player. `wmod/` is
-the CLI companion; both tools use the same project, scene and build code.
+the CLI companion; both tools use the same project, scene and build code. Native
+applications dynamically share `whatever_engine`, `whatever_script_vm` and
+`whatever_render_deps`. The VM/compiler payload appears once in the scripting
+library. These Rust libraries must ship with executables from the same build.
 
 ## Projects are mod collections
 
@@ -91,8 +99,8 @@ remain future work.
 ## Build Game
 
 Choose **Build Game** in the toolbar or Build menu, select an output folder, and
-wait for the build log to report completion. The editor packages the player,
-separate pinned mod runtime, native libraries and selected mods, then generates
+wait for the build log to report completion. The editor packages the player with
+its embedded VM, native libraries and selected mods, then generates
 the named launcher with its icon and Windows product/version metadata. Project
 Settings controls the name, company, version and optional custom icon. A default
 Whatever icon is supplied automatically. Builds run in the background.
@@ -101,18 +109,21 @@ shows and focuses its standalone window after GPU initialization; embedded Play
 continues to use click-to-focus.
 
 Installed editor distributions include their engine support payload. They require
-no Rust toolchain, Bun installation or manually assembled runtime directory for
+no development toolchain or manually assembled runtime directory for
 game builds. From a source checkout, Build automatically compiles the release
-player and launcher and prepares the pinned host if needed; the normal engine
+player and launcher with the already-built embedded guest; the normal engine
 development prerequisites apply. Play automatically prepares a debug player.
 Builds currently target the editor's host platform.
 
 ```text
 My Game.exe                    Small launcher with the game's name and icon
-engine/
-  Whatever.exe                 Native player and engine services
-  runtime.exe                  Separate pinned Bun host with the scripting API
-  lib/                         Native runtime support libraries
+bin/
+  Whatever.exe                 Native player
+  whatever_engine.dll          Shared engine services
+  whatever_script_vm.dll       Embedded VM, SDK and compiler
+  whatever_render_deps.dll     Graphics dependencies
+  native-libraries.json        Required private library closure
+  ...                          Matching Rust/MSVC support libraries
 branding/
   icon.png                     Icon used by the player window
 mods/
@@ -121,18 +132,19 @@ mods/
 whatever.wproject              Portable mod collection and build settings
 build.json                     Format, engine version, target and mod versions
 LICENSE
-BUN-LICENSE.md
+RUNTIME-LICENSES.md
 ```
 
 Linux uses the same layout without `.exe`; PE icon/version resources apply to
 Windows launchers. The launcher resolves the engine beside itself, forwards
 arguments and returns its exit status. The player finds game data beside its
-installation, independently of the working directory. Each scripted mod retains
-its own sandboxed runtime process. Bun is not embedded in the player or launcher.
+installation, independently of the working directory. Each scripted mod has an isolated Wasm VM inside the player. Its embedded compiler
+loads distributed JS/TS/JSON sources without external build tools.
 
 The launcher filename sanitizes invalid filename characters and Windows reserved
 device names. Game window titles, modes and tick rates remain ordinary
-`core/meta.toml` metadata. Installer generation and code signing are not provided.
+`core/meta.toml` metadata. Game-specific installers and code signing remain the
+game publisher's responsibility; the installers below distribute the editor.
 
 Packaging remaps external mods to `mods/<id>`, preserves their sources, scenes,
 assets and relative imports, and omits `.git`, `node_modules` and logs. It validates
@@ -159,14 +171,13 @@ it. `mod create` accepts `--name` and `--no-scripts`. `wmod create <directory>`
 retains interactive mod creation. Scripted templates include a scene, entry
 script, `package.json` and `tsconfig.json`. New games contain one scripted `mods/core` with their main scene and game assets. Additional mods do not automatically depend on core; declare dependencies when referencing its assets or custom components. Existing multi-mod projects remain supported and are not merged automatically.
 
-Autocomplete references the editor's `sdk/index.d.ts` through a small git-ignored `.whatever/tsconfig.sdk.json`. Opening a project repairs this local binding after relocating the editor. `wmod project bind-sdk <project>` provides terminal setup. No declaration copy or npm install is needed. Legacy copied types are preserved until explicitly migrated. Local bindings and trash are excluded from game builds; the native host still embeds its own matching API metadata and runtime permissions are unchanged.
+Autocomplete references the editor's `sdk/index.d.ts` through a small git-ignored `.whatever/tsconfig.sdk.json`. Opening a project repairs this local binding after relocating the editor. `wmod project bind-sdk <project>` provides terminal setup. Legacy copied types are preserved until explicitly migrated. Game builds exclude local bindings and trash. The engine embeds matching API metadata for its VM.
 
 Release maintainers use `wmod runtime-kit` to assemble the support payload from
-built player/host/launcher binaries. CI adds the editor and CLI to that same
-distribution. This is distribution tooling, not a game developer setup step.
+the player and launcher binaries. CI adds the editor and CLI to that distribution.
 `package --runtime <distribution>` remains an advanced override.
 
-Run `cargo test --workspace`, `bun run test:server` and `bun run test:project`
+Run `npm run test:native`, `npm run test:server` and `npm run test:project`
 after changing this workflow. The project integration test checks automatic
 installed-payload discovery, launcher metadata, safe rebuilding and a relocated
 game running with an empty PATH. The physics demo loads its authored playground
@@ -256,12 +267,10 @@ Embedded Windows Play confines the captured cursor to the child viewport and
 releases it on console opening, focus loss or window destruction. Child cursor
 messages explicitly restore visibility when capture ends.
 
-The mod host builder defaults to the pinned release Bun fork. A debug host needs
-`bun run build:host --debug-runtime` explicitly and cannot be packaged as a final
-game. Source builds prepare the release fork automatically when needed. Debug
-Bun includes debug checks and a much larger runtime; the compiled host embeds that
-whole runtime rather than a small interpreter wrapper.
-
+The native player embeds the SDK, TypeScript compiler and QuickJS Wasm VM. Source
+maintainers rebuild these with `npm run build:runtime` and `npm run build:guest`
+before compiling engine binaries. Distributed editor and game builds compile mods
+internally.
 
 ## Live Play editing
 
@@ -291,38 +300,76 @@ hosts. Snapshots use a bounded latest-state mailbox; socket reads/writes run on
 background threads. Normal games without editor connection variables open no
 editor listener or control endpoint.
 
-## Portable editor distributions
+## Editor distributions and installers
 
 `.github/workflows/editor.yml` builds, tests and packages native editor
-archives for Windows/Linux x86_64 and macOS arm64. It runs for pull requests, main pushes and
-manual dispatch. Version releases promote its exact archives only after all three
+archives and installers for Windows/Linux x86_64 and macOS arm64. It runs for pull requests, main pushes and
+manual dispatch. Version releases promote its exact artifacts only after all three
 platforms pass on the tagged commit on `main`. Missing or expired artifacts block
 publication; the release workflow also supports retrying an existing tag through
-manual dispatch. The pinned native Bun binary is
-cached by fork revision, platform and build configuration. Compiler/assembler
-tools are installed only when that native cache misses. Optimized Rust outputs
+manual dispatch. The Wasm guest is built before native engine checks. Optimized Rust outputs
 are cached by platform, compiler and Cargo configuration immediately after the
 release build, before packaging starts. Artifacts include:
 
-- Native editor, wmod and launcher template.
-- `engine/Whatever`, the separate `engine/runtime` mod host, required libraries.
+- `bin/whatever-editor`, `bin/wmod`, `bin/Whatever` and `bin/whatever-launcher`.
+- Shared engine, VM, graphics, Rust standard library and required native libraries in `bin/`.
 - `mods/core` stock template, `sdk/index.d.ts`, licenses and usage instructions.
 - `resources/starter` editor-owned assets imported into games on demand.
 
-macOS wraps these files in `Whatever Editor.app/Contents/MacOS`; the other
-platforms put them at the archive root. Archives preserve executable permissions.
+Windows/Linux place data folders at the archive root. Start the actual editor in
+`bin/`; there are no root editor/CLI wrapper executables. macOS puts executables,
+libraries and support data in `Whatever Editor.app/Contents/MacOS`, with the
+editor as the app's direct executable. Archives preserve executable permissions.
 Linux bundles non-system linked libraries with relative loader paths and targets
 Ubuntu 24.04's glibc baseline; display/GPU drivers remain system components. The
-macOS app is ad hoc signed and is not notarized. Windows packages available MSVC
-CRT redistributable DLLs beside the executables.
+macOS app is ad hoc signed and is not notarized. Windows follows PE imports to
+include required MSVC redistributables. Every private library has one copy beside
+the executables. The dependency collector rejects basename collisions and writes
+`native-libraries.json`; game exports copy only the player's required closure.
+The branded game launcher is self-contained and remains at each exported game's root.
 
 Packaging copies the distribution to a temporary directory, creates a project
 using its installed core and SDK, validates it through the installed editor, and
-builds a game and runs its branded launcher/player/host headlessly with an empty
+builds a game and runs its branded launcher and player headlessly with an empty
 PATH before archiving.
-No engine source checkout, Rust toolchain or system Bun is needed by the result.
-`bun run package:editor` reproduces this locally; `--profile debug --output <new
-folder>` is useful for a local smoke test, while CI always packages release.
+The result is a self-contained editor distribution.
+`npm run package:editor` packages a release build. For a local smoke test, run
+`npm run package:editor -- --profile debug --output ./dist/editor-smoke`.
+
+Build native binaries with `npm run build:native -- --release` before packaging.
+The helper configures the dynamic Rust library path for build tools and stages
+the standard library for direct executable launches. Native libraries and
+executables form a single versioned distribution; replace them together.
+
+Generate an installer from that validated portable payload:
+
+```sh
+npm run package:editor
+npm run package:installers -- --source dist/WhateverEditor-windows-x86_64
+```
+
+Use the matching platform/architecture source directory on Linux or macOS. The
+installer command runs on the destination platform and requires its native tools:
+WiX 5.0.2 with `WixToolset.UI.wixext/5.0.2` on Windows, `dpkg-deb` on Linux, or
+`pkgbuild`/`pkgutil` on macOS. Windows CI installs WiX with the .NET tool CLI.
+
+| Platform | Package and install location | Terminal registration |
+|---|---|---|
+| Windows | `.msi`, per-machine under `Program Files/Whatever Editor` | Appends `bin/` to system PATH; uninstall removes that entry. Also creates a Start menu shortcut. |
+| Ubuntu/Debian | `.deb`, `/opt/whatever-editor` | Package-owned `/usr/bin/whatever-editor` and `/usr/bin/wmod` symlinks; removal deletes them. |
+| macOS | `.pkg`, `/Applications/Whatever Editor.app` | `/etc/paths.d/whatever-engine` exposes the app's command directory to login shells. |
+
+Open a new terminal after installation, then run `whatever-editor` or `wmod`.
+Windows supports repair and major upgrades, including rebuilding the same release.
+CI checks install, repair, upgrade and PATH cleanup on a disposable Windows runner,
+plus command registration on Linux/macOS. The macOS package has no uninstaller;
+remove the app and `/etc/paths.d/whatever-engine`, then use
+`sudo pkgutil --forget engine.whatever.editor` to discard its receipt.
+MSI/PKG signing is not configured by default. macOS maintainers may set
+`WHATEVER_INSTALLER_IDENTITY` to sign the PKG with an installed installer certificate.
+
+Packaged applications write logs under the OS local-data directory in
+`Whatever/logs/<process-id>/`, so installed directories need no write access.
 
 The repository's test project lives in `games/test`; `cargo run` selects it by
 default in source builds. Open it with `cargo run -p whatever-editor -- games/test`.

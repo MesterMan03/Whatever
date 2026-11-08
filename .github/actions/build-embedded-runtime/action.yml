@@ -1,0 +1,52 @@
+name: Build embedded runtime
+description: Build the engine-owned QuickJS Wasm guest and embedded TypeScript compiler
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Install build dependencies
+      shell: bash
+      run: |
+        npm ci --ignore-scripts
+        rustup target add wasm32-unknown-unknown
+    - name: Install Linux Wasm compiler
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends clang llvm lld
+    - name: Install macOS Wasm compiler
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install llvm
+        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+    - name: Install Windows Wasm compiler
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $tools = Join-Path $env:GITHUB_WORKSPACE 'target/build-tools'
+        New-Item -ItemType Directory -Path $tools -Force | Out-Null
+        $archive = Join-Path $tools 'llvm.tar.zst'
+        curl.exe --retry 4 --fail --location --output $archive 'https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.1/clang%2Bllvm-23.1.1-x86_64-pc-windows-msvc.tar.zst'
+        if ($LASTEXITCODE -ne 0) { throw 'LLVM download failed' }
+        & (Join-Path $env:SystemRoot 'System32/tar.exe') -xf $archive -C $tools
+        if ($LASTEXITCODE -ne 0) { throw 'LLVM extraction failed' }
+    - name: Build embedded SDK, compiler and VM
+      shell: bash
+      run: |
+        npm run build:runtime
+        npm run build:guest
+    - name: Configure the native Rust library loader
+      shell: bash
+      run: |
+        library="$(rustc --print target-libdir)"
+        echo "$library" >> "$GITHUB_PATH"
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          echo "LD_LIBRARY_PATH=$library${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          echo "DYLD_LIBRARY_PATH=$library${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+        fi

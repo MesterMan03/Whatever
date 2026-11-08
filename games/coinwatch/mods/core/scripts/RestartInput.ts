@@ -1,8 +1,9 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Input, Type, field } from "@whatever-engine/api";
 import { emit, run } from "./session.ts";
 export class RestartInput extends Component {
   static readonly type = "core:RestartInput";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   private held = false;
   override tick(): void {
     const pressed = Input.isPressed("KeyR");

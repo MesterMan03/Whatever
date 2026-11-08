@@ -126,6 +126,15 @@ fn schema_assets(
     vfs: &dyn Vfs,
 ) -> anyhow::Result<()> {
     match schema {
+        Schema::Component { component_type } => {
+            let (namespace, _) = component_type
+                .split_once(':')
+                .context("invalid component reference type")?;
+            ensure!(
+                allows_namespace(owner, namespace),
+                "component reference requires a direct dependency on '{namespace}'"
+            );
+        }
         Schema::Asset => {
             if let Some(path) = value.as_str() {
                 validate_asset(owner, path, vfs)?;

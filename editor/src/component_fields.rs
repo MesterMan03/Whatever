@@ -18,7 +18,10 @@ fn initial(schema: &Schema) -> Value {
                 .map(|field| (field.name.clone(), initial(&field.schema)))
                 .collect(),
         ),
-        Schema::Optional { .. } | Schema::Nullable { .. } | Schema::Entity => Value::Null,
+        Schema::Optional { .. }
+        | Schema::Nullable { .. }
+        | Schema::Entity
+        | Schema::Component { .. } => Value::Null,
     }
 }
 
@@ -131,7 +134,7 @@ impl Editor {
                     false
                 }
             }
-            Schema::Entity => {
+            Schema::Entity | Schema::Component { .. } => {
                 let old = value
                     .get("$entity")
                     .and_then(Value::as_str)
@@ -146,11 +149,34 @@ impl Editor {
                     })
                     .show_ui(ui, |ui| {
                         for name in names {
+                            if let Schema::Component { component_type } = schema {
+                                fn has(
+                                    items: &[engine::scene::SceneEntity],
+                                    name: &str,
+                                    kind: &str,
+                                ) -> bool {
+                                    items.iter().any(|entity| {
+                                        (entity.script_id.as_deref() == Some(name)
+                                            && entity.components.contains_key(kind))
+                                            || has(&entity.children, name, kind)
+                                    })
+                                }
+                                if !self.document.as_ref().is_some_and(|doc| {
+                                    has(&doc.scene.entities, name, component_type)
+                                }) {
+                                    continue;
+                                }
+                            }
                             ui.selectable_value(&mut selected, name.clone(), name);
                         }
                     });
                 if old != selected {
-                    *value = json!({"$entity":selected});
+                    *value = match schema {
+                        Schema::Component { component_type } => {
+                            json!({"$entity":selected,"$component":component_type})
+                        }
+                        _ => json!({"$entity":selected}),
+                    };
                     true
                 } else {
                     false
@@ -177,7 +203,7 @@ impl Editor {
             }
             Schema::Nullable { inner } | Schema::Optional { inner } => {
                 let mut changed = false;
-                if matches!(inner.as_ref(), Schema::Entity) {
+                if matches!(inner.as_ref(), Schema::Entity | Schema::Component { .. }) {
                     changed |= self.schema_value(ui, inner, value, names, depth + 1);
                     if !value.is_null() && ui.small_button("Clear reference").clicked() {
                         *value = Value::Null;

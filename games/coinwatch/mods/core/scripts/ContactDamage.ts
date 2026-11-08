@@ -1,9 +1,10 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Type, field } from "@whatever-engine/api";
 import { onContact } from "./contacts.ts";
 import { emit, id, playing } from "./session.ts";
 export class ContactDamage extends Component {
   static readonly type = "core:ContactDamage";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   target = field(Type.Nullable(Type.Entity), null);
   private unsubscribe: (() => void) | null = null;
   override start(): void {

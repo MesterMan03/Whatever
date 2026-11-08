@@ -2,13 +2,10 @@ use anyhow::{Context, ensure};
 use std::path::{Path, PathBuf};
 
 pub fn installed_sdk() -> anyhow::Result<PathBuf> {
-    let executable = std::env::current_exe()?;
-    let mut candidates = vec![
-        executable
-            .parent()
-            .context("executable directory")?
-            .join("sdk/index.d.ts"),
-    ];
+    let mut candidates = super::installation::distribution_root()?
+        .map(|root| root.join("sdk/index.d.ts"))
+        .into_iter()
+        .collect::<Vec<_>>();
     if cfg!(debug_assertions) {
         candidates.push(crate::development_root().join("runtime/dist/index.d.ts"));
     }

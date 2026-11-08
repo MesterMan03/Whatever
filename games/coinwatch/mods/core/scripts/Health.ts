@@ -1,12 +1,13 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Type, field } from "@whatever-engine/api";
 import { emit, listen, playing } from "./session.ts";
 export class Health extends Component {
   static readonly type = "core:Health";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   hitPoints = field(Type.F64.with({ min: 1, max: 1000 }), 1);
   scoreOnKill = field(Type.I32.with({ min: 0, max: 10000 }), 50, {
     label: "Score on Kill",
-    tooltip: "Score gained on a kill"
+    tooltip: "Score gained on a kill",
   });
   private remaining = 1;
   private dead = false;

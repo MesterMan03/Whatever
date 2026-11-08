@@ -1,4 +1,5 @@
-import { Component, Console, Physics, Scene, Type, field } from "@whatever-engine/api";
+import type { RunSession } from "./RunSession.ts";
+import { Component, Console, Physics, Scene, Time, Type, field } from "@whatever-engine/api";
 import { EnemyNavigation } from "./EnemyNavigation.ts";
 import { EnemySpawner, spawnEnemy } from "./EnemySpawner.ts";
 import { ProjectileWeapon, fireProjectile } from "./ProjectileWeapon.ts";
@@ -6,7 +7,7 @@ import { emit, listen, position, resolve, run } from "./session.ts";
 /** Optional development component; gameplay never calls these tools or reads their telemetry. */
 export class PlaytestTools extends Component {
   static readonly type = "core:PlaytestTools";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   player = field(Type.Nullable(Type.Entity), null);
   spawner = field(Type.Nullable(Type.Entity), null);
   weapon = field(Type.Nullable(Type.Entity), null);
@@ -35,6 +36,7 @@ export class PlaytestTools extends Component {
               spawner = resolve(this.spawner)?.getComponent(EnemySpawner);
             const enemies = Scene.findByTag("enemy");
             return JSON.stringify({
+              tick: Time.tickNumber,
               score: state?.score ?? 0,
               coins: state?.coins ?? 0,
               kills: state?.kills ?? 0,

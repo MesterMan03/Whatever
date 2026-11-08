@@ -4,16 +4,17 @@
   "license": "Apache-2.0",
   "description": "TypeScript scripting API for Whatever Engine mods",
   "version": "0.7.0",
+  "type": "module",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js"
   },
   "scripts": {
-    "build:bundle": "bun build src/index.ts --outfile dist/index.js --external=node --target=node --footer=\"// With love from the Whatever team <3\n// https://github.com/MesterMan03/Whatever\"",
+    "build:bundle": "node ../tools/build-script-assets.ts",
     "build:types": "dts-bundle-generator --project tsconfig.dts.json --out-file dist/index.d.ts src/index.ts",
-    "build": "bun run build:bundle && bun run build:types",
-    "prepublishOnly": "bun run build"
+    "build": "npm run build:types && npm run build:bundle",
+    "prepublishOnly": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^22",

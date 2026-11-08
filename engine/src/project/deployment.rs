@@ -4,39 +4,30 @@ use std::path::{Path, PathBuf};
 
 pub(super) struct RuntimeFiles {
     pub player: PathBuf,
-    pub host: PathBuf,
     pub launcher: PathBuf,
     pub libraries: Option<PathBuf>,
     pub license: PathBuf,
-    pub bun_license: PathBuf,
 }
 impl RuntimeFiles {
     pub fn from_bundle(root: &Path) -> Self {
         let suffix = std::env::consts::EXE_SUFFIX;
+        let binaries = super::installation::binary_directory(root);
         Self {
-            player: root.join("engine").join(format!("Whatever{suffix}")),
-            host: root.join("engine").join(format!("runtime{suffix}")),
-            launcher: root.join(format!("whatever-launcher{suffix}")),
-            libraries: Some(root.join("engine")),
+            player: binaries.join(format!("Whatever{suffix}")),
+            launcher: binaries.join(format!("whatever-launcher{suffix}")),
+            libraries: Some(binaries),
             license: root.join("LICENSE"),
-            bun_license: root.join("BUN-LICENSE.md"),
         }
     }
     pub fn validate(&self) -> anyhow::Result<()> {
-        for path in [
-            &self.player,
-            &self.host,
-            &self.launcher,
-            &self.license,
-            &self.bun_license,
-        ] {
+        for path in [&self.player, &self.launcher, &self.license] {
             ensure!(
                 path.is_file(),
                 "editor support file is missing: {}",
                 super::display_path(path)
             );
         }
-        crate::script::validate_host(&self.host)
+        Ok(())
     }
 }
 
@@ -107,7 +98,6 @@ pub(super) fn export_files(
 ) -> anyhow::Result<PathBuf> {
     let project = project.for_build()?;
     files.validate()?;
-    crate::script::validate_release_host(&files.host)?;
     let game_executable = launcher_name(&project.name)?;
     let destination = std::path::absolute(destination)?;
     let parent = destination
@@ -117,11 +107,10 @@ pub(super) fn export_files(
         .context("build parent directory must already exist")?;
     let destination = parent.join(destination.file_name().context("build folder name")?);
     let manifests = project.manifests()?;
-    for source in
-        manifests
-            .iter()
-            .map(|(root, _)| root)
-            .chain([&files.player, &files.host, &files.launcher])
+    for source in manifests
+        .iter()
+        .map(|(root, _)| root)
+        .chain([&files.player, &files.launcher])
     {
         let source = source.canonicalize()?;
         ensure!(
@@ -140,7 +129,7 @@ pub(super) fn export_files(
         let empty = std::fs::read_dir(&destination)?.next().is_none();
         let owned = destination.join("build.json").is_file()
             && destination.join("whatever.wproject").is_file()
-            && destination.join("engine").is_dir();
+            && (destination.join("bin").is_dir() || destination.join("engine").is_dir());
         ensure!(
             empty || owned,
             "choose an empty folder or a previous Whatever build; this folder contains other files"
@@ -166,38 +155,25 @@ pub(super) fn export_files(
     let suffix = std::env::consts::EXE_SUFFIX;
     copy_tree(
         &files.player,
-        &stage.join("engine").join(format!("Whatever{suffix}")),
+        &stage.join("bin").join(format!("Whatever{suffix}")),
     )?;
-    copy_tree(
-        &files.host,
-        &stage.join("engine").join(format!("runtime{suffix}")),
-    )?;
-    std::fs::create_dir_all(stage.join("engine/lib"))?;
     if let Some(libraries) = &files.libraries {
-        if libraries.join("lib").is_dir() {
-            copy_tree(&libraries.join("lib"), &stage.join("engine/lib"))?;
+        let dependencies = super::installation::player_libraries(libraries)?;
+        for library in &dependencies {
+            copy_tree(
+                library,
+                &stage
+                    .join("bin")
+                    .join(library.file_name().context("library filename")?),
+            )?;
         }
-        for entry in std::fs::read_dir(libraries)? {
-            let entry = entry?;
-            if entry.path().extension().is_some_and(|ext| {
-                ["dll", "so", "dylib"]
-                    .iter()
-                    .any(|kind| ext.eq_ignore_ascii_case(kind))
-            }) {
-                copy_tree(&entry.path(), &stage.join("engine").join(entry.file_name()))?;
-                // The branded launcher is a separate executable at the game root.
-                if entry
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dll"))
-                {
-                    copy_tree(&entry.path(), &stage.join(entry.file_name()))?;
-                }
-            }
-        }
+        super::installation::write_library_manifest(&stage.join("bin"), &dependencies)?;
     }
     copy_tree(&files.license, &stage.join("LICENSE"))?;
-    copy_tree(&files.bun_license, &stage.join("BUN-LICENSE.md"))?;
+    std::fs::write(
+        stage.join("RUNTIME-LICENSES.md"),
+        include_str!("../../resources/RUNTIME-LICENSES.md"),
+    )?;
     super::branding::brand(&project, &stage.join(&game_executable), &stage)?;
     let mut deployed = Project {
         version: 1,

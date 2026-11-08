@@ -187,7 +187,14 @@ fn rotate_log(logs_dir: &Path) -> anyhow::Result<()> {
 ///
 /// Only events from this crate are logged by default; set `RUST_LOG` to override.
 pub fn init(cwd: &Path, mirror: LogMirror) -> anyhow::Result<SharedLogWriter> {
-    let logs_dir = cwd.join("logs");
+    let logs_dir = if cwd.join("distribution.json").is_file() || cwd.join("build.json").is_file() {
+        dirs::data_local_dir()
+            .context("user data directory for installed logs")?
+            .join("Whatever/logs")
+            .join(std::process::id().to_string())
+    } else {
+        cwd.join("logs")
+    };
     fs::create_dir_all(&logs_dir).context("create logs dir")?;
 
     if let Err(e) = rotate_log(&logs_dir) {

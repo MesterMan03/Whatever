@@ -28,7 +28,7 @@ Add optional `icon = "branding/icon.png"` only after adding that file. Build set
 
 Set the name, company, version, and optional icon in Project Settings. Choose **Build Game**, select a new or empty output folder, and wait for Log to report completion. Required mods cannot be excluded while their dependents remain included. Builds run in the background and currently target the editor's host platform.
 
-Installed editor distributions contain their build support payload. Source checkouts prepare the required player, launcher, and pinned host using the normal native development prerequisites.
+Installed editor distributions contain their build support payload. Source checkouts prepare the required player, launcher, and shared libraries using the normal native development prerequisites.
 
 ## Build with the CLI
 
@@ -40,8 +40,8 @@ From a source checkout, use `cargo run -p wmod -- package ...`.
 
 ## Share the whole output
 
-The output contains a branded launcher, separate engine and mod host, native support libraries, project manifest, and ordinary mod sources/assets. Keep the whole folder together. It resolves its game data beside the installation, rather than from the current working directory.
+The output contains a branded launcher at the root, `bin/` with the native player and shared libraries, a project manifest, and mod sources and assets. Keep the whole folder together. Each private library ships once. The game resolves its data beside the installation.
 
-The exported mod sources remain editable in the editor. Packaging is not a source-hiding or DRM step. Each scripted mod continues to run in its own sandboxed process.
+The exported mod sources remain editable in the editor. Each scripted mod runs in its own isolated Wasm VM inside the player.
 
 Packaging supports rebuilding a previous Whatever output and rejects unrelated nonempty destinations. It stages output and validates selected mods and scenes before publishing. See the [editor/deployment reference](/reference/editor/#build-game) for the exact layout and rebuild contract.

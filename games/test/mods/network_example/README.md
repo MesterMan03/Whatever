@@ -41,4 +41,4 @@ After building the bundled host, run the real mod integration demo without windo
 cargo test --locked network_messenger -- --ignored
 ```
 
-It runs one server and three bundled client mod hosts, checks strict rejection of a development certificate, IDs 1/2/3, private-message isolation, broadcasts, missing-recipient errors, datagram ping and reconnect as player 4.
+It runs one server and three clients with embedded scripting VMs. It checks strict rejection of a development certificate, IDs 1/2/3, private-message isolation, broadcasts, missing-recipient errors, datagram ping and reconnect as player 4.

@@ -1,8 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-// Trusted asset-generation tool; never runs inside a mod host.
-const root = resolve(import.meta.dir, "..");
+// Generates the physics demo's assets from the source checkout.
+const root = resolve(import.meta.dirname, "..");
 const assets = join(root, "mods/physics_demo/assets");
 function put(path: string, text: string): void {
   const target = join(assets, path);

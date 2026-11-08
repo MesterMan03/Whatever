@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { text } from "node:stream/consumers";
+import { spawnCaptured } from "../process.ts";
+import { expect, test } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -8,18 +10,18 @@ const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const extension = process.platform === "win32" ? ".exe" : "";
 const binary = (name: string) => join(repository, "target/debug", name + extension);
 for (const name of ["wmod", "Whatever", "whatever-launcher"]) {
-  if (!existsSync(binary(name))) throw new Error("Run cargo build --workspace before test:project");
+  if (!existsSync(binary(name))) throw new Error("Run npm run build:native before test:project");
 }
 async function wmod(args: string[], success = true, executable=binary("wmod")) {
-  const child = Bun.spawn([executable, ...args], { stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  const child = spawnCaptured([executable, ...args]);
+  const [stdout, stderr, code] = await Promise.all([text(child.stdout), text(child.stderr), child.exited]);
   if (success && code !== 0) throw new Error(stdout + stderr);
   return { stdout, stderr, code };
 }
 
 test("CLI scaffolding, editor validation, branded deployment and relocated scene runtime share one project format", async () => {
   const directory = mkdtempSync(join(tmpdir(), "whatever-deployment-"));
-  let player: ReturnType<typeof Bun.spawn> | undefined;
+  let player: ReturnType<typeof spawnCaptured> | undefined;
   try {
     const project = join(directory, "source");
     await wmod(["project", "create", project, "--id", "packaged_fixture", "--name", "Branded Fixture", "--core", join(repository, "engine/resources/core")]);
@@ -44,16 +46,16 @@ Engine.on("init", async () => {
     expect((await wmod(["project","add",project,mod],false)).code).not.toBe(0);
     expect(readFileSync(join(project,"whatever.wproject"),"utf8")).toBe(before);
     const kit = join(directory, "kit");
-    await wmod(["runtime-kit", "--player", binary("Whatever"), "--host", join(repository,"runtime/dist/whatever-mod-host"+extension), "--launcher", binary("whatever-launcher"), "--source",repository,"--output",kit]);
-    copyFileSync(binary("wmod"),join(kit,"wmod"+extension));
-    const installedWmod=join(kit,"wmod"+extension);
+    await wmod(["runtime-kit", "--player", binary("Whatever"), "--launcher", binary("whatever-launcher"), "--source",repository,"--output",kit]);
+    copyFileSync(binary("wmod"),join(kit,"bin/wmod"+extension));
+    const installedWmod=join(kit,"bin/wmod"+extension);
     const output = join(directory,"game");
     mkdirSync(output);
     // An installed editor/CLI locates its own support payload; no runtime directory is supplied.
     await wmod(["package", project, "--output", output],true,installedWmod);
     expect(existsSync(join(output,"Branded Fixture"+extension))).toBe(true);
-    expect(existsSync(join(output,"engine/Whatever"+extension))).toBe(true);
-    expect(existsSync(join(output,"engine/runtime"+extension))).toBe(true);
+    expect(existsSync(join(output,"bin/Whatever"+extension))).toBe(true);
+    expect(existsSync(join(output,"bin/native-libraries.json"))).toBe(true);
     expect(existsSync(join(output,"mods/packaged_fixture/node_modules"))).toBe(false);
     expect(existsSync(join(output,"branding/icon.png"))).toBe(true);
     expect(existsSync(join(output,"mods/dev_tools"))).toBe(false);
@@ -62,8 +64,8 @@ Engine.on("init", async () => {
     expect(readFileSync(join(output,"whatever.wproject"),"utf8")).toContain('id = "packaged_fixture"');
     if(process.platform==="win32") {
       const executable=join(output,"Branded Fixture.exe").replaceAll("'","''");
-      const info=Bun.spawn(["powershell","-NoProfile","-Command",`[System.Diagnostics.FileVersionInfo]::GetVersionInfo('${executable}').FileDescription`],{stdout:"pipe",stderr:"pipe"});
-      expect((await new Response(info.stdout).text()).trim()).toBe("Branded Fixture");
+      const info=spawnCaptured(["powershell","-NoProfile","-Command",`[System.Diagnostics.FileVersionInfo]::GetVersionInfo('${executable}').FileDescription`]);
+      expect((await text(info.stdout)).trim()).toBe("Branded Fixture");
       expect(await info.exited).toBe(0);
     }
     const unrelated=join(directory,"other-files");mkdirSync(unrelated);writeFileSync(join(unrelated,"keep.txt"),"keep");
@@ -72,26 +74,28 @@ Engine.on("init", async () => {
     // Rebuilding a managed output replaces the previous build safely.
     await wmod(["package",project,"--output",output],true,installedWmod);
     await wmod(["project","check",output]);
-    const editor = Bun.spawn([binary("whatever-editor"), output, "--check"], {stdout:"pipe",stderr:"pipe"});
-    const editorError = await new Response(editor.stderr).text();
-    if (await editor.exited !== 0) throw Error(editorError);
+    const editor = spawnCaptured([binary("whatever-editor"), output, "--check"]);
+    const [editorOutput, editorError, editorCode] = await Promise.all([
+      text(editor.stdout), text(editor.stderr), editor.exited,
+    ]);
+    if (editorCode !== 0) throw Error(editorOutput + editorError);
     writeFileSync(join(mod,"scripts/index.ts"),'throw Error("source must not run after packaging")');
     const launcher = join(output,"Branded Fixture"+extension);
-    player = Bun.spawn([launcher,"--mode","server"], {cwd:directory,env:{...process.env,PATH:"",RUST_LOG:"whatever_engine=info"},stdin:"pipe",stdout:"pipe",stderr:"pipe",timeout:15000});
+    player = spawnCaptured([launcher,"--mode","server"], {cwd:directory,env:{...process.env,PATH:"",RUST_LOG:"whatever_engine=info"},timeout:15000});
     const active = player;
     let stdout = ""; let stopped = false;
     const read = (async () => {
       for await (const bytes of active.stdout as ReadableStream<Uint8Array>) {
         stdout += new TextDecoder().decode(bytes);
-        if (!stopped && stdout.includes("PACKAGED_SCENE_READY")) { stopped = true; (active.stdin as import("bun").FileSink).write("quit\n"); }
+        if (!stopped && stdout.includes("PACKAGED_SCENE_READY")) { stopped = true; active.stdin.write("quit\n"); }
       }
     })();
-    const [stderr,code] = await Promise.all([new Response(active.stderr as ReadableStream).text(),active.exited,read]);
+    const [stderr,code] = await Promise.all([text(active.stderr),active.exited,read]);
     if (code !== 0) throw Error(stdout+stderr);
     expect(stdout).toContain("PACKAGED_SCENE_READY");
     expect(stdout).not.toContain("source must not run");
-    const invalid = Bun.spawn([launcher,"--mode","bad"],{cwd:directory,stdout:"pipe",stderr:"pipe"});
-    await Promise.all([new Response(invalid.stdout).text(),new Response(invalid.stderr).text()]);
+    const invalid = spawnCaptured([launcher,"--mode","bad"],{cwd:directory});
+    await Promise.all([text(invalid.stdout),text(invalid.stderr)]);
     expect(await invalid.exited).not.toBe(0);
   } finally {
     if (player?.exitCode === null) { player.kill(); await player.exited; }

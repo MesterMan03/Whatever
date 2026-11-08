@@ -1,4 +1,4 @@
-use super::{GlyphonText, GpuLightingData, Scene, Vertex, WgpuContext, scene};
+use super::{AcquiredFrame, GlyphonText, GpuLightingData, Scene, Vertex, WgpuContext, scene};
 use crate::vfs::{Vfs, VfsPath};
 use anyhow::{Context, anyhow};
 use bytemuck::cast_slice;
@@ -316,6 +316,24 @@ impl Renderer {
         viewport: Option<[u32; 4]>,
     ) -> anyhow::Result<()> {
         let frame_start = std::time::Instant::now();
+        let Some(frame) = self.ctx.acquire_frame()? else {
+            return Ok(());
+        };
+        self.render_acquired(frame, camera_vp, camera_pos, egui_output, vfs, viewport)?;
+        self.timings.cpu_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+        Ok(())
+    }
+
+    pub(crate) fn render_acquired(
+        &mut self,
+        frame: AcquiredFrame,
+        camera_vp: Option<Mat4>,
+        camera_pos: Option<Vec3>,
+        egui_output: Option<&EguiOutput>,
+        vfs: &dyn Vfs,
+        viewport: Option<[u32; 4]>,
+    ) -> anyhow::Result<()> {
+        let frame_start = std::time::Instant::now();
         let mut draws = 0;
         let vp = camera_vp.unwrap_or(Mat4::IDENTITY);
         let pos = camera_pos.unwrap_or(Vec3::ZERO);
@@ -327,13 +345,7 @@ impl Renderer {
             .queue
             .write_buffer(&self.camera_buffer, 0, &cam_data);
 
-        let acquire_start = std::time::Instant::now();
-        let output = match self.ctx.surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => return Ok(()),
-            Err(e) => return Err(e.into()),
-        };
-        let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
+        let AcquiredFrame { output, acquire_ms } = frame;
         let encode_start = std::time::Instant::now();
         let view = output.texture.create_view(&Default::default());
         let mut encoder = self
@@ -590,6 +602,7 @@ impl Renderer {
         }
 
         let present_start = std::time::Instant::now();
+        self.ctx.pre_present_notify();
         output.present();
         let presented = std::time::Instant::now();
         let frame_ms = presented.duration_since(self.last_present).as_secs_f64() * 1000.0;
@@ -618,6 +631,9 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
         self.ctx.resize(width, height);
         self.aspect = width as f32 / height.max(1) as f32;
         self.depth_view = create_depth_view(&self.ctx.device, width, height);

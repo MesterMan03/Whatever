@@ -1,8 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inspectComponents } from "../../runtime/host/components.ts";
+import { inspectComponents } from "../../runtime/compiler/components.ts";
 import { Type, toWire, fromWire, assertNetworkSchema } from "../../runtime/src/schema.ts";
 
 function inspect(source: string, owner = "fixture") {
@@ -15,6 +15,30 @@ function inspect(source: string, owner = "fixture") {
 }
 
 describe("component source metadata", () => {
+  test("component fields preserve concrete types, forward links and explicit descriptors", () => {
+    const definitions = inspect(`
+      import {Component, Type, field} from "@whatever-engine/api";
+      export class Pickup extends Component {
+        session: Session | null = null;
+        explicit = field(Type.Nullable(Type.Component(Session)), null);
+      }
+      export class Session extends Component {
+        static readonly type = "fixture:game_session";
+        score = 0;
+        award(amount: number) { this.score += amount; }
+        peer: Pickup | null = null;
+      }
+    `);
+    const pickup = definitions.find((definition) => definition.id === "fixture:Pickup")!;
+    for (const field of pickup.fields) expect(field.schema).toEqual({kind:"nullable",inner:{kind:"component",component_type:"fixture:game_session"}});
+    expect(definitions.find((definition) => definition.id === "fixture:game_session")?.fields.find(field => field.name === "peer")?.schema)
+      .toEqual({kind:"nullable",inner:{kind:"component",component_type:"fixture:Pickup"}});
+    const schema = {kind:"component",component_type:"fixture:game_session"} as const;
+    expect(toWire(schema, {$entity:"2:1",$component:"fixture:game_session"})).toEqual({$entity:"2:1",$component:"fixture:game_session"});
+    expect(() => toWire(schema, {$entity:"2:1",$component:"fixture:Pickup"})).toThrow("component");
+    expect(() => toWire(schema, {$entity:"2:1"})).toThrow("component");
+    expect(() => assertNetworkSchema(schema)).toThrow("network");
+  });
   test("ignores local trash and staging scripts when discovering live components", () => {
     const root = mkdtempSync(join(tmpdir(), "whatever-component-trash-"));
     try {
@@ -98,6 +122,6 @@ test("shared component types validate data and keep network codecs explicit", ()
 });
 
 test("shipped Markbench component defaults are statically extractable", () => {
-  const definitions = inspectComponents(join(import.meta.dir, "../../games/test/mods/markbench"), "markbench");
+  const definitions = inspectComponents(join(import.meta.dirname, "../../games/test/mods/markbench"), "markbench");
   expect(definitions.map(definition => definition.id).sort()).toEqual(["markbench:counter", "markbench:payload"]);
 });

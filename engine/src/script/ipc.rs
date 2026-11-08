@@ -71,9 +71,6 @@ pub enum EngineMessage {
     Performance {
         sample: Box<crate::runtime::TickTimings>,
     },
-    SceneDelta {
-        delta: crate::ecs::SceneDelta,
-    },
     EntityTagsResponse {
         request_id: String,
         tags: Vec<String>,
@@ -95,10 +92,6 @@ pub enum EngineMessage {
     },
     PhysicsEvent {
         event: serde_json::Value,
-    },
-    CommandResults {
-        tick_number: u64,
-        messages: Vec<EngineMessage>,
     },
     NetworkEvent {
         #[serde(flatten)]
@@ -240,22 +233,6 @@ pub struct QueryResultDto {
 }
 
 // --- Script → Engine messages ---
-
-/// Transport envelopes. Application commands are accepted only inside a tick batch.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
-pub enum ScriptPacket {
-    RuntimeReady {
-        protocol: u32,
-    },
-    RuntimeFailed {
-        message: String,
-    },
-    CommandBatch {
-        tick_number: u64,
-        commands: Vec<ScriptMessage>,
-    },
-}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
@@ -503,37 +480,4 @@ pub struct ArgSpecDto {
     pub description: String,
     #[serde(default)]
     pub has_suggest: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn application_commands_require_a_non_nested_tick_envelope() {
-        use serde_json::json;
-        let log = json!({"type":"Log","level":"info","message":"hello"});
-        assert!(serde_json::from_value::<ScriptPacket>(log.clone()).is_err());
-        let batch = json!({"type":"CommandBatch","tick_number":7,"commands":[log]});
-        assert!(matches!(
-            serde_json::from_value::<ScriptPacket>(batch.clone()),
-            Ok(ScriptPacket::CommandBatch { tick_number: 7, .. })
-        ));
-        assert!(
-            serde_json::from_value::<ScriptPacket>(
-                json!({"type":"CommandBatch","tick_number":7,"commands":[batch]})
-            )
-            .is_err()
-        );
-        assert!(serde_json::from_value::<ScriptPacket>(json!({"type":"CommandBatch","tick_number":7,"commands":[{"type":"RuntimeReady","protocol":6}]})).is_err());
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComponentInstance {
-    pub instance_id: String,
-    pub entity_id: String,
-    pub component_type: String,
-    pub data: serde_json::Value,
-    pub active: bool,
 }

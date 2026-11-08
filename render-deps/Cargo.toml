@@ -1,0 +1,17 @@
+[package]
+name = "whatever-render-deps"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+whatever-script-vm = { path = "../script-vm" }
+wgpu = "23"
+winit = "0.30"
+egui = "0.30"
+egui-wgpu = "0.30"
+egui-winit = "0.30"
+glyphon = "0.7"

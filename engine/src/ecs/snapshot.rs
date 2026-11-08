@@ -71,6 +71,10 @@ fn metadata(world: &World, id: EntityId) -> EntityMetadata {
     }
 }
 
+pub(crate) fn entity_metadata(world: &World, id: EntityId) -> Option<EntityMetadata> {
+    world.is_alive(&id).then(|| metadata(world, id))
+}
+
 fn kinds(world: &World) -> BTreeSet<String> {
     let mut kinds: BTreeSet<_> = [
         "core:transform",
@@ -97,6 +101,29 @@ fn instance(world: &World, id: EntityId, kind: &str) -> Option<String> {
         .get(kind)?
         .get(&id.index)
         .map(ToString::to_string)
+}
+
+pub fn entity_snapshot(world: &World, id: EntityId) -> Option<EntitySnapshot> {
+    if !world.is_alive(&id) {
+        return None;
+    }
+    Some(EntitySnapshot {
+        id: id.to_string(),
+        metadata: metadata(world, id),
+        components: kinds(world)
+            .into_iter()
+            .chain(["core:world_transform".to_string()])
+            .filter_map(|kind| world.get_component(&id, &kind).map(|data| (kind, data)))
+            .collect(),
+        instances: world
+            .component_instances
+            .iter()
+            .filter_map(|(kind, ids)| {
+                ids.get(&id.index)
+                    .map(|value| (kind.clone(), value.to_string()))
+            })
+            .collect(),
+    })
 }
 
 impl ScenePublisher {

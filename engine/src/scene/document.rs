@@ -212,6 +212,13 @@ impl SceneDocument {
             }
             Ok(())
         })();
+        let result = result.and_then(|()| {
+            // All components now exist, including forward/cyclic references.
+            for id in &ids {
+                world.validate_component_references(*id)?;
+            }
+            Ok(())
+        });
         if let Err(error) = result {
             for id in &ids {
                 world.destroy_entity(*id);
@@ -233,6 +240,46 @@ impl SceneDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn component_links_validate_forward_targets_and_roll_back_missing_components() {
+        let mut world = World::new();
+        crate::ecs::register_test_component(&mut world, "test:Session", &[]);
+        crate::ecs::register_test_component(
+            &mut world,
+            "test:Pickup",
+            &[(
+                "session",
+                crate::schema::Schema::Component {
+                    component_type: "test:Session".into(),
+                },
+                serde_json::json!({"$entity":"session","$component":"test:Session"}),
+            )],
+        );
+        let source = serde_json::json!({"version":1,"entities":[
+            {"script_id":"pickup","components":{"test:Pickup":{"session":{"$entity":"session","$component":"test:Session"}}}},
+            {"script_id":"session","components":{"test:Session":{}}}
+        ]});
+        let scene =
+            SceneDocument::parse(&serde_json::to_vec(&source).expect("JSON")).expect("scene");
+        let first = scene.instantiate(&mut world).expect("forward reference");
+        let second = scene
+            .instantiate(&mut world)
+            .expect("independent reference");
+        for instance in [first, second] {
+            let pickup = EntityId::parse(&instance.script_ids["pickup"]).expect("pickup");
+            assert_eq!(
+                world
+                    .get_component(&pickup, "test:Pickup")
+                    .expect("component")["session"]["$entity"],
+                instance.script_ids["session"]
+            );
+        }
+        let mut invalid = scene;
+        invalid.entities[1].components.clear();
+        let count = world.allocator.alive_entity_ids().count();
+        assert!(invalid.instantiate(&mut world).is_err());
+        assert_eq!(world.allocator.alive_entity_ids().count(), count);
+    }
     use serde_json::json;
 
     #[test]

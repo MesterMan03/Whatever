@@ -37,8 +37,8 @@ def text(name,id,p,value,size=48,color=(1,.91,.55,1),scale=(1,1,1)):
     e['components']['core:transform']['rotation']=[math.sqrt(.5),0,0,math.sqrt(.5)]
     return e
 def write(path,data):
-    path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(data,indent=2)+'\n')
-scene=[entity('Run Session — score and lifecycle','rules',components={'core:RunSession':{},'core:RunState':{},'core:GameWindow':{},'core:RestartInput':{'session':{'$entity':'rules'}},'core:SoundEffects':{'session':{'$entity':'rules'}},'core:PlaytestTools':{'session':{'$entity':'rules'},'player':{'$entity':'player'},'spawner':{'$entity':'spawner'},'weapon':{'$entity':'camera'}}}),
+    path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(data,indent=2,ensure_ascii=False)+'\n')
+scene=[entity('Run Session — score and lifecycle','rules',components={'core:RunSession':{},'core:RunState':{},'core:GameWindow':{},'core:RestartInput':{'session':{'$component':'core:RunSession','$entity':'rules'}},'core:SoundEffects':{'session':{'$component':'core:RunSession','$entity':'rules'}},'core:PlaytestTools':{'session':{'$component':'core:RunSession','$entity':'rules'},'player':{'$entity':'player'},'spawner':{'$entity':'spawner'},'weapon':{'$entity':'camera'}}}),
  entity('Physics World','world',components={'core:physics_world':dict(substeps=2,rapier=dict(integration=dict(max_ccd_substeps=4,num_solver_iterations=8)))}),
  entity('Daylight',components={'core:ambient_light':dict(color=[.72,.84,1],intensity=.55),'core:directional_light':dict(direction=[.4,1,.6],color=[1,.92,.8],intensity=1.3)}),
  solid(mesh('Meadow foundation',(0,-.6,0),(52,1,52),'grass_tile'),'ground',(52,1,52)),
@@ -73,7 +73,7 @@ reticle=text('Aim reticle','reticle',(0,0,-.5),'+',24,scale=(.06,.06,.06))
 # Tiny view model is assembled from the starter meshes, with no collider.
 weapon=entity('Pulse launcher',p=(.22,-.18,-.45),children=[mesh('Metal housing',(0,0,0),(.16,.14,.34),'metal_tile'),mesh('Energy core',(0,.03,-.2),(.065,.065,.12),'cyan','cylinder','mesh_unlit')])
 scene.append(entity('Player — FPS movement / weapon settings','player',(0,1.05,9),{'core:FPSPlayer':{},'core:rigid_body':dict(type='dynamic',world={'$entity':'world'},lockedAxes=['rotationX','rotationY','rotationZ'],canSleep=False,ccd=True),'core:collider':dict(body={'$entity':'player'},shape=dict(type='capsule',radius=.4,height=1.8),mass=75,friction=0,events=['collision'])},children=[entity('Mouse yaw pivot','look',(0,.65,0),children=[entity('FPS Camera','camera',components={'core:camera':dict(fovy_degrees=75,znear=.03,zfar=180)},children=[reticle,weapon])])]))
-death=entity('Game over camera — clear view of the score board','death_camera',(0,6,12),{'core:camera':{'fovy_degrees':55,'znear':.1,'zfar':180},'core:GameOverView':{'session':{'$entity':'rules'},'playCamera':{'$entity':'camera'}}})
+death=entity('Game over camera — clear view of the score board','death_camera',(0,6,12),{'core:camera':{'fovy_degrees':55,'znear':.1,'zfar':180},'core:GameOverView':{'session':{'$component':'core:RunSession','$entity':'rules'},'playCamera':{'$entity':'camera'}}})
 pitch=-math.atan2(2.5,12)
 death['components']['core:transform']['rotation']=[math.sin(pitch/2),0,0,math.cos(pitch/2)]
 scene.append(death)
@@ -86,22 +86,22 @@ for j,z in enumerate(coords):
         links=[f'n{a}_{b}' for a,b in [(i-1,j),(i+1,j),(i,j-1),(i,j+1)] if 0<=a<5 and 0<=b<5]
         nav.append(entity('Nav '+key,key,(x,1,z),{'core:NavNode':dict(key=key,links=links,spawnAllowed=(abs(x)>=20 or abs(z)>=20))}))
 scene.append(entity('Navigation graph — 25 connected lane nodes','navigation',children=nav))
-scene.append(entity('Enemy Spawner — cadence and population','spawner',components={'core:EnemySpawner':{'session':{'$entity':'rules'},'world':{'$entity':'world'},'target':{'$entity':'player'},'graph':{'$entity':'navigation'}}}))
+scene.append(entity('Enemy Spawner — cadence and population','spawner',components={'core:EnemySpawner':{'session':{'$component':'core:RunSession','$entity':'rules'},'world':{'$entity':'world'},'target':{'$entity':'player'},'graph':{'$entity':'navigation'}}}))
 coin_positions=[(0,6),(0,3),(-3,8),(3,8),(-8,0),(8,0),(0,-8),(-8,-8),(8,-8),(-8,8),(8,8),(-20,0),(20,0),(0,-20),(0,20),(-20,-20),(20,-20),(-20,20),(20,20),(8,20),(-8,-20),(20,8),(-20,-8)]
 for i,(x,z) in enumerate(coin_positions):
     e=prefab('scripted/spinning_coin',(x,1,z),scale=.55)
     e['script_id']=f'coin_{i}';e['name']=f'Gold Coin {i+1:02d}'
-    e['components']['core:CoinPickup']={'session':{'$entity':'rules'},'collector':{'$entity':'player'}}
+    e['components']['core:CoinPickup']={'session':{'$component':'core:RunSession','$entity':'rules'},'collector':{'$entity':'player'}}
     scene.append(e)
 def compose(e):
     c=e['components']; name=e.get('script_id')
     if name=='player':
         c.pop('core:FPSPlayer',None)
-        c['core:FPSMovement']={'session':{'$entity':'rules'},'look':{'$entity':'look'}}
-        c['core:PlayerLife']={'session':{'$entity':'rules'}}
-    if name=='look': c['core:MouseLook']={'session':{'$entity':'rules'},'camera':{'$entity':'camera'}}
-    if name=='camera': c['core:ProjectileWeapon']={'session':{'$entity':'rules'},'world':{'$entity':'world'},'owner':{'$entity':'player'}}
-    if name=='score': c['core:Scoreboard']={'session':{'$entity':'rules'}}
+        c['core:FPSMovement']={'session':{'$component':'core:RunSession','$entity':'rules'},'look':{'$entity':'look'}}
+        c['core:PlayerLife']={'session':{'$component':'core:RunSession','$entity':'rules'}}
+    if name=='look': c['core:MouseLook']={'session':{'$component':'core:RunSession','$entity':'rules'},'camera':{'$entity':'camera'}}
+    if name=='camera': c['core:ProjectileWeapon']={'session':{'$component':'core:RunSession','$entity':'rules'},'world':{'$entity':'world'},'owner':{'$entity':'player'}}
+    if name=='score': c['core:Scoreboard']={'session':{'$component':'core:RunSession','$entity':'rules'}}
     for child in e.get('children',[]): compose(child)
 for e in scene: compose(e)
 write(CORE/'scenes/main.wscene',dict(version=1,entities=scene))

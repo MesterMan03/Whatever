@@ -1,4 +1,5 @@
 import type { EntityReference } from "./references.ts";
+import { _componentId, type Component, type ComponentClass } from "./component.ts";
 /** Serializable schema grammar shared with the native registration/codec service. */
 export type Schema =
   | { kind: "i32" | "f64" | "varint"; min?: number; max?: number }
@@ -11,6 +12,7 @@ export type Schema =
   | { kind: "tuple"; elements: readonly Schema[] }
   | { kind: "enum"; values: readonly string[] }
   | { kind: "entity" }
+  | { kind: "component"; component_type: string }
   | { kind: "asset" };
 export type Field = { readonly name: string; readonly schema: Schema };
 export type Bounds = { min?: number; max?: number };
@@ -127,6 +129,7 @@ export interface TypeNamespace {
   readonly String: StringType;
   readonly Entity: DataType<EntityReference>;
   readonly Asset: DataType<string>;
+  Component<T extends Component>(kind: ComponentClass<T>): DataType<T>;
   Nullable<T>(inner: DataType<T>): DataType<T | null>;
   Enum<const V extends readonly [string, ...string[]]>(values: V): DataType<V[number]>;
   Tuple<const T extends readonly DataType<unknown>[]>(
@@ -138,6 +141,11 @@ export interface TypeNamespace {
 export const Type: TypeNamespace = Object.freeze({
   Entity: Object.freeze(new DataType<EntityReference>({ kind: "entity" })),
   Asset: Object.freeze(new DataType<string>({ kind: "asset" })),
+  Component<T extends Component>(kind: ComponentClass<T>): DataType<T> {
+    return Object.freeze(
+      new DataType<T>({ kind: "component", component_type: _componentId(kind) }),
+    );
+  },
   Nullable<T>(inner: DataType<T>): DataType<T | null> {
     if (!(inner instanceof DataType) || ["nullable", "optional"].includes(inner.schema.kind))
       throw new Error("Nullable needs a required non-nullable descriptor");
@@ -226,6 +234,36 @@ export function toWire(
         return fail("Expected entity reference");
       return { $entity: (reference as any).$entity };
     }
+    case "component": {
+      const reference =
+        value &&
+        typeof value === "object" &&
+        "toJSON" in value &&
+        typeof value.toJSON === "function"
+          ? value.toJSON()
+          : value;
+      if (
+        reference &&
+        typeof reference === "object" &&
+        Object.keys(reference).length === 2 &&
+        (reference as any).$component === schema.component_type &&
+        typeof (reference as any).$entity === "string" &&
+        (reference as any).$entity.length > 0 &&
+        (reference as any).$entity.length <= 256
+      )
+        return { $entity: (reference as any).$entity, $component: schema.component_type };
+      if (
+        value &&
+        typeof value === "object" &&
+        "entity" in value &&
+        "id" in value &&
+        value.id === schema.component_type
+      ) {
+        const entity = (value as Component).entity;
+        return { $entity: entity.id, $component: schema.component_type };
+      }
+      return fail(`Expected reference to component '${schema.component_type}'`);
+    }
     case "asset":
       return typeof value === "string" && (value === "" || /^[a-z0-9_-]+:\/\/[^\\]+$/.test(value))
         ? value
@@ -242,10 +280,7 @@ export function toWire(
         (!Number.isInteger(value) || value < -2147483648 || value > 2147483647)
       )
         return fail("Expected i32 integer");
-      if (
-        (schema.min !== undefined && value < schema.min) ||
-        (schema.max !== undefined && value > schema.max)
-      )
+      if ((schema.min != null && value < schema.min) || (schema.max != null && value > schema.max))
         return fail("Number outside declared bounds");
       return value;
     }

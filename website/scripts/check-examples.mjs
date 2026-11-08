@@ -1,7 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "../../runtime/node_modules/typescript/lib/typescript.js";
+import { createRequire } from "node:module";
+
+const ts = createRequire(new URL("../../runtime/package.json", import.meta.url))("typescript");
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const output = path.join(root, "website/.astro/examples");

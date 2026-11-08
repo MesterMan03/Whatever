@@ -1,5 +1,8 @@
 use anyhow::{Context, bail};
 use std::time::{Duration, Instant};
+
+const MAX_CATCH_UP_TICKS: u32 = 4;
+
 pub struct TickClock {
     pub interval: Duration,
     pub next: Instant,
@@ -33,9 +36,12 @@ impl TickClock {
             return;
         } // A rate change during this tick already set its next deadline.
         self.next += self.interval;
-        // Drop missed deadlines after an overrun rather than starving IPC with catch-up ticks.
-        if self.next <= now {
-            self.next = now + self.interval;
+        // Let short overruns catch up. After a long stall, drop the backlog
+        // but run the next step immediately instead of adding an idle interval.
+        if now.saturating_duration_since(self.next)
+            >= self.interval.saturating_mul(MAX_CATCH_UP_TICKS)
+        {
+            self.next = now;
         }
     }
 }
@@ -50,7 +56,16 @@ mod tests {
         assert_eq!(clock.next, first + Duration::from_millis(10));
         let late = first + Duration::from_secs(1);
         clock.complete(late);
-        assert_eq!(clock.next, late + Duration::from_millis(10));
+        assert_eq!(clock.next, late);
+    }
+    #[test]
+    fn a_short_overrun_keeps_the_fixed_deadline() {
+        let mut clock = TickClock::new(100.0).expect("clock");
+        let first = clock.next;
+        clock.complete(first + Duration::from_millis(12));
+        assert_eq!(clock.next, first + Duration::from_millis(10));
+        clock.complete(first + Duration::from_millis(14));
+        assert_eq!(clock.next, first + Duration::from_millis(20));
     }
     #[test]
     fn invalid_rates_cannot_panic_the_runtime() {

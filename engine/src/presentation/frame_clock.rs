@@ -66,12 +66,12 @@ impl FrameClock {
     }
 }
 
-/// A time-weighted rate of actual frames, rather than averaging reciprocals of noisy durations.
+/// Wall-clock throughput over a rolling window of completed work.
 #[derive(Default)]
-pub(crate) struct FrameRate {
+pub(crate) struct RateMeter {
     samples: VecDeque<Instant>,
 }
-impl FrameRate {
+impl RateMeter {
     pub fn record(&mut self, now: Instant) -> f32 {
         self.samples.push_back(now);
         while self.samples.len() > 2
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn fps_counts_elapsed_time_without_reciprocal_bias() {
         let start = Instant::now();
-        let mut meter = FrameRate::default();
+        let mut meter = RateMeter::default();
         meter.record(start);
         for n in 1..=20 {
             meter.record(start + Duration::from_millis(n * 20 - 5));

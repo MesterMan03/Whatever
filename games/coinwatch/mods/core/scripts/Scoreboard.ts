@@ -1,8 +1,9 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Type, field } from "@whatever-engine/api";
 import { run } from "./session.ts";
 export class Scoreboard extends Component {
   static readonly type = "core:Scoreboard";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   private lastText = "";
   override tick(): void {
     const state = run(this.session);

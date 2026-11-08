@@ -162,7 +162,6 @@ fn load_types(
             completed: 0,
             total: scripted.len(),
         });
-        let host = engine::script::find_host()?;
         for (index, (root, manifest)) in scripted.iter().enumerate() {
             let owner = &manifest.meta.id;
             progress(Progress {
@@ -174,7 +173,7 @@ fn load_types(
                 completed: index,
                 total: scripted.len(),
             });
-            for definition in engine::script::inspect_components(&host, root, owner)? {
+            for definition in engine::script::inspect_components(root, owner)? {
                 world.register_component(owner, definition)?;
             }
         }

@@ -2,6 +2,7 @@ mod branding;
 mod build;
 mod deployment;
 mod files;
+mod installation;
 pub use files::resource_uri;
 mod kit;
 mod library;

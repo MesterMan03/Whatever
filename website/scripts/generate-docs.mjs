@@ -32,13 +32,10 @@ function sections(markdown) {
 }
 
 const scripting = sections(await read("docs/SCRIPTING.md"));
-const hostProtocol = (await read("engine/src/script/runtime.rs")).match(/pub const HOST_PROTOCOL: u32 = (\d+);/)?.[1];
-const documentedProtocol = (await read("docs/IPC.md")).match(/current host protocol is \*\*(\d+)\*\*/)?.[1];
-if (!hostProtocol || hostProtocol !== documentedProtocol) throw new Error("docs/IPC.md must document the current native HOST_PROTOCOL before building.");
 const groups = [
   ["overview", "Scripting overview", ["Introduction"]],
   ["engine", "Engine, input, and window", ["`Engine`", "`Input`", "`Window`"]],
-  ["timing", "Ticks, snapshots, and pending results", ["`Time`", "Tick order and command batches", "Scene revisions and synchronous reads", "`Pending<T>` and explicit ordered requests", "`Profiler`"]],
+  ["timing", "Ticks, snapshots, and pending results", ["`Time`", "Tick order and direct calls", "Live scene access and retained snapshots", "`Pending<T>` compatibility requests", "`Profiler`"]],
   ["components", "Schemas and custom components", ["`Type`, `Struct`, and custom `Component` classes"]],
   ["entities", "Entities and references", ["`Entity`", "Entity lifecycle and startup scenes"]],
   ["scenes", "Scenes and built-in components", ["`Scene`"]],
@@ -78,11 +75,11 @@ async function page(route, title, body, source, order) {
   // Sources stay in their original contributor-facing locations; output is ignored.
   const frontmatter = ["---", `title: ${JSON.stringify(title)}`, `editUrl: ${edit}${source}`];
   if (order !== undefined) frontmatter.push(`sidebar: { order: ${order} }`);
-  frontmatter.push("---", "", `<!-- Generated from ${source}. Edit the source, then run bun run docs:generate. -->`, "");
+  frontmatter.push("---", "", `<!-- Generated from ${source}. Edit the source, then run npm run docs:generate. -->`, "");
   await writeFile(filename, `${frontmatter.join("\n")}${links(body, source).replace(/^# [^\n]+\n/, "")}\n`);
 }
 
-const used = new Set(["IPC protocol reference"]);
+const used = new Set(["Internal scripting ABI reference"]);
 for (const [index, [route, title, headings]] of groups.entries()) {
   const body = headings.map((h) => {
     if (!scripting.has(h)) throw new Error(`Scripting reference changed: missing '${h}'. Update website/scripts/generate-docs.mjs.`);
@@ -162,10 +159,9 @@ function fields(body, direction) {
 }
 
 const ipc = await read("engine/src/script/ipc.rs");
-let catalogue = "These tables are generated from the native Rust definitions at build time. Property names and message tags are literal wire names. All application commands belong inside a `CommandBatch`; see the [wire protocol](/protocol/specification/) for sequencing, validation, dynamic subsystem payloads, and errors.\n\nInteger widths are significant: `u32` is 0–4294967295; `u64` is 0–18446744073709551615; signed integers use their corresponding signed range. JavaScript implementations need an exact-integer strategy for large counters. `f32` and `f64` are finite JSON numbers. A `JSON value` delegates validation to the named subsystem, rather than permitting arbitrary operations.\n";
+let catalogue = "These tables are generated from the native Rust definitions at build time. Property names and message tags are literal wire names. Commands execute through the in-process Wasm ABI; see the [internal ABI](/protocol/specification/) for sequencing, validation, dynamic subsystem payloads, and errors.\n\nInteger widths are significant: `u32` is 0–4294967295; `u64` is 0–18446744073709551615; signed integers use their corresponding signed range. JavaScript implementations need an exact-integer strategy for large counters. `f32` and `f64` are finite JSON numbers. A `JSON value` delegates validation to the named subsystem, rather than permitting arbitrary operations.\n";
 for (const [name, title, direction] of [
-  ["ScriptPacket", "Host → engine envelopes", "input"],
-  ["EngineMessage", "Engine → host messages", "output"],
+  ["EngineMessage", "Engine → VM deliveries", "output"],
   ["ScriptMessage", "Application commands", "input"],
 ]) {
   const body = definition(ipc, "enum", name);
@@ -190,4 +186,4 @@ for (const [source, names, direction] of [
 }
 catalogue += "\n### `TagQuery`\n\n```json\n{\"all\":[],\"any\":[],\"none\":[],\"includeDisabled\":false}\n```\n\nAll four fields default to empty arrays / false when omitted; unknown fields are rejected. Tag strings are 1–128 UTF-8 bytes with no control characters. An entity has at most 32 unique tags.\n";
 await page("protocol/messages", "Native message catalogue", catalogue, "engine/src/script/ipc.rs");
-console.log(`Generated ${groups.length + docRoutes.size} documentation pages from canonical sources (host protocol ${hostProtocol}).`);
+console.log(`Generated ${groups.length + docRoutes.size} documentation pages from canonical sources.`);

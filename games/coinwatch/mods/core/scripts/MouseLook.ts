@@ -1,3 +1,4 @@
+import type { RunSession } from "./RunSession.ts";
 import {
   BuiltInComponents as C,
   Component,
@@ -10,7 +11,7 @@ import { clamp } from "./navigation.ts";
 import { listen, playing, resolve } from "./session.ts";
 export class MouseLook extends Component {
   static readonly type = "core:MouseLook";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   camera = field(Type.Nullable(Type.Entity), null);
   sensitivity = field(Type.F64.with({ min: 0.0001, max: 0.02 }), 0.002);
   pitchLimit = field(Type.F64.with({ min: 0.1, max: 1.56 }), 1.45);

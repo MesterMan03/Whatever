@@ -318,12 +318,7 @@ impl World {
             self.mark_hierarchy(*id);
         }
         let idx = id.index;
-        if self.component_types.contains_key(type_id)
-            && !self
-                .custom
-                .get(type_id)
-                .is_some_and(|entities| entities.contains_key(&idx))
-        {
+        if self.get_component(id, type_id).is_none() {
             let Some(next) = self.next_component_instance.checked_add(1) else {
                 return false;
             };

@@ -1,5 +1,9 @@
 # Coinwatch
 
+Session fields reference `RunSession` components directly. The Inspector filters compatible
+targets, and gameplay callbacks invoke the linked session behavior. Each scripted mod runs in
+an isolated QuickJS Wasm VM hosted directly by the engine.
+
 A small first-person survival game built entirely as an ordinary `core` mod. It exercises the official Whatever Starter `.wasset`: 31 distinct prefab designs decorate the arena, with 23 collectible spinning/bobbing coins, starter meshes for the sentinel and pulse launcher, textures, shaders, font, and audio. The complete imported library stays editable under `mods/core/libraries/whatever_starter`.
 
 Open `whatever.wproject` in the **Coinwatch editor build**, or run the portable `dist/Coinwatch/Coinwatch.exe` from the repository root. This game needs the mouse-button API added alongside it; older editor/runtime builds cannot fire via left click.
@@ -47,6 +51,6 @@ coinwatch enemy 0 0
 coinwatch shoot 0 1 0
 ```
 
-`status` reports score, live enemies and their navigation modes, projectile count and last collision/range distance. The developer commands use the same gameplay code as normal input. `bun test tools/tests/coinwatch.test.ts` runs navigation/timer/range checks and an actual native headless playthrough covering pickup, enemy pursuit/cooldown, kills, walls, range, contact death, score freeze, restart and random spawning. Its native runtime path can be overridden with `WHATEVER_TEST_PLAYER`.
+`status` reports score, live enemies and their navigation modes, projectile count and last collision/range distance. The developer commands use the same gameplay code as normal input. `npm run test:coinwatch` runs navigation/timer/range checks and an actual native headless playthrough covering pickup, enemy pursuit/cooldown, kills, walls, range, contact death, score freeze, restart and random spawning. Its native runtime path can be overridden with `WHATEVER_TEST_PLAYER`.
 
 Original game scripts are Apache-2.0, like the engine. Imported assets retain the starter library's Apache-2.0 license and the font's OFL; see the imported `LICENSE` and `fonts/OFL.txt`.

@@ -5,17 +5,16 @@ use crate::input::InputState;
 use crate::logging::LogMirror;
 use crate::mods::ModRegistry;
 use crate::renderer::{
-    EguiOutput, Renderer, WgpuContext, apply_render_command, collect_lights, view_proj_from_entity,
+    AcquiredFrame, EguiOutput, FrameAcquirer, Renderer, WgpuContext, apply_render_command,
+    collect_lights, view_proj_from_entity,
 };
 use crate::runtime::{LoadedGame, SimulationHandle};
 use crate::script::ipc::ScriptMessage;
 use crate::vfs::VfsHandle;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Instant};
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow},
     keyboard::{KeyCode, PhysicalKey},
@@ -33,10 +32,11 @@ pub struct Engine {
     input: InputState,
     #[cfg(windows)]
     embedded_cursor: Arc<crate::cursor::EmbeddedCursor>,
-    frame_number: u64,
     last_frame: Instant,
-    fps_meter: crate::presentation::FrameRate,
+    fps_meter: crate::presentation::RateMeter,
     frame_clock: crate::presentation::FrameClock,
+    frame_acquirer: Option<FrameAcquirer>,
+    pending_resize: Option<PhysicalSize<u32>>,
     motion: crate::presentation::MotionHistory,
     rendered_poses: std::collections::HashMap<u32, (EntityId, crate::ecs::Transform)>,
     fps_cap: Option<f64>,
@@ -45,7 +45,7 @@ pub struct Engine {
     window: Option<Arc<Window>>,
     world: World,
     main_camera: Option<EntityId>,
-    tick_interval: Duration,
+    ticks_per_second: f32,
     console: DevConsole,
     debug_overlay: bool,
     egui_ctx: egui::Context,
@@ -59,7 +59,6 @@ impl Engine {
         let game_name = game.meta.game.name.clone();
         let vfs = Arc::clone(&game.vfs);
         let registry = Arc::clone(&game.registry);
-        let tick_interval = Duration::from_secs_f64(1.0 / game.meta.game.tick_rate);
         let simulation = SimulationHandle::spawn(game)?;
         let editor_link =
             crate::runtime::EditorClient::connect(simulation.commands.clone(), &simulation.shared)?;
@@ -75,10 +74,11 @@ impl Engine {
             input: InputState::new(),
             #[cfg(windows)]
             embedded_cursor: Arc::default(),
-            frame_number: 0,
             last_frame: Instant::now(),
             fps_meter: Default::default(),
             frame_clock: Default::default(),
+            frame_acquirer: None,
+            pending_resize: None,
             motion: Default::default(),
             rendered_poses: Default::default(),
             fps_cap: None,
@@ -87,7 +87,7 @@ impl Engine {
             window: None,
             world: World::new(),
             main_camera: None,
-            tick_interval,
+            ticks_per_second: 0.0,
             console: DevConsole::new(),
             debug_overlay: false,
             egui_ctx: egui::Context::default(),
@@ -95,8 +95,34 @@ impl Engine {
             should_quit: false,
         })
     }
-    fn frame(&mut self) {
+    fn next_frame(&mut self) -> anyhow::Result<Option<AcquiredFrame>> {
+        let (Some(renderer), Some(acquirer)) = (&mut self.renderer, &mut self.frame_acquirer)
+        else {
+            return Ok(None);
+        };
+        if acquirer.pending {
+            let Some(result) = acquirer.take_ready()? else {
+                return Ok(None);
+            };
+            if let Some(size) = self.pending_resize.take() {
+                // wgpu requires all acquired textures to be released before reconfiguration.
+                drop(result);
+                renderer.resize(size.width, size.height);
+                return Ok(None);
+            }
+            return renderer.ctx.resolve_frame(result);
+        }
+        if self.vsync {
+            Ok(None)
+        } else {
+            renderer.ctx.acquire_frame()
+        }
+    }
+
+    fn frame(&mut self, frame: AcquiredFrame) {
         let frame_start = Instant::now();
+        self.last_frame = frame_start;
+        let frame_vsync = self.vsync;
         #[cfg(windows)]
         if self.input.mouse_captured
             && std::env::var_os("WHATEVER_EDITOR_EMBEDDED").is_some()
@@ -137,15 +163,10 @@ impl Engine {
             tracing::warn!("play viewport confinement: {error:#}");
             self.set_cursor_captured(false);
         }
-        let now = Instant::now();
-        self.last_frame = now;
-        self.console.fps = self.fps_meter.record(now);
         self.console.fps_cap = self.fps_cap;
         self.console.vsync = self.vsync;
 
         self.receive_simulation();
-
-        self.frame_number += 1;
 
         // Compute camera view-projection and position for this frame.
         let no_camera = self.compute_camera_info().0.is_none();
@@ -165,7 +186,7 @@ impl Engine {
             let debug = self.debug.shared_switches();
             let show_overlay = self.debug_overlay;
             let overlay_fps = self.console.fps;
-            let overlay_tick_rate = 1.0 / self.tick_interval.as_secs_f64();
+            let overlay_tps = self.ticks_per_second;
             let overlay_entities = self.world.allocator.alive_entity_ids().count();
             let overlay_fps_cap = self.fps_cap;
             let overlay_vsync = self.vsync;
@@ -182,7 +203,7 @@ impl Engine {
                     render_debug_overlay(
                         ctx,
                         overlay_fps,
-                        overlay_tick_rate,
+                        overlay_tps,
                         overlay_entities,
                         overlay_fps_cap,
                         overlay_vsync,
@@ -202,10 +223,7 @@ impl Engine {
                     self.simulation.load_scene(path, request_id);
                 }
                 ConsoleAction::SetFpsCap(cap) => self.set_fps_cap(cap),
-                ConsoleAction::SetVsync(enabled) => {
-                    self.vsync = enabled;
-                    self.apply_vsync();
-                }
+                ConsoleAction::SetVsync(enabled) => self.vsync = enabled,
                 ConsoleAction::None => {}
             }
 
@@ -259,22 +277,29 @@ impl Engine {
                 &mut self.rendered_poses,
             );
             renderer.update_lighting(&collect_lights(&self.world));
-            if let Err(e) =
-                renderer.render(camera_vp, camera_pos, egui_out.as_ref(), self.vfs.as_ref())
-            {
+            if let Err(e) = renderer.render_acquired(
+                frame,
+                camera_vp,
+                camera_pos,
+                egui_out.as_ref(),
+                self.vfs.as_ref(),
+                None,
+            ) {
                 tracing::error!("render error: {e}");
+            } else {
+                self.console.fps = self.fps_meter.record(Instant::now());
+                if let Ok(mut slot) = self.simulation.shared.frame_timings.lock() {
+                    let mut sample = renderer.timings.clone();
+                    sample.cpu_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+                    sample.vsync = frame_vsync;
+                    sample.fps_cap = self.fps_cap;
+                    *slot = Some(sample);
+                }
             }
+            // Script and console commands take effect once this texture has been presented.
+            renderer.ctx.set_vsync(self.vsync);
         }
         self.world.transforms = authoritative;
-        if let Some(renderer) = &self.renderer
-            && let Ok(mut slot) = self.simulation.shared.frame_timings.lock()
-        {
-            let mut sample = renderer.timings.clone();
-            sample.cpu_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
-            sample.vsync = self.vsync;
-            sample.fps_cap = self.fps_cap;
-            *slot = Some(sample);
-        }
     }
 
     /// Derive a view-projection matrix and world-space camera position from the
@@ -355,7 +380,7 @@ impl Engine {
         self.world = update.world;
         self.motion = update.motion;
         self.main_camera = update.main_camera;
-        self.tick_interval = Duration::from_secs_f64(1.0 / update.tick_rate);
+        self.ticks_per_second = update.ticks_per_second;
         for (mod_id, msg) in update.events {
             // Intercept console-specific messages before the general dispatcher
             if let ScriptMessage::RegisterCommand {
@@ -450,10 +475,7 @@ impl Engine {
                     }
                 }
                 ScriptMessage::SetFpsCap { fps } => self.set_fps_cap(fps),
-                ScriptMessage::SetVsync { enabled } => {
-                    self.vsync = enabled;
-                    self.apply_vsync();
-                }
+                ScriptMessage::SetVsync { enabled } => self.vsync = enabled,
                 _ => {}
             }
         }
@@ -514,16 +536,6 @@ impl Engine {
             Err(error) => tracing::warn!("FPS cap: {error}"),
         }
     }
-    fn apply_vsync(&mut self) {
-        let mode = if self.vsync {
-            wgpu::PresentMode::AutoVsync
-        } else {
-            wgpu::PresentMode::AutoNoVsync
-        };
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.ctx.set_present_mode(mode);
-        }
-    }
 }
 
 fn render_no_camera_warning(ctx: &egui::Context) {
@@ -559,7 +571,7 @@ fn render_no_camera_warning(ctx: &egui::Context) {
 fn render_debug_overlay(
     ctx: &egui::Context,
     fps: f32,
-    tick_rate: f64,
+    tps: f32,
     entity_count: usize,
     fps_cap: Option<f64>,
     vsync: bool,
@@ -578,9 +590,12 @@ fn render_debug_overlay(
                 let font = egui::FontId::monospace(13.0);
                 ui.visuals_mut().override_text_color = Some(egui::Color32::WHITE);
                 ui.label(egui::RichText::new(format!("FPS        {fps:.1}")).font(font.clone()));
-                ui.label(
-                    egui::RichText::new(format!("Tick rate  {tick_rate:.0}/s")).font(font.clone()),
-                );
+                let tps = if tps > 0.0 {
+                    format!("{tps:.1}")
+                } else {
+                    "—".into()
+                };
+                ui.label(egui::RichText::new(format!("TPS        {tps}")).font(font.clone()));
                 ui.label(
                     egui::RichText::new(format!("Entities   {entity_count}")).font(font.clone()),
                 );
@@ -713,8 +728,17 @@ impl ApplicationHandler for Engine {
                 return;
             }
         };
+        let acquirer = match FrameAcquirer::spawn(&renderer.ctx) {
+            Ok(acquirer) => acquirer,
+            Err(error) => {
+                tracing::error!("start frame acquisition: {error:#}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         self.renderer = Some(renderer);
+        self.frame_acquirer = Some(acquirer);
         self.window = Some(Arc::clone(&window));
         self.set_cursor_captured(false);
         window.set_visible(true);
@@ -769,7 +793,7 @@ impl ApplicationHandler for Engine {
                 return;
             }
             // F1: toggle debug overlay
-            if code == KeyCode::F1 && event.state == ElementState::Pressed {
+            if code == KeyCode::F1 && event.state == ElementState::Pressed && !event.repeat {
                 self.debug_overlay = !self.debug_overlay;
                 return;
             }
@@ -830,7 +854,9 @@ impl ApplicationHandler for Engine {
             WindowEvent::Resized(size) => {
                 self.debug
                     .window(&format!("resized to {}x{}", size.width, size.height));
-                if let Some(r) = self.renderer.as_mut() {
+                if self.frame_acquirer.as_ref().is_some_and(|a| a.pending) {
+                    self.pending_resize = Some(size);
+                } else if let Some(r) = self.renderer.as_mut() {
                     r.resize(size.width, size.height);
                 }
             }
@@ -842,7 +868,17 @@ impl ApplicationHandler for Engine {
                     }
                     return;
                 }
-                self.frame();
+                match self.next_frame() {
+                    Ok(Some(frame)) => {
+                        self.frame(frame);
+                        self.frame_clock.complete(self.last_frame);
+                    }
+                    Ok(None) => return,
+                    Err(error) => {
+                        tracing::error!("surface frame: {error:#}");
+                        self.should_quit = true;
+                    }
+                }
                 if self.should_quit {
                     self.debug.window("quit command issued");
                     if let Err(error) = self.simulation.shutdown() {
@@ -852,7 +888,6 @@ impl ApplicationHandler for Engine {
                     self.sync_input();
                     return;
                 }
-                self.frame_clock.complete(self.last_frame);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if state == ElementState::Pressed
@@ -909,9 +944,20 @@ impl ApplicationHandler for Engine {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self.frame_clock.ready(Instant::now()) {
+        let Some(acquirer) = self.frame_acquirer.as_mut() else {
+            return;
+        };
+        if acquirer.pending {
+            // The acquire worker requests a redraw once its result is ready.
             event_loop.set_control_flow(ControlFlow::Wait);
-            if let Some(window) = &self.window {
+        } else if self.frame_clock.ready(Instant::now()) {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            if self.vsync {
+                if let Err(error) = acquirer.request() {
+                    tracing::error!("surface frame: {error:#}");
+                    event_loop.exit();
+                }
+            } else if let Some(window) = &self.window {
                 window.request_redraw();
             }
         } else if let Some(deadline) = self.frame_clock.deadline() {

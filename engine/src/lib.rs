@@ -1,3 +1,6 @@
+// Keep graphics dependencies in their own shared library to fit Windows' export limit.
+use whatever_render_deps as _;
+
 pub mod audio;
 pub mod console;
 pub mod cursor;

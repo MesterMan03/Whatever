@@ -1,9 +1,10 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Engine, Type, field } from "@whatever-engine/api";
 import { resolve, run } from "./session.ts";
 /** A clear world-space score view above enemy height, independent of the player body. */
 export class GameOverView extends Component {
   static readonly type = "core:GameOverView";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   playCamera = field(Type.Nullable(Type.Entity), null);
   private showing = false;
   override tick(): void {

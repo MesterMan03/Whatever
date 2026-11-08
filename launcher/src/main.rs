@@ -7,7 +7,7 @@ fn launch() -> std::io::Result<std::process::ExitStatus> {
         .parent()
         .ok_or_else(|| std::io::Error::other("launcher has no directory"))?;
     let engine = directory
-        .join("engine")
+        .join("bin")
         .join(format!("Whatever{}", std::env::consts::EXE_SUFFIX));
     let mut command = std::process::Command::new(engine);
     command

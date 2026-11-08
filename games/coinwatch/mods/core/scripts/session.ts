@@ -1,3 +1,4 @@
+import type { RunSession } from "./RunSession.ts";
 import { RunState as RunStateComponent } from "./RunState.ts";
 import { Entity, Scene, Time, type Physics, type ComponentData } from "@whatever-engine/api";
 export type Ref = { readonly id: string; toJSON(): { $entity: string } };
@@ -16,20 +17,24 @@ export type GameEvent =
   | { type: "damage"; target: string; amount: number }
   | { type: "projectileEnd"; distance: number; reason: "range" | "collider" };
 const listeners = new Set<(session: string, event: GameEvent) => void>();
-export const run = (session: Ref | null): Readonly<RunState> | undefined =>
-  resolve(session)?.getComponent(RunStateComponent) ?? undefined;
-export const playing = (session: Ref | null): boolean => {
+export const run = (session: RunSession | null): Readonly<RunState> | undefined =>
+  session?.entity.getComponent(RunStateComponent) ?? undefined;
+export const playing = (session: RunSession | null): boolean => {
   const state = run(session);
   return !!state && !state.over && Time.tickNumber > state.readyAfter;
 };
-export function emit(session: Ref | null, event: GameEvent): void {
-  const key = id(session);
+export function emit(session: RunSession | null, event: GameEvent): void {
+  const key = session?.entity.id ?? "";
+  session?.handle(event);
   if (key) for (const listener of [...listeners]) listener(key, event);
 }
 /** Resolve the reference at delivery time: freshly spawned prefab bindings can arrive after start. */
-export function listen(session: () => Ref | null, handler: (event: GameEvent) => void): () => void {
+export function listen(
+  session: () => RunSession | null,
+  handler: (event: GameEvent) => void,
+): () => void {
   const listener = (key: string, event: GameEvent): void => {
-    if (key === id(session())) handler(event);
+    if (key === session()?.entity.id) handler(event);
   };
   listeners.add(listener);
   return () => {

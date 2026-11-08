@@ -7,7 +7,7 @@ Whatever is a small native engine with a simple rule: **every game is a mod coll
 
 ## What the engine provides
 
-The native engine owns the window, GPU rendering, input, virtual file system, entity storage, physics, networking, mod loading, and sandboxed scripting host. Your mods decide what those services mean: movement, combat, levels, inventory, rules, UI, or something else entirely.
+The native engine owns the window, GPU rendering, input, virtual file system, entity storage, physics, networking, mod loading, and embedded script VMs. Your mods define movement, combat, levels, inventory, rules, and UI.
 
 | Piece | What you work with |
 | --- | --- |
@@ -16,7 +16,7 @@ The native engine owns the window, GPU rendering, input, virtual file system, en
 | Scene | A versioned `.wscene` JSON document containing entities and their components |
 | Entity | An identity with a hierarchy, tags, enabled state, and components |
 | Component | Native data such as a Transform, or an exported custom class with fields and lifecycle hooks |
-| Script host | One bundled, sandboxed host process per scripted mod on each active runtime side |
+| Script VM | One isolated, embedded QuickJS Wasm instance per scripted mod on each active runtime side |
 
 ## Choose your path
 
@@ -29,6 +29,6 @@ The native engine owns the window, GPU rendering, input, virtual file system, en
 
 `core` loads first and supplies metadata and stock assets. Other mods load in dependency order. Each game owns its collection; the source checkout uses `games/test` by default.
 
-Scripts import the engine-provided `@whatever-engine/api`. A development dependency can provide editor types, but runtime imports come from the bundled host. Local JS/TS/JSON source inside your mod is allowed; arbitrary npm packages and Node/Bun built-ins are denied. See the [sandbox policy](/reference/sandbox/).
+Scripts import the engine-provided `@whatever-engine/api`. A development dependency can provide editor types. The embedded VM resolves the SDK and local JS/TS/JSON sources within your mod. See the [sandbox policy](/reference/sandbox/).
 
 The TypeScript API records commands. The engine applies them in batches during simulation ticks. That distinction matters for reads and promises; the [timing reference](/reference/api/timing/) explains exactly when work becomes visible.

@@ -18,6 +18,8 @@ pub use components::{
 };
 pub use components::{COMPONENT_RIGID_BODY_STATE, RigidBodyState};
 pub use entity::EntityId;
+pub(crate) use snapshot::entity_metadata;
+pub use snapshot::entity_snapshot;
 pub use world::World;
 
 #[cfg(test)]

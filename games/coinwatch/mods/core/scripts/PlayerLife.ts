@@ -1,9 +1,10 @@
+import type { RunSession } from "./RunSession.ts";
 import { Component, Physics, Type, field } from "@whatever-engine/api";
 import { emit, listen, playing, position } from "./session.ts";
 /** Respawn/fall handling; contact damage lives on the damaging entity. */
 export class PlayerLife extends Component {
   static readonly type = "core:PlayerLife";
-  session = field(Type.Nullable(Type.Entity), null);
+  session: RunSession | null = null;
   spawn = field(Type.Tuple(Type.F64, Type.F64, Type.F64), [0, 1.05, 9]);
   fallHeight = field(Type.F64, -8);
   private unsubscribe: (() => void) | null = null;

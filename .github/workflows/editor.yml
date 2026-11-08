@@ -1,4 +1,4 @@
-name: Portable editor
+name: Editor distributions
 on:
   pull_request:
     branches: [main]
@@ -34,8 +34,6 @@ jobs:
       CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         id: rust
         with:
@@ -55,35 +53,44 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends pkg-config patchelf libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev
+          sudo apt-get install -y --no-install-recommends pkg-config patchelf libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev libasound2-dev libgl1 libegl1 libvulkan1
+      - name: Install Open Watcom for the DOS launcher stub
+        if: runner.os == 'Windows'
+        uses: open-watcom/setup-watcom@v1
+        with:
+          version: '2.0-64'
+          tag: '2026-11-01-Build'
+          target: dos
+      - uses: ./.github/actions/build-embedded-runtime
       - name: Check Rust formatting and lints
         shell: bash
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets --locked -- -D warnings
-      - uses: ./.github/actions/build-mod-host
       - name: Check mod formatting
         shell: bash
-        run: bun run format:check
+        run: npm run format:check
       - name: Build and test workspace
         shell: bash
         run: |
-          cargo build --workspace --locked
+          node tools/build-native.ts
           cargo test --workspace --locked
-          bun run test:network
-          bun run test:runtime
-          bun run test:components
-          bun run test:snapshots
-          bun run test:server --bail=1
-          bun run test:mods
-          bun run test:project
-          bun run test:markbench
+          npm run test:network
+          npm run test:runtime
+          npm run test:embedded
+          npm run test:coinwatch
+          npm run test:components
+          npm run test:snapshots
+          npm run test:server -- --bail=1
+          npm run test:mods
+          npm run test:project
+          npm run test:markbench
           cargo test -p whatever-engine --locked client_ticks_without_redraws -- --ignored
           cargo test -p whatever-engine --locked network_messenger -- --ignored
           cargo test -p whatever-engine --locked editor_controls_apply_before_physics -- --ignored
       - name: Build release workspace
         shell: bash
-        run: cargo build --workspace --release --locked
+        run: node tools/build-native.ts --release
       - name: Save optimized build outputs before packaging
         if: steps.release-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -92,22 +99,61 @@ jobs:
           key: ${{ steps.release-cache.outputs.cache-primary-key }}
       - name: Assemble, relocate, smoke-test and archive editor
         shell: bash
-        run: bun run package:editor
+        run: npm run package:editor
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install Windows MSI build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool install wix --version 5.0.2 --tool-path target/build-tools/wix
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wix = Join-Path $env:GITHUB_WORKSPACE 'target/build-tools/wix/wix.exe'
+          & $wix extension add -g WixToolset.UI.wixext/5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          (Split-Path $wix) >> $env:GITHUB_PATH
+      - name: Build the platform installer
+        shell: bash
+        run: npm run package:installers -- --source "dist/WhateverEditor-${{ matrix.platform }}-${{ matrix.architecture }}"
+      - name: Verify Windows installation, PATH registration and removal
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $upgrade = Join-Path $env:RUNNER_TEMP 'WhateverEditor-upgrade.msi'
+          node tools/package-installers.ts --source dist/WhateverEditor-windows-x86_64 --output $upgrade
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tools/test-msi.ps1 -Package dist/WhateverEditor-windows-x86_64.msi -UpgradePackage $upgrade
+      - name: Verify Linux installation and command registration
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo dpkg -i dist/WhateverEditor-linux-x86_64.deb
+          test "$(command -v whatever-editor)" = /usr/bin/whatever-editor
+          env -u LD_LIBRARY_PATH wmod --version
+          sudo dpkg -r whatever-editor
+          test ! -e /usr/bin/whatever-editor
+          test ! -e /usr/bin/wmod
+      - name: Verify macOS installation and command registration
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          sudo installer -pkg dist/WhateverEditor-macos-arm64.pkg -target /
+          test "$(cat /etc/paths.d/whatever-engine)" = '/Applications/Whatever Editor.app/Contents/MacOS'
+          env -u DYLD_LIBRARY_PATH /bin/zsh -lc 'command -v whatever-editor && wmod --version'
       - uses: actions/upload-artifact@v4
         with:
           name: WhateverEditor-${{ matrix.platform }}-${{ matrix.architecture }}
           path: |
             dist/*.zip
             dist/*.tar.gz
+            dist/*.msi
+            dist/*.deb
+            dist/*.pkg
           if-no-files-found: error
           compression-level: 0
-      - name: Capture macOS host sandbox denials
-        if: failure() && runner.os == 'macOS'
-        shell: bash
-        run: |
-          mkdir -p target/ci-server-failures
-          sudo /usr/bin/log show --last 15m --style compact --predicate 'eventMessage CONTAINS "whatever-mod-host" AND (process == "kernel" OR process == "sandboxd")' > target/ci-server-failures/seatbelt.log 2>&1 || true
-      - name: Preserve failed player and IPC diagnostics
+      - name: Preserve failed player diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -118,6 +164,4 @@ jobs:
             target/debug/Whatever.exe
             target/debug/Whatever
             target/debug/*.dll
-            runtime/dist/whatever-mod-host*
-            ~/Library/Logs/DiagnosticReports/*mod-host*
           if-no-files-found: ignore

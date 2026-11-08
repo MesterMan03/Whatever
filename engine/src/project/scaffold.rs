@@ -27,13 +27,11 @@ impl ModOptions {
 }
 
 pub fn default_core() -> anyhow::Result<PathBuf> {
-    let executable = std::env::current_exe()?;
-    let installed = executable
-        .parent()
-        .context("executable directory")?
-        .join("mods/core");
-    if installed.join("mod.toml").is_file() {
-        return Ok(installed);
+    if let Some(root) = super::installation::distribution_root()? {
+        let installed = root.join("mods/core");
+        if installed.join("mod.toml").is_file() {
+            return Ok(installed);
+        }
     }
     if cfg!(debug_assertions) {
         return Ok(crate::development_root().join("engine/resources/core"));

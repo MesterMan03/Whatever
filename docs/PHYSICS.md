@@ -1,7 +1,7 @@
 # Components-first physics
 
 Whatever 0.6.0 runs Rapier **3D 0.36.1** natively on the simulation worker. Mods define
-persistent ECS configuration and enqueue operations; JavaScript does no collision
+persistent ECS configuration and call native operations; JavaScript does no collision
 detection or integration. The player, camera controller and playground are mod code.
 
 ```ts
@@ -13,12 +13,13 @@ const ball = Scene.createEntity().move([0, 5, 0])
 
 const impulse = Physics.body(ball).applyImpulse([0, 3, 0]);
 const selectedState = Physics.body(ball).state();
-const [entity, state] = await Promise.all([ball.get(), selectedState.get(), impulse.get()]);
+const entity = ball;
+const state = selectedState;
 ```
 
-This queues creation, configuration, impulse and state selection in one batch. The
-state query captures the pre-step state after the impulse. Results arrive after the
-physics phase; follow-up work belongs to a later tick. `.get()` never flushes commands.
+This executes creation, configuration, impulse and state selection immediately. The
+state query returns pre-step state after the impulse; integration still runs after
+scripts. Legacy `.get()` helpers return resolved promises.
 `Physics.body(entity)` binds operations to a reference; it does not add a body component.
 
 ## ECS components and references
@@ -37,8 +38,7 @@ The six IDs are also `Physics.WORLD_ID`, `BODY_ID`, `COLLIDER_ID`, `JOINT_ID`,
 reads hydrate the corresponding classes; states/statuses are plain snapshots.
 
 Reference fields accept `Entity`, `PendingEntity`, `EntityRef`, or opaque ID strings
-(`Physics.EntityInput`). Pending references resolve within their originating mod's
-batch. Stored references contain real generational IDs; destroying an entity never
+(`Physics.EntityInput`). Created references already contain native IDs before returning. Stored references contain real generational IDs; destroying an entity never
 retargets a stored reference to another entity reusing its slot.
 
 Use entities directly inside custom component data, or `Scene.ref(entityOrId)` /
@@ -99,7 +99,7 @@ set collider shape dimensions explicitly to resize physics geometry.
 - `get(): Promise<void>` waits for mutations recorded on this handle so far and reports
   native validation errors. Repeated calls return the same promise until another mutation
   is recorded on this handle; previously obtained promises keep their original boundary.
-- `state(): Pending<Physics.BodyState>` selects state at this command's position.
+- `state(): Physics.BodyState` selects state at this command's position.
 
 Vectors and points are world-space. Angular velocities use radians/second; quaternion
 arrays use **xyzw**. `wake` defaults to true. Forces accumulate until reset, while an
@@ -226,7 +226,7 @@ comparisons. References stored in components are always resolved to actual gener
 Each substep uses `engineTickDelta * timeScale / substeps`. Mods cannot override `dt`.
 Changing the engine tick rate changes the next tick's interval; every participant in
 the current tick uses the already sampled delta. Physics writes ECS poses before the
-engine publishes the world/render snapshot and buffered results. Rendering FPS has no
+engine publishes native presentation/editor state. Rendering FPS has no
 effect on physics stepping.
 
 Expert options are typed and use native snake_case. Unknown keys, invalid enum/flag
@@ -274,14 +274,14 @@ settings and backend version; arbitrary JS randomness/asynchrony is still game c
 const hit = await Physics.world(arena).castRay([0, 10, 0], [0, -1, 0], {
   maxDistance: 100, excludeBody: object,
   flags: Physics.QueryFilterFlag.EXCLUDE_SENSORS,
-}).get();
+});
 Physics.onEvent(event => {
   if (event.kind === "contactForce") Engine.log("info", String(event.totalForceMagnitude));
 });
 ```
 
 `Physics.world(reference?)` returns a `WorldHandle`; omission selects the default world.
-`castRay(origin, direction, RayOptions)` returns `Pending<RayHit | null>`. Direction is
+`castRay(origin, direction, RayOptions)` returns `RayHit | null`. Direction is
 normalized; `maxDistance` is in world units. Options are `maxDistance`, `solid` (true),
 `groups`, `flags`, `excludeBody`, and `excludeCollider`. Exclusions must be active in
 the queried world. `QueryFilterFlag` exposes native fixed/kinematic/dynamic/sensor/solid

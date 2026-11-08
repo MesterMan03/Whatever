@@ -9,7 +9,7 @@ on:
       - ".editorconfig"
       - ".gitattributes"
       - "package.json"
-      - "bun.lock"
+      - "package-lock.json"
       - ".github/workflows/mod-format.yml"
   push:
     branches: [main]
@@ -20,7 +20,7 @@ on:
       - ".editorconfig"
       - ".gitattributes"
       - "package.json"
-      - "bun.lock"
+      - "package-lock.json"
       - ".github/workflows/mod-format.yml"
   workflow_dispatch:
 
@@ -29,8 +29,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: "1.4.4"
-      - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun run format:check
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - run: npm run format:check

@@ -1,0 +1,4 @@
+system dos
+file main.obj,snake.obj
+name snake-stub.exe
+option fullheader

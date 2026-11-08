@@ -36,38 +36,25 @@ fn run(
 }
 
 fn installed() -> anyhow::Result<Option<RuntimeFiles>> {
-    let executable = std::env::current_exe()?;
-    let parent = executable
-        .parent()
-        .context("editor installation directory")?;
-    let files = RuntimeFiles::from_bundle(parent);
-    Ok(files.player.is_file().then_some(files))
+    Ok(super::installation::distribution_root()?.map(|root| RuntimeFiles::from_bundle(&root)))
 }
 
 fn prepare(release: bool, progress: &mut impl FnMut(String)) -> anyhow::Result<RuntimeFiles> {
     if let Some(files) = installed()? {
         files.validate()?;
-        if release {
-            crate::script::validate_release_host(&files.host)?;
-        }
         progress("Using the engine and mod runtime included with the editor".into());
         return Ok(files);
     }
     let source = crate::development_root();
     ensure!(
         source.join("player/Cargo.toml").is_file()
-            && source.join("runtime/host/index.ts").is_file(),
+            && source.join("runtime/guest/src/lib.rs").is_file(),
         "This editor installation is missing its engine support files. Reinstall the complete Whatever editor distribution."
     );
-    let mut cargo = Command::new("cargo");
-    cargo.current_dir(&source).args([
-        "build",
-        "--locked",
-        "-p",
-        "Whatever",
-        "-p",
-        "whatever-launcher",
-    ]);
+    let mut cargo = Command::new("node");
+    cargo
+        .current_dir(&source)
+        .args(["tools/build-native.ts", "--runtime-only"]);
     if release {
         cargo.arg("--release");
     }
@@ -92,52 +79,24 @@ fn prepare(release: bool, progress: &mut impl FnMut(String)) -> anyhow::Result<R
             }
         })
         .unwrap_or_else(|| source.join("target"));
-    let host = source
-        .join("runtime/dist")
-        .join(format!("whatever-mod-host{suffix}"));
-    let valid = if release {
-        crate::script::validate_release_host(&host)
-    } else {
-        crate::script::validate_host(&host)
-    };
-    if valid.is_err() {
-        if !source
-            .join("vendor/bun/build/release")
-            .join(format!("bun{suffix}"))
-            .is_file()
-        {
-            run(
-                Command::new("bun")
-                    .current_dir(&source)
-                    .args(["run", "build:bun"]),
-                "Building the pinned release Bun runtime…",
-                progress,
-            )?;
-        }
-        run(
-            Command::new("bun")
-                .current_dir(&source)
-                .args(["run", "build:runtime"]),
-            "Building the scripting API…",
-            progress,
-        )?;
-        run(
-            Command::new("bun")
-                .current_dir(&source)
-                .args(["run", "build:host"]),
-            "Building the pinned mod runtime…",
-            progress,
-        )?;
-    }
+    let binaries = target.join(profile);
+    let runtime = binaries.join("runtime-bin");
+    run(
+        Command::new("node")
+            .current_dir(&source)
+            .arg("tools/native-libraries.ts")
+            .arg("--source")
+            .arg(&binaries)
+            .arg("--output")
+            .arg(&runtime),
+        "Collecting the player's native libraries…",
+        progress,
+    )?;
     let files = RuntimeFiles {
-        player: target.join(profile).join(format!("Whatever{suffix}")),
-        launcher: target
-            .join(profile)
-            .join(format!("whatever-launcher{suffix}")),
-        host,
-        libraries: Some(target.join(profile)),
+        player: runtime.join(format!("Whatever{suffix}")),
+        launcher: runtime.join(format!("whatever-launcher{suffix}")),
+        libraries: Some(runtime),
         license: source.join("LICENSE"),
-        bun_license: source.join("vendor/bun/LICENSE.md"),
     };
     files.validate()?;
     Ok(files)

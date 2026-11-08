@@ -1,32 +1,31 @@
 # Scripting API
 
-Mods with a `[script]` section in `mod.toml` run as a Bun subprocess. The engine
-communicates with each script over NDJSON on stdin/stdout. The `@whatever-engine/api`
-package abstracts the wire protocol.
+Component fields may reference a concrete component directly: `session: RunSession | null = null`.
+The inspector selects entities containing that component; script code receives a lazy reference
+to its mod-local instance and can call its methods (`this.session?.award(10)`).
+`Type.Component(RunSession)` provides the corresponding explicit descriptor. Serialized links
+contain both `$entity` and `$component`; scenes, prefabs and clones remap the entity while preserving
+the required component type. Missing targets throw on access; forward/cyclic scene links are
+validated atomically after instantiation. References cannot call behavior in another mod's runtime
+and are not supported in network schemas. See [embedded scripting](EMBEDDED_SCRIPTING.md).
 
-`Prefab.spawn(path): Promise<PrefabInstance>` instantiates a `.wprefab` entity tree
-in the next command batch. The result exposes `root: Entity`, `get(scriptId)`,
-`entities()`, `entityCount`, `path` and `loadTime`, with fresh IDs and local named
-references for every instance. Creation is atomic and enforces direct mod
-dependencies. Instances are independent copies. See [Asset libraries and
-prefabs](ASSETS.md) for the JSON format, editor catalog and `.wasset` imports.
+Mods with a `[script]` section run inside an isolated engine-owned QuickJS Wasm
+instance. The embedded TypeScript compiler transforms distributed JS/TS/JSON source
+on the destination machine without a development toolchain. Native SDK calls execute
+synchronously against authoritative engine state.
+
+`Prefab.spawn(path): PrefabInstance` creates an independent hierarchy immediately,
+with `root`, `get(scriptId)`, `entities()`, `entityCount`, `path` and `loadTime`.
+Creation is atomic and enforces direct mod dependencies. See [assets](ASSETS.md).
 
 ```ts
 import { Engine, Input, Time, Window, File, Scene, EntityRef, Physics, Mods, Message, Console, Audio } from "@whatever-engine/api";
 ```
 
-The engine-owned mod host embeds the API and registers `@whatever-engine/api` before
-loading mod code. It resolves independently of the mod's directory or node_modules.
-Leave this import external in mod bundles; install the npm package only if needed
-for editor types. Other packages and all Node/Bun built-in modules are denied by
-default. Local JS/TS/JSON modules must resolve inside the current mod directory.
-See [the runtime policy](SANDBOX.md) for the module and global allowlists.
-
-The trusted host captures fixed stdin/stdout operations before activating the policy.
-Its NDJSON reader uses asynchronous descriptor reads and its writer completes every
-UTF-8 batch, including partial writes, before returning. These private operations
-work with the ordinary OS pipes created by the Rust player and do not expose file
-descriptors or built-in modules to mods.
+The engine embeds the API and resolves `@whatever-engine/api` before mod code.
+Leave this import external in mod bundles; npm installation is only for editor
+types. Local JS/TS/JSON modules must remain inside the current mod. Package imports,
+host built-ins and external URLs are denied. See [runtime policy](SANDBOX.md).
 
 ---
 
@@ -34,9 +33,9 @@ descriptors or built-in modules to mods.
 
 ### `Engine.mode`
 
-Read-only `"client" | "server"`, available during top-level mod evaluation as well as event handlers. The host sets it before importing the mod. `init` includes the same `mode` alongside `mod_id` and `engine_version`.
+Read-only `"client" | "server"`, available during top-level mod evaluation as well as event handlers. The VM bootstrap sets it before importing the mod. `init` includes the same `mode` alongside `mod_id` and `engine_version`.
 
-Simulation ticks run on a separate engine worker. Each mod submits one command buffer per tick, independently of promises returned by its handlers. The server runs this worker without a window, GPU or audio output device. FPS and vsync affect presentation only. Invalid tick rates (nonpositive, nonfinite or unrepresentable) are logged and ignored.
+Simulation ticks run on a separate engine worker. Mods execute directly in dependency order; native calls take effect before returning. The server runs this worker without a window, GPU or audio output device. FPS and vsync affect presentation only. Invalid tick rates (nonpositive, nonfinite or unrepresentable) are logged and ignored.
 
 Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera`, `getMainCamera` and `clearCamera` reject use in server mode. ECS component data, native physics and entity operations remain available there, including components a client may later render.
 
@@ -44,7 +43,7 @@ Window and audio methods, `Engine.setFpsCap`, `setVsync`, `setMainCamera`, `getM
 
 Subscribe to an engine event. Registering a handler also sends a `Subscribe`
 message to the engine automatically (except `mod_message`, which is routed
-unconditionally). Every mod receives private ticks for buffer submission, even without
+unconditionally). Every mod receives ticks for component lifecycle scheduling, even without
 a public tick listener. Async tick handlers may span ticks; a still-running handler
 is skipped until it finishes. Its next invocation accumulates simulation time and
 mouse deltas from skipped ticks, with the latest held keys and global tick number.
@@ -60,19 +59,20 @@ Engine.on("exit", ({ exit_code }) => {
 
 Engine.on("tick", async () => {
   // Input and Time are available in any function, including component hooks.
-  // Record commands here. Awaiting a result does not stop buffer submission.
+  // Engine data queries and mutations take effect immediately.
 });
 ```
 
-The host sends an internal `RuntimeReady` message after mod evaluation completes.
-The engine sends `Init` after this handshake and runtime readiness (including window initialization on clients), so top-level event registration is in place before `init` fires.
+The engine loads discovered component classes and the entry module before sending
+`Init`, after native runtime readiness (including the client window). Module
+initialization must complete; use `init` for work waiting on later events/timers.
 
 ### Events
 
 | Event | Payload | Description |
 |---|---|---|
 | `init` | `{ mod_id, engine_version, mode }` | Fired once after engine initialization; server has no window |
-| `exit` | `{ exit_code }` | Fired on shutdown; process exits after all handlers return |
+| `exit` | `{ exit_code }` | Fired on shutdown; VM is released after exit delivery |
 | `tick` | `{ tick_number, delta_seconds, keys_pressed, mouse_delta, mouse_captured }` | Runs on ticks when this handler is free; no overlapping invocations |
 | `mod_message` | `{ source_mod_id, message, request_id? }` | Message from another mod (see `Message`) |
 | `physics` | `{ event: Physics.Event }` | Native collision/contact-force event after physics |
@@ -120,7 +120,7 @@ Existing `keys_pressed.includes("KeyW")` checks keep working and gain autocomple
 The payload is no longer an array: use `keys.size` for its count,
 `keys.toArray()` for read-only array operations, or `[...keys]` for a mutable copy.
 `new PressedKeys(codes)` also creates an independent snapshot from a
-`readonly KeyCode[]` (default: empty). The private NDJSON `Tick` still sends a
+`readonly KeyCode[]` (default: empty). The internal `Tick` delivery contains a
 `keys_pressed` array; the API wraps it before delivering public tick handlers.
 
 ### `Engine.log(level, message)`
@@ -138,7 +138,7 @@ Engine.log("error", "something broke");
 | `level` | `string` | `"info"` \| `"warn"` \| `"error"` |
 | `message` | `string` | Arbitrary log text |
 
-Host protocol 10 requires revisioned scene deltas and native performance samples; older hosts are rejected and rebuilt.
+The embedded SDK receives native performance samples; there is no separate host protocol.
 Mouse motion is relative and only delivered while the player owns mouse capture.
 `mouse_captured` is false and `mouse_delta` is `[0, 0]` while uncaptured, while the
 console is open, or while the editor owns input. Release also clears accumulated
@@ -188,7 +188,7 @@ Designate an entity as the scene's active camera.  The entity must have both
 every frame to produce the view-projection matrix.
 
 Accepts `Entity`, `PendingEntity`, `EntityRef`, or an opaque ID string. Pending cameras
-can be created, configured and selected in the same batch.
+can be created, configured and selected in the same synchronous callback.
 
 ```ts
 const cam = await Scene.createEntity().get();
@@ -350,101 +350,80 @@ Delete a sandboxed file.
 
 ---
 
-## Tick order and command batches
+## Tick order and direct calls
 
-Each tick has one ordered pipeline:
+1. Sample input and gather queued console/network/audio events.
+2. Execute initialized mods in dependency/load order (core first, alphabetical
+   tie-breaking). Refresh Input/Time, reconcile lifecycle membership, run component
+   hooks, then global tick handlers. Native calls commit immediately in call order.
+3. Apply queued editor commands, reconcile native physics, step worlds in stable
+   entity order using this tick's sampled delta, and write poses/state back to ECS.
+4. Publish native presentation/editor state and queue physics events/performance
+   samples for later delivery. Rendering never advances simulation time.
 
-1. Gather input and queued external work: console invocations, network events and completed audio notifications. Input is sampled once with held keys in stable sorted order; events arriving after collection wait until a later tick.
-2. Send a tick to every initialized mod. The SDK refreshes `Input` and `Time`, synchronizes and ticks components, calls available tick handlers in registration order, then flushes its command buffer immediately, without awaiting user promises. This private flush happens even when there are no tick handlers or all handlers are awaiting results.
-3. Collect exactly one batch per live mod for the current tick. Execute complete batches in dependency/load order, and commands within each batch in recording order. No command executes while other batches are still being collected.
-4. Reconcile physics components, step each native world in stable entity order using this tick's sampled delta, then write poses and derived state back to ECS. World substeps/timeScale affect only that world's integration. Position-based kinematic targets interpolate across its substeps.
-5. Publish the world/render snapshot and buffered command results. Result callbacks and async continuations record new commands for a later tick.
+Queries observe all preceding successful writes, including earlier mods' changes.
+Native physics queries reconcile mutations without advancing integration time.
+Changing the tick rate affects the next tick; this tick keeps its sampled delta.
+The scheduler preserves fixed-size steps when a tick runs late. It can catch up
+after a short overrun and discards excess backlog after a long stall.
+An exception does not roll back earlier commands. Async hooks may span ticks and
+are not invoked again while pending; elapsed simulation time accumulates. Promise
+jobs drain within the VM's execution budget. No command batch or submission barrier
+is involved. Input/network timing still requires controlled inputs for replay.
 
-All API namespaces share this buffer, including logging, window commands, files, ECS, physics, console and networking. Arguments are serialized when recorded so later JavaScript mutations cannot change earlier commands. Queries capture the value at their position in the command sequence. Native physics operations/queries reconcile preceding component changes without advancing simulation time. Physics events and buffered results publish after the physics phase. Changing the tick rate affects the next tick; the current tick keeps the delta already delivered to mods. This is ordered execution, not an atomic transaction: commands do not roll back together on failure.
+## Live scene access and retained snapshots
 
-Mods are ordered by dependencies and explicit load constraints, with `core` preferred first and alphabetical mod-ID tie-breaking among eligible mods. Startup waits for host handshakes and sends `Init` in this order before the first tick. Pipe arrival order cannot change command execution order. A process exit removes it from the submission barrier; shutdown interrupts that barrier. A synchronously blocked mod can still delay submission, while an asynchronously waiting handler continues submitting empty or otherwise queued buffers.
-
-This establishes a predictable execution order, not automatic deterministic gameplay. Network/input timing, timers and arbitrary asynchronous JavaScript still need controlled inputs for reproducible runs. Do not await engine API requests during top-level module evaluation: the startup handshake happens after evaluation; perform that work in `init` instead.
-
-## Scene revisions and synchronous reads
-
-Every mod receives a full scene revision before `init`, followed by deltas after
-commands and physics. `Entity` handles resolve into that local scene store:
-`exists`, `name`, `hasComponent`, `getComponent`, `getTags`, `hasTag`, `getEnabled`,
-`getActive`, `getParent`, and `getChildren` are synchronous. `Scene.find`,
-`listEntities`, `query`, `findByTag`, and `findByTags` use the same store. Component
-and tag indices narrow queries; no IPC read is recorded for these methods.
-
-`getComponent` returns `ComponentSnapshot<T> | null`: deeply immutable data with
-no mutable class helpers or lifecycle methods. Custom snapshots expose declared
-fields and `id`; they are distinct from a component's mutable lifecycle `this`.
-Use `entity.editComponent(kind, draft => { ... })` to edit a detached class draft;
-the callback must be synchronous. Only changed top-level fields are patched.
-`entity.setEulerDegrees(x, y, z)` patches rotation without replacing position or scale.
-
-```ts
-const transform = this.entity.getComponent("core:transform");
-if (transform) this.entity.setEulerDegrees(0, this.angle, 0);
-this.entity.editComponent(Health, draft => { draft.value = 80; });
-```
-
-The committed revision stays fixed during a tick. Each mod overlays its recorded
-writes so it can read its own pending creates, removals, fields, hierarchy and tags
-immediately. Other mods' writes become visible at the next committed revision.
-World transforms compose local overlay edits using the engine's TRS convention.
-Rejected native commands reconcile back to authoritative data on commit. Retained
-component values never change. `Scene.snapshot()` returns a retained committed
-`SceneSnapshot` with `revision`, `has(id)`, `get(id)` and `entities()`; it excludes
-local overlays and shares immutable values with future revisions. A revision gap
-faults the host rather than allowing scripts to continue on stale state.
-
-`Scene.revision` reads the committed revision. IDs include generations; stale IDs
-never resolve to recycled entities. `Scene.find(id)` returns null for missing or
-locally destroyed entities. Full native component data is visible to every mod,
-just as native ECS queries were; private lifecycle fields are never published.
-
-## `Pending<T>` and explicit ordered requests
-
-`Scene.createEntity()` and spawn/clone helpers return `PendingEntity`. It is usable
-immediately; `.id` is a provisional `pending:...` identifier until confirmed.
-Calling `.get()` optionally waits for a native `Entity`. References and later
-commands resolve provisional aliases automatically. Recursive clone descendants
-and remapped references become authoritative when creation is confirmed; provisional
-clone reads expose the copied root only. Pending handles are not promises.
-
-Use `entity.requestComponent(kind)`, `requestParent()`, `requestChildren()`,
-`Scene.requestComponent(id, kind)`, `Scene.requestQuery(kinds)`, or
-`Engine.requestMainCamera()` when the result must reflect a particular position in
-the ordered native command buffer. These return `Pending<T>`; `.get()` returns
-the same promise without submitting or repeating the command. Result continuations
-record work for a later batch. Ordered component requests return detached mutable
-native class data; custom requests retain their owning lifecycle instance behavior.
+Entity lookup, components, tags, hierarchy and Scene queries are synchronous native
+reads. `getComponent(Type)` returns the owning mod's live class instance, including
+its methods; native component IDs return live field handles with class helpers.
+Declared field writes and nested array/object edits validate and commit before
+returning. Retained handles read current native data and reject removed/replaced
+components or stale entity generations. Lifecycle reconciliation reuses the
+component rows fetched for the current turn. Component patches invalidate the
+affected reads, and structural changes and new deliveries clear the cache.
+The native handle cache also expires each turn, so entity churn cannot retain
+unreferenced handles indefinitely.
 
 ```ts
-const entity = Scene.createEntity().setComponent(new BuiltInComponents.Transform());
-const before = entity.requestComponent("core:transform");
-entity.move([3, 0, 0]);
-const immediate = entity.getComponent("core:transform"); // position [3, 0, 0]
-const earlier = await before.get(); // position [0, 0, 0] at request position
+const health = entity.getComponent(Health);
+if (health) health.value = 80;
+const transform = entity.getComponent("core:transform");
+if (transform) transform.position[0] += 1;
 ```
 
-Native publication consumes mutation journals, compares only touched values, and
-sends creates, generation-aware tombstones, changed component values and metadata.
-Custom instance IDs detect remove/re-add even when values are equal. Each delta
-is encoded once and its bytes shared across native pipe writers. Each Bun process
-currently holds its own decoded store; OS shared read-only mappings are not part
-of this implementation. No unmeasured shared-memory performance claim is made.
+`editComponent` remains a compatibility helper for a synchronous detached draft;
+only changed fields are patched. `core:entity`, `core:world_transform` and derived
+physics state remain read-only. `Scene.snapshot()` explicitly copies an immutable
+retained view with `revision`, `has(id)`, `get(id)` and `entities()`. Ordinary live
+handles change with the world; explicit snapshots retain old values/generations.
+`Scene.revision` reports the current simulation tick. Private fields stay in the VM.
+
+## `Pending<T>` compatibility requests
+
+Creation/spawn/clone helpers still return `PendingEntity` for compatibility, but
+creation is already complete and its ID is native before returning. `.get()`
+lazily creates a resolved Promise; ordinary creation allocates no result Promise
+and never waits for a tick. Prefer
+ordinary synchronous Entity access for new code.
+
+`requestComponent`, `requestParent`, `requestChildren`, `Scene.requestQuery` and
+`Engine.requestMainCamera` preserve their `Pending<T>` API. They execute immediately;
+`.get()` returns the same result Promise. Explicit native component requests return
+detached data captured at request time. Custom class requests return the owning
+lifecycle instance. `Prefab.spawn`, `Scene.loadScene`, physics raycasts and body
+state queries return results directly. Actual network events and cross-mod replies
+remain asynchronous.
 
 ## `Profiler`
 
-- `Profiler.now(): number` — monotonic milliseconds from captured native `hrtime.bigint`.
+- `Profiler.now(): number` — monotonic milliseconds from the native engine clock.
 - `Profiler.latest(): DeepReadonly<TickTimings> | null` — previous completed native tick.
-- `Profiler.runtime()` — this host's previous tick number, snapshot application and synchronous script work in milliseconds.
+- `Profiler.runtime()` — this VM's previous tick number and synchronous script work in milliseconds; scene-replication metrics remain zero.
 - `Profiler.memory()` — this host's native `heap_used` and `rss` in bytes.
 
 `TickTimings` contains `tick_number`, `tick_rate`, `total_ms`, `scripts_ms`
-(the barrier waiting for all hosts), `commands_ms`, `physics_ms`, `snapshot_ms`,
-`presentation_ms`, `snapshot_bytes` (one encoded delta, before fan-out), command,
+(time spent executing embedded mods and their synchronous engine calls),
+`commands_ms`, `physics_ms`, `snapshot_ms`, `presentation_ms`, `snapshot_bytes`, command,
 entity and host counts, `build`, `platform`, and optional `frame`.
 `total_ms` includes scene publication/result overhead and excludes scheduled idle time
 and the telemetry message's own encoding;
@@ -453,6 +432,8 @@ individual phases may not sum exactly to it. Initialization is excluded by bench
 `acquire_ms`, `encode_ms`, `submit_ms`, `present_ms`, `draw_calls` (scene only),
 resolution, adapter/backend, vsync and FPS cap. The most recent frame may repeat
 across several simulation ticks; consumers must deduplicate by frame number.
+In the player, `cpu_ms` measures the frame work after acquiring a surface buffer.
+Time spent acquiring the buffer, including any wait for VSync, is in `acquire_ms`.
 `gpu_ms` is null: GPU timestamp queries are not implemented, and CPU submission
 measurements must not be described as GPU execution time. Server `frame` is null.
 Trusted clock/memory captures expose no process, file descriptor, or built-in module.
@@ -474,7 +455,7 @@ Network packets and client-data definitions accept the original codec-supported
 subset; component-only types are rejected during network registration. Existing
 packet bytes, field order, and fingerprints are unchanged.
 
-Optional fields use `undefined` in JavaScript and the private IPC null marker;
+Optional fields use `undefined` in JavaScript and the private ABI null marker;
 nullable fields use an explicit `null`. Optional and nullable wrappers cannot be
 combined. Bounds, lengths, tuples, enum choices and undeclared struct keys are
 validated in both the SDK and native engine.
@@ -501,9 +482,9 @@ export class Health extends Component {
 Exported named class declarations are discovered in the owning mod's local JS/TS source files, excluding assets and node_modules.
 A stable `static readonly type = "mod_id:name"` is recommended; otherwise the ID is
 `mod_id:ClassName`. Component IDs belong to their mod and must be unique. The
-engine/editor invoke the bundled host's read-only `--component-metadata` tool to
-extract schemas without evaluating mod code or running project configuration.
-The host loads discovered class modules under its ordinary native sandbox before
+engine/editor run the embedded TypeScript compiler to extract schemas without
+evaluating mod code or running project configuration.
+The VM loads discovered class modules through its contained resolver before
 the script entry. Keep component modules free of top-level scene mutations;
 initialize game state in `start()` or an `init` event.
 
@@ -521,27 +502,26 @@ Rust validates schemas before scene loading and validates every component write,
 including editor edits and class field updates. Missing fields receive class
 defaults; unknown fields and unregistered component names are rejected. Scene
 loading rolls back invalid instances atomically. Class instances stay in their
-owning mod process; other processes exchange validated data, not methods.
+owning mod VM; other mods exchange validated data, not methods.
 
-Each entity/component pair has one persistent instance. Committed membership and
-field snapshots arrive before the next tick. An active instance receives
+Each entity/component pair has one persistent instance. Native membership is
+reconciled before each tick and after removals; fields read and write authoritative data immediately. An active instance receives
 `onEnable()`, then `start()` once before its first `tick(deltaSeconds)`. Inactive
 entities (including disabled ancestors) pause ticking and receive `onDisable()`;
-reenabling calls `onEnable()` without repeating `start()`. Removal/re-attachment also creates a fresh instance when both happen in one batch. Removal, recursive
+reenabling calls `onEnable()` without repeating `start()`. Removal/re-attachment also creates a fresh instance when both happen in one synchronous turn. Removal, recursive
 entity destruction and orderly shutdown dispose the instance once with
 `destroy()` (after `onDisable()` when active). Crashes cannot guarantee cleanup.
 
 `start()` and `tick()` may return promises. A busy instance is skipped without
-overlapping calls, and elapsed tick time accumulates. The command batch always
-flushes before awaiting native results. Hook failures log the component and entity
+overlapping calls, and elapsed tick time accumulates. Native operations complete before returning. Hook failures log the component and entity
 and stop that instance's ticking. Declared field changes, including nested arrays,
-are validated and collected into one field patch per instance per tick. Private
+are validated and applied synchronously. Private
 state stays local. Component hooks run before global `Engine.on("tick")` handlers.
 `Input` and `Time` already describe the current tick when these hooks run; a
 parameterless `tick()` can use `Input.isPressed("KeyW")` and `Time.deltaSeconds`
 directly. Its optional use of the existing `deltaSeconds` argument remains useful
 when elapsed time should include skipped async ticks.
-Native component instances retain their explicit fetch/mutate/set workflow.
+Native component handles also support direct field edits and their class helpers.
 
 The editor lists registered classes under Add Component, renders schema-based
 fields with defaults/reset controls, ranges, dropdowns and entity/asset selectors,
@@ -559,7 +539,7 @@ lookups use their known `core:` IDs; custom component lookups use their class.
 
 `Entity`, `PendingEntity`, `Scene.ref(entityOrId)`, and `new EntityRef(entityOrId)`
 implement `EntityReference`. Native storage resolves pending references within the
-originating batch and remaps references during scene instantiation and cloning.
+synchronous call and remaps references during scene instantiation and cloning.
 Reads hydrate references to entities. Ordinary strings remain data; `$entity` is
 reserved for the private wire representation.
 
@@ -590,12 +570,12 @@ entity.editComponent("core:transform", draft => { draft.addX(1); });
 
 Remove a known native component by ID or a custom component by class.
 
-### `entity.getComponent(componentIdOrClass)` → `ComponentSnapshot<T> | null`
+### `entity.getComponent(componentIdOrClass)` → `T | null`
 
-Read immutable typed fields immediately. `entity.editComponent(kind, callback)`
-provides a mutable detached class draft; `requestComponent(kind).get()` explicitly
-requests data at the command position. Lifecycle class instances remain local to
-the owning mod; snapshot reads never expose their private state or mutable identity.
+Read live typed fields and mutate them directly. Native handles provide their
+class helpers; custom classes provide their owning lifecycle instance and methods.
+`editComponent` and `requestComponent` remain compatibility helpers. Class behavior
+cannot be shared across separate mod VMs.
 
 ### Entity tags
 
@@ -675,7 +655,7 @@ Most callers should work with `Entity` objects returned by `Scene.createEntity`,
 `Scene.listEntities`, `Scene.spawnSprite`, and `Scene.query` rather than calling
 component helpers with raw IDs.
 
-### `Scene.loadScene(path)` → `Promise<LoadedScene>`
+### `Scene.loadScene(path)` → `LoadedScene`
 
 The calling mod may load its own scenes or scenes from directly declared dependencies.
 Authored assets and custom component types are validated against the scene-owning
@@ -746,12 +726,10 @@ size and `loadTime` measures native reading, parsing and instantiation in
 milliseconds. These describe the instance at load time; destroying an entity
 later does not remove it from this metadata.
 
-The load command executes inside the calling mod's next command batch, in
-recorded order. Its Promise resolves with the normal command results, after
-native simulation. Each call creates an independent instance with fresh
+The load executes synchronously before returning. Each call creates an independent instance with fresh
 generational IDs. Duplicate names, unresolved references, invalid built-in
 components, unknown document fields/versions, excessive hierarchy depth or
-missing files reject the Promise. Failed instances are fully rolled back;
+missing files throw an error. Failed instances are fully rolled back;
 existing entities remain alive. The native hierarchy limit is 64 levels and
 the entity limit is 100,000, in addition to the JSON parser's nesting limits.
 
@@ -811,7 +789,7 @@ for (const { entity, components } of results) {
 }
 ```
 
-Synchronous rows contain immutable component data. `Scene.requestQuery` keeps the ordered pending result form.
+Synchronous rows contain live component handles. `Scene.requestQuery` keeps the ordered pending result form.
 
 ### `Scene.spawnText(text, position, options)` → `PendingEntity`
 
@@ -914,11 +892,11 @@ Return the IDs of all direct children of the given entity.
 
 ### Built-in component shapes and classes
 
-`editComponent` drafts and explicit `requestComponent` results use native data classes with the helpers below. Synchronous `getComponent` returns immutable fields without these methods.
+Live `getComponent` handles, `editComponent` drafts and explicit `requestComponent` results provide the native helpers below.
 
 #### `BuiltInComponents.Transform`
 
-Mutable drafts for `editComponent("core:transform")`. Raw fields are still present for backwards compatibility; all setters are chainable and return `this`.
+Live components and mutable drafts for `editComponent("core:transform")`. Raw fields are still present for backwards compatibility; all setters are chainable and return `this`.
 
 | Field | Type | Description |
 |---|---|---|
@@ -994,7 +972,7 @@ The constructor `new BuiltInComponents.Transform({ position?, rotation?, scale? 
 
 #### `BuiltInComponents.SpriteRenderer`
 
-Mutable drafts for `editComponent("core:sprite_renderer")`.
+Live components and mutable drafts for `editComponent("core:sprite_renderer")`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1012,7 +990,7 @@ Sprites are rendered on the XZ plane; the Y axis is up. A sprite becomes visible
 
 #### `BuiltInComponents.MeshRenderer`
 
-Mutable drafts for `editComponent("core:mesh_renderer")`. Renders arbitrary triangle geometry from a mesh file.
+Live components and mutable drafts for `editComponent("core:mesh_renderer")`. Renders arbitrary triangle geometry from a mesh file.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1033,7 +1011,7 @@ A mesh entity becomes visible as soon as it has **both** `core:transform` and `c
 
 #### `BuiltInComponents.TextRenderer`
 
-Mutable drafts for `editComponent("core:text_renderer")`. Renders a UTF-8 string at the entity's world-space Transform position, projected to screen coordinates.
+Live components and mutable drafts for `editComponent("core:text_renderer")`. Renders a UTF-8 string at the entity's world-space Transform position, projected to screen coordinates.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1072,7 +1050,7 @@ Engine.on("tick", async ({ tick_number }) => {
 
 #### `BuiltInComponents.Camera`
 
-Mutable drafts for `editComponent("core:camera")`.  Makes the entity usable as a scene
+Live components and mutable drafts for `editComponent("core:camera")`.  Makes the entity usable as a scene
 camera.  Combine with `core:transform` to control position and orientation, then
 activate the camera with `Engine.setMainCamera(entity.id)`.
 
@@ -1114,7 +1092,7 @@ Engine.on("tick", async ({ delta_seconds }) => {
 
 #### `BuiltInComponents.AmbientLight`
 
-Mutable drafts for `editComponent("core:ambient_light")`. Contributes a uniform fill light to the scene. Multiple ambient lights are **additive**.
+Live components and mutable drafts for `editComponent("core:ambient_light")`. Contributes a uniform fill light to the scene. Multiple ambient lights are **additive**.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1135,7 +1113,7 @@ await Scene.addAmbientLight([1, 0.9, 0.7], 0.15).get();
 
 #### `BuiltInComponents.DirectionalLight`
 
-Mutable drafts for `editComponent("core:directional_light")`. Simulates an infinitely distant light source (e.g. the sun). Up to **4** directional lights are active simultaneously; extras are silently ignored.
+Live components and mutable drafts for `editComponent("core:directional_light")`. Simulates an infinitely distant light source (e.g. the sun). Up to **4** directional lights are active simultaneously; extras are silently ignored.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1159,7 +1137,7 @@ await Scene.addDirectionalLight([0, -1, -0.3], [1, 0.95, 0.8], 1.2).get();
 
 #### `BuiltInComponents.PointLight`
 
-Mutable drafts for `editComponent("core:point_light")`. Emits light in all directions from the entity's `core:transform` position. Attenuation is quadratic — falls off to zero at `range` units. Up to **8** point lights are active simultaneously; extras are silently ignored.
+Live components and mutable drafts for `editComponent("core:point_light")`. Emits light in all directions from the entity's `core:transform` position. Attenuation is quadratic — falls off to zero at `range` units. Up to **8** point lights are active simultaneously; extras are silently ignored.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -1197,7 +1175,7 @@ const ball = Scene.createEntity().move([0, 5, 0])
   .setComponent(Physics.RigidBody.dynamic({ ccd: true }))
   .setComponent(new Physics.Collider({ shape: Physics.Shape.sphere(0.5), mass: 2 }));
 Physics.body(ball).applyImpulse([0, 3, 0]);
-const state = await Physics.body(ball).state().get();
+const state = await Physics.body(ball).state();
 ```
 
 Component constructors/factories:
@@ -1217,12 +1195,12 @@ Component constructors/factories:
 `Physics.BodyHandle` operations return `this`: `applyImpulse`, `applyTorqueImpulse`,
 `addForce`, `addTorque`, `resetForces`, `resetTorques`, `setLinearVelocity`,
 `setAngularVelocity`, `teleport`, `setKinematicTarget`, `sleep`, `wake`.
-`body.get(): Promise<void>` waits for recorded mutations and reports errors;
-`body.state(): Pending<BodyState>` selects state. Force/impulse options include world-space
+`body.get(): Promise<void>` is a compatibility no-op; mutations already executed;
+`body.state(): BodyState` selects state. Force/impulse options include world-space
 `point` and `wake`. `setLinearVelocity` accepts selected axes to preserve the others.
 
 `Physics.world(reference?)` returns a `WorldHandle` with
-`castRay(origin, direction, RayOptions): Pending<RayHit | null>`. Directions normalize;
+`castRay(origin, direction, RayOptions): RayHit | null`. Directions normalize;
 options include distance, solidity, groups, native filter flags and body/collider exclusions.
 `Physics.onEvent(handler)` observes collision/force events after physics. The same events
 are available through `Engine.on("physics", ({ event }) => ...)`. Enable events on colliders.
@@ -1632,26 +1610,18 @@ Successful sends mean validation and acceptance into a bounded local queue; they
 
 The native engine stores server identities and trust records under the OS local-data directory `WhateverNetwork/<game_id>`, outside every mod's broker-accessible directory. Mods cannot choose certificate/key paths or rewrite the trust database. Development servers generate a persistent self-signed identity automatically. Operators can provide `--tls-cert <chain.pem> --tls-key <key.pem>` and optional client `--tls-ca <authority.pem>`. `--network-data <directory>` selects a separate native identity/trust directory. Trust entries are scoped to the normalized server host and port, independent of specification changes. An unexpected key change fails the connection; explicit trust-management UI is a later addition. No certificate fingerprint is required in the ordinary client API or commands.
 
-## IPC protocol reference
+## Internal scripting ABI reference
 
-The complete [native mod-host wire contract](IPC.md) documents compatible API/host
-implementations, startup and tick sequencing, scene synchronization, nested
-physics/network payloads, limits, and errors. The documentation website also
-generates an exhaustive message-field catalogue from the native Rust definitions.
-
-This section documents the raw wire format. Normal mod code should use the API
-namespaces above rather than speaking the protocol directly.
-
-Network IPC adds `NetworkRequest { request_id, request }` and `NetworkResponse { request_id, result, error }`. Requests cover Register, Encode, Decode, ValidateClientData, UpdateClientData, Listen, Connect, Stop, Disconnect, Send, Broadcast, EventDone and Close; byte buffers use base64 inside this private bridge. The native engine owns codec execution. Host protocol is 10. Native `NetworkEvent` messages carry connected/disconnected/packet events, registration and peer IDs, and bounded per-peer callback acknowledgement IDs.
-
-**Transport:** NDJSON (one JSON object per line) on stdin/stdout per process. Script application commands must be inside `CommandBatch { tick_number, commands }`; raw commands and nested batches are rejected. The only startup envelopes are `RuntimeReady { protocol: 10 }` and `RuntimeFailed { message }`. Engine command replies and mod messages are grouped into `CommandResults { tick_number, messages }` after execution. Shutdown may flush a final buffer for diagnostic logs; state-changing commands from that final buffer are discarded.
-Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine-to-mod pipe writes run on a dedicated bounded writer thread (256 queued messages, 64 MiB including the in-flight write). A full/broken writer terminates the affected mod rather than blocking the simulation or silently losing RPCs.
+The [internal ABI](IPC.md) documents source loading, scoped native capabilities,
+ordering and limits. The generated catalogue follows Rust's `ScriptMessage` and
+`EngineMessage` DTOs. These are internal in-process operations, not stdin/stdout
+messages. Mods should use the public SDK. `command` executes an operation and
+returns immediate replies; asynchronous network/mod events use later deliveries.
 
 ### Engine → Script
 
 | Message | Key fields |
 |---|---|
-| `CommandResults` | `tick_number`, `messages` (the replies below) |
 | `NetworkResponse` | `request_id`, `result`, `error` |
 | `PhysicsResponse` | `request_id`, `result`, `error` |
 | `PhysicsEvent` | `event` (generational references, collision/force data, tick and substep) |
@@ -1669,7 +1639,6 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 | `EntityListResponse` | `request_id`, `entity_ids` |
 | `EntityParentResponse` | `request_id`, `entity_id`, `parent_id` (string or null) |
 | `EntityChildrenResponse` | `request_id`, `entity_id`, `child_ids` |
-| `SceneDelta` | `delta`: revision, base_revision, tick_number, reset, camera, created records, removed IDs, changed metadata/components/instances |
 | `Performance` | `sample`: native `TickTimings` after commit |
 | `EntityTagsResponse` | `request_id`, `tags`, `error` |
 | `ComponentGetResponse` | `request_id`, `entity_id`, `component_type`, `data`, `error` |
@@ -1726,7 +1695,7 @@ Stderr lines are forwarded to the engine logger with a `[mod_id]` prefix. Engine
 The `[mod].sides` list defaults to both `client` and `server`. Inactive mods are removed before dependency validation. The `[script]` section may contain optional `entry`, `client` and `server` paths: a side entry overrides `entry`; without either, that mod has no script on that side. `Mods.list()` and `Mods.get()` expose only active mods, with `sides: RuntimeMode[]` and nullable script entry paths. `RuntimeMode` is exported as a public type.
 
 
-A synchronous throw or rejected promise from a tick handler is queued for logging and terminates that mod process after its next buffer submission. The runtime removes exited processes from the submission barrier so other mods can continue. Shutdown interrupts a waiting tick and cleans up remaining subprocesses.
+A synchronous throw, unhandled rejection or budget trap logs a diagnostic and faults the affected VM. Other mods keep running and shutdown releases the remaining instances.
 
 ## Entity lifecycle and startup scenes
 
@@ -1744,7 +1713,7 @@ by the core mod's top-level `initial_scene = "my_game://main"` setting in mod.to
 `LoadedScene.path` identifies its source. Mods can attach behavior to those IDs
 instead of instantiating the scene again. Startup chooses its first enabled camera;
 scripts can select another camera normally. Init now includes optional initial_scene
-metadata; the matching host protocol is 7.
+metadata.
 
 New joints belong on their first rigid body. Construct `Physics.Joint.fixed({
 connectedBody: otherBody })` (or revolute/prismatic/spherical/generic) and attach it
@@ -1753,4 +1722,4 @@ connected body. Legacy bodyA/bodyB descriptors remain readable for older mods.
 
 Component queries omit inactive entities. Direct component reads and scene-local lookups still access disabled templates.
 
-`Entity.getComponent("core:world_transform"): ComponentSnapshot<BuiltInComponents.Transform> | null` reads the inherited world transform. This derived component is read-only.
+`Entity.getComponent("core:world_transform"): readonly transform data | null` reads the inherited world transform. This derived component is read-only.
